@@ -128,6 +128,16 @@ export default function RoundDetail() {
         )}
       </div>
 
+      {/* Scanner → Box Assignment */}
+      <ScannerBoxAssignment electionId={electionId} roundId={roundId} />
+
+      {/* Ballot Box Breakdown link */}
+      <div style={{ marginTop: '0.75rem' }}>
+        <Link to={`/admin/rounds/${roundId}/boxes`} style={styles.btnLink}>
+          Ballot Box Breakdown
+        </Link>
+      </div>
+
       {/* Passes summary */}
       {round.passes && round.passes.length > 0 && (
         <div style={styles.section}>
@@ -276,6 +286,48 @@ export default function RoundDetail() {
 
         {error && <p style={styles.errorMsg}>{error}</p>}
       </div>
+    </div>
+  );
+}
+
+function ScannerBoxAssignment({ electionId, roundId }) {
+  const [scanners, setScanners] = useState([]);
+  const [boxes, setBoxes] = useState([]);
+
+  const fetchData = async () => {
+    try {
+      const [scRes, bxRes] = await Promise.all([
+        api.get(`/admin/elections/${electionId}/scanners`),
+        api.get(`/admin/elections/${electionId}/ballot-boxes`),
+      ]);
+      setScanners(scRes.data);
+      setBoxes(bxRes.data);
+    } catch {}
+  };
+
+  useEffect(() => { fetchData(); }, [electionId]);
+
+  const handleAssign = async (scannerId, boxId) => {
+    await api.put(`/admin/scanners/${scannerId}/assign-box`, { box_id: boxId || null });
+    fetchData();
+  };
+
+  if (scanners.length === 0) return null;
+
+  return (
+    <div style={styles.section}>
+      <h2>Scanner → Box Assignment</h2>
+      {scanners.map(sc => (
+        <div key={sc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid #eee' }}>
+          <span style={{ fontWeight: 600, width: 120 }}>{sc.name}</span>
+          <span style={styles.muted}>→</span>
+          <select style={styles.input} value={sc.current_box_id || ''}
+            onChange={e => handleAssign(sc.id, e.target.value ? parseInt(e.target.value) : null)}>
+            <option value="">No box assigned</option>
+            {boxes.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+      ))}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
 import RoundDetail from './pages/RoundDetail';
 import FlaggedReview from './pages/FlaggedReview';
+import BallotBoxDetail from './pages/BallotBoxDetail';
 import BallotDesigner from './pages/BallotDesigner';
 import Scanner from './pages/Scanner';
 import SpoiledBallot from './pages/SpoiledBallot';
@@ -98,6 +99,9 @@ export default function App() {
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/review" element={
           <ProtectedRoute auth={auth}><FlaggedReview /></ProtectedRoute>
+        } />
+        <Route path="/admin/rounds/:roundId/boxes" element={
+          <ProtectedRoute auth={auth}><BallotBoxDetail /></ProtectedRoute>
         } />
 
         {/* Scanner routes — no auth (tally operators) */}

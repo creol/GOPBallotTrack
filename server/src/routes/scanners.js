@@ -74,4 +74,20 @@ router.delete('/scanners/:id', async (req, res) => {
   }
 });
 
+// PUT /api/admin/scanners/:id/assign-box — Assign scanner to a ballot box
+router.put('/scanners/:id/assign-box', async (req, res) => {
+  try {
+    const { box_id } = req.body;
+    const { rows: [scanner] } = await db.query(
+      `UPDATE scanners SET current_box_id = $1 WHERE id = $2 RETURNING *`,
+      [box_id || null, req.params.id]
+    );
+    if (!scanner) return res.status(404).json({ error: 'Scanner not found' });
+    res.json(scanner);
+  } catch (err) {
+    console.error('Assign box error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

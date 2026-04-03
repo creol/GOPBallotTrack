@@ -226,10 +226,10 @@ async function processSingleBallot(filePath, scannerId, io) {
     const processedPath = moveFile(filePath, destBase, `${serialNumber}.jpg`);
 
     await db.query(
-      `INSERT INTO scans (pass_id, ballot_serial_id, candidate_id, scanner_id, scanned_by, image_path, omr_confidence, omr_method)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'auto')`,
-      [pass.id, ballotInfo.id, omrResult.detected_vote, scannerId, `ADF:${scannerRow.name}`,
-       processedPath, omrResult.confidence]
+      `INSERT INTO scans (pass_id, ballot_serial_id, candidate_id, ballot_box_id, scanner_id, scanned_by, image_path, omr_confidence, omr_method)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto')`,
+      [pass.id, ballotInfo.id, omrResult.detected_vote, scannerRow.current_box_id || null,
+       scannerId, `ADF:${scannerRow.name}`, processedPath, omrResult.confidence]
     );
 
     await db.query("UPDATE ballot_serials SET status = 'counted' WHERE id = $1", [ballotInfo.id]);

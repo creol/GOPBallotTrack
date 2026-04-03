@@ -82,4 +82,71 @@ router.get('/rounds/:id', async (req, res) => {
   }
 });
 
+// GET /api/admin/rounds/:id/box-counts — Ballot box breakdown for a round
+router.get('/rounds/:id/box-counts', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+
+    // Get all ballot boxes for this election
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
+
+    const { rows: boxes } = await db.query(
+      'SELECT * FROM ballot_boxes WHERE election_id = $1 ORDER BY created_at', [race.election_id]
+    );
+
+    // Get candidates for this race
+    const { rows: candidates } = await db.query(
+      "SELECT * FROM candidates WHERE race_id = $1 AND status = 'active' ORDER BY display_order",
+      [round.race_id]
+    );
+
+    // Get scans grouped by box and candidate (only from non-deleted passes)
+    const { rows: scanCounts } = await db.query(
+      `SELECT s.ballot_box_id, s.candidate_id, COUNT(*) as count
+       FROM scans s
+       JOIN passes p ON p.id = s.pass_id
+       WHERE p.round_id = $1 AND p.status != 'deleted'
+       GROUP BY s.ballot_box_id, s.candidate_id`,
+      [roundId]
+    );
+
+    // Get scanner assignments
+    const { rows: scanners } = await db.query(
+      "SELECT id, name, current_box_id FROM scanners WHERE election_id = $1 AND status = 'active'",
+      [race.election_id]
+    );
+
+    // Build result
+    const boxIds = [...boxes.map(b => b.id), null]; // include null for unassigned
+    const result = boxIds.map(boxId => {
+      const box = boxes.find(b => b.id === boxId);
+      const boxScans = scanCounts.filter(sc => sc.ballot_box_id === boxId);
+      const totalScans = boxScans.reduce((sum, sc) => sum + parseInt(sc.count), 0);
+      const candidateBreakdown = candidates.map(c => {
+        const match = boxScans.find(sc => sc.candidate_id === c.id);
+        return { candidate_id: c.id, candidate_name: c.name, count: match ? parseInt(match.count) : 0 };
+      });
+      const assignedScanners = scanners.filter(s => s.current_box_id === boxId);
+
+      return {
+        box_id: boxId,
+        box_name: box ? box.name : 'Unassigned',
+        total_scans: totalScans,
+        candidates: candidateBreakdown,
+        scanners: assignedScanners.map(s => s.name),
+      };
+    });
+
+    // Filter out empty unassigned group
+    const filtered = result.filter(r => r.box_id !== null || r.total_scans > 0);
+
+    res.json(filtered);
+  } catch (err) {
+    console.error('Box counts error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
