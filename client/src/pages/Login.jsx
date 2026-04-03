@@ -16,7 +16,12 @@ export default function Login({ onLogin }) {
     try {
       const { data } = await api.post('/auth/login', { role, pin });
       onLogin(data.role, data.token);
-      navigate('/admin');
+      // Judge doesn't have admin access — send to role-appropriate page
+      if (data.role === 'judge') {
+        navigate('/judge');
+      } else {
+        navigate('/admin');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {

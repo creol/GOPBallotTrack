@@ -10,7 +10,7 @@ export default function ElectionDetail() {
   const [form, setForm] = useState({ name: '', date: '', description: '' });
   const [raceForm, setRaceForm] = useState({ name: '', threshold_type: 'majority', threshold_value: '' });
   const [showRaceForm, setShowRaceForm] = useState(false);
-  const [boxName, setBoxName] = useState('');
+  const [boxCount, setBoxCount] = useState('');
 
   const fetchElection = async () => {
     const { data } = await api.get(`/admin/elections/${id}`);
@@ -44,11 +44,15 @@ export default function ElectionDetail() {
     fetchElection();
   };
 
-  const handleAddBox = async (e) => {
+  const handleAddBoxes = async (e) => {
     e.preventDefault();
-    if (!boxName.trim()) return;
-    await api.post(`/admin/elections/${id}/ballot-boxes`, { name: boxName });
-    setBoxName('');
+    const count = parseInt(boxCount);
+    if (!count || count < 1) return;
+    const startNum = ballotBoxes.length + 1;
+    for (let i = 0; i < count; i++) {
+      await api.post(`/admin/elections/${id}/ballot-boxes`, { name: `Box ${startNum + i}` });
+    }
+    setBoxCount('');
     fetchBoxes();
   };
 
@@ -144,14 +148,16 @@ export default function ElectionDetail() {
       {/* Ballot Boxes Section */}
       <div style={styles.section}>
         <h2>Ballot Boxes</h2>
-        <form onSubmit={handleAddBox} style={styles.form}>
+        <form onSubmit={handleAddBoxes} style={styles.form}>
           <input
-            style={styles.input}
-            placeholder="Box Name (e.g. Box A)"
-            value={boxName}
-            onChange={e => setBoxName(e.target.value)}
+            style={{ ...styles.input, width: 120 }}
+            type="number"
+            min="1"
+            placeholder="How many?"
+            value={boxCount}
+            onChange={e => setBoxCount(e.target.value)}
           />
-          <button style={styles.btnPrimary} type="submit">Add Box</button>
+          <button style={styles.btnPrimary} type="submit">Add Boxes</button>
         </form>
         {ballotBoxes.length === 0 && <p style={styles.muted}>No ballot boxes.</p>}
         {ballotBoxes.map(box => (

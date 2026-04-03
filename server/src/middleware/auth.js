@@ -85,4 +85,16 @@ function requireChair(req, res, next) {
   next();
 }
 
-module.exports = { login, getSession, requireAdmin, requireJudge, requireChair, sessions };
+/**
+ * Middleware: require any authenticated role (admin, judge, or chair).
+ */
+function requireAuth(req, res, next) {
+  const session = getSession(req);
+  if (!session) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  req.session = session;
+  next();
+}
+
+module.exports = { login, getSession, requireAuth, requireAdmin, requireJudge, requireChair, sessions };

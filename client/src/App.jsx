@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import api from './api/client';
 import Login from './pages/Login';
+import JudgeLanding from './pages/JudgeLanding';
 import AdminDashboard from './pages/AdminDashboard';
 import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
@@ -14,9 +15,12 @@ import PublicDashboard from './pages/PublicDashboard';
 import PublicRoundDetail from './pages/PublicRoundDetail';
 import PublicBallotViewer from './pages/PublicBallotViewer';
 
-function ProtectedRoute({ children, auth }) {
+function ProtectedRoute({ children, auth, requiredRoles }) {
   if (!auth.checked) return null; // still loading
   if (!auth.role) return <Navigate to="/login" replace />;
+  if (requiredRoles && !requiredRoles.includes(auth.role)) {
+    return <Navigate to="/judge" replace />;
+  }
   return children;
 }
 
@@ -37,7 +41,6 @@ export default function App() {
   }, []);
 
   const handleLogin = (role, token) => {
-    // Store token for API calls
     if (token) {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     }
@@ -50,32 +53,43 @@ export default function App() {
     setAuth({ role: null, token: null, checked: true });
   };
 
+  const loginRedirect = auth.role
+    ? (auth.role === 'judge' ? <Navigate to="/judge" replace /> : <Navigate to="/admin" replace />)
+    : <Login onLogin={handleLogin} />;
+
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/admin" replace />} />
-        <Route path="/login" element={
-          auth.role ? <Navigate to="/admin" replace /> : <Login onLogin={handleLogin} />
+        <Route path="/" element={
+          auth.role === 'judge' ? <Navigate to="/judge" replace /> : <Navigate to="/admin" replace />
+        } />
+        <Route path="/login" element={loginRedirect} />
+
+        {/* Judge landing — authenticated judges only */}
+        <Route path="/judge" element={
+          <ProtectedRoute auth={auth}><JudgeLanding onLogout={handleLogout} /></ProtectedRoute>
         } />
 
-        {/* Admin routes — protected */}
+        {/* Admin routes — admin and chair only */}
         <Route path="/admin" element={
-          <ProtectedRoute auth={auth}><AdminDashboard onLogout={handleLogout} auth={auth} /></ProtectedRoute>
+          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}>
+            <AdminDashboard onLogout={handleLogout} auth={auth} />
+          </ProtectedRoute>
         } />
         <Route path="/admin/elections/:id" element={
-          <ProtectedRoute auth={auth}><ElectionDetail /></ProtectedRoute>
+          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><ElectionDetail /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId" element={
-          <ProtectedRoute auth={auth}><RaceDetail /></ProtectedRoute>
+          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><RaceDetail /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId" element={
-          <ProtectedRoute auth={auth}><RoundDetail /></ProtectedRoute>
+          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><RoundDetail /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/confirm" element={
           <ProtectedRoute auth={auth}><Confirmation /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/chair" element={
-          <ProtectedRoute auth={auth}><ChairDecision /></ProtectedRoute>
+          <ProtectedRoute auth={auth} requiredRoles={['chair']}><ChairDecision /></ProtectedRoute>
         } />
 
         {/* Scanner routes — no auth (tally operators) */}

@@ -7,7 +7,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const { runMigrations } = require('./migrate');
 const { seed } = require('./seed');
-const { requireAdmin, requireJudge, requireChair } = require('./middleware/auth');
+const { requireAuth, requireAdmin, requireJudge, requireChair } = require('./middleware/auth');
 const authRouter = require('./routes/auth');
 const electionsRouter = require('./routes/elections');
 const racesRouter = require('./routes/races');
@@ -42,7 +42,7 @@ app.set('io', io);
 // Auth routes (no middleware)
 app.use('/api/auth', authRouter);
 
-// Admin API routes (requireAdmin)
+// Admin API routes (requireAdmin — admin or chair only)
 app.use('/api/admin/elections', requireAdmin, electionsRouter);
 app.use('/api/admin', requireAdmin, racesRouter);
 app.use('/api/admin', requireAdmin, roundsRouter);
