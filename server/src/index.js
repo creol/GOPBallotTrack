@@ -19,6 +19,7 @@ const scansRouter = require('./routes/scans');
 const confirmationRouter = require('./routes/confirmation');
 const publicRouter = require('./routes/public');
 const exportsRouter = require('./routes/exports');
+const ballotDesignRouter = require('./routes/ballotDesign');
 
 const app = express();
 const server = http.createServer(app);
@@ -49,6 +50,7 @@ app.use('/api/admin', requireAdmin, roundsRouter);
 app.use('/api/admin', requireAdmin, ballotBoxesRouter);
 app.use('/api/admin', requireAdmin, ballotsRouter);
 app.use('/api/admin', requireAdmin, exportsRouter);
+app.use('/api/admin', requireAdmin, ballotDesignRouter);
 
 // Scanning & pass routes (no PIN — tally operators access directly)
 app.use('/api', passesRouter);

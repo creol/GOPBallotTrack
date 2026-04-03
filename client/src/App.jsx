@@ -7,6 +7,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
 import RoundDetail from './pages/RoundDetail';
+import BallotDesigner from './pages/BallotDesigner';
 import Scanner from './pages/Scanner';
 import SpoiledBallot from './pages/SpoiledBallot';
 import Confirmation from './pages/Confirmation';
@@ -81,6 +82,9 @@ export default function App() {
         } />
         <Route path="/admin/elections/:id/races/:raceId" element={
           <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><RaceDetail /></ProtectedRoute>
+        } />
+        <Route path="/admin/elections/:id/ballot-design" element={
+          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><BallotDesigner /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId" element={
           <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><RoundDetail /></ProtectedRoute>

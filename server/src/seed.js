@@ -32,11 +32,11 @@ async function seed() {
   // Create ballot boxes
   const { rows: [box1] } = await db.query(
     'INSERT INTO ballot_boxes (election_id, name) VALUES ($1, $2) RETURNING id',
-    [election.id, 'Box A']
+    [election.id, 'Box 1']
   );
   await db.query(
     'INSERT INTO ballot_boxes (election_id, name) VALUES ($1, $2)',
-    [election.id, 'Box B']
+    [election.id, 'Box 2']
   );
 
   // Create races

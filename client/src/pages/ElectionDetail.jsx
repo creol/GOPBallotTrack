@@ -84,7 +84,10 @@ export default function ElectionDetail() {
             <p style={styles.muted}>{new Date(election.date).toLocaleDateString()}</p>
             {election.description && <p>{election.description}</p>}
           </div>
-          <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <Link to={`/admin/elections/${id}/ballot-design`} style={styles.btnPrimary}>Design Ballots</Link>
+            <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
+          </div>
         </div>
       )}
 

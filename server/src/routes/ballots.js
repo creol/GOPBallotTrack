@@ -85,10 +85,46 @@ router.get('/rounds/:id/ballot-data', async (req, res) => {
   }
 });
 
-// GET /api/admin/rounds/:id/ballot-preview — Preview a single ballot (returns PDF of first page)
+// GET /api/admin/rounds/:id/ballot-preview — Preview ballot(s)
+// Optional ?size=quarter_letter to preview a specific size with multi-up layout
 router.get('/rounds/:id/ballot-preview', async (req, res) => {
   try {
-    const outDir = await getOutputDir(parseInt(req.params.id));
+    const roundId = parseInt(req.params.id);
+    const requestedSize = req.query.size;
+
+    // If a size is specified, generate a fresh preview with that size
+    if (requestedSize && SIZES[requestedSize]) {
+      const outDir = await getOutputDir(roundId);
+      if (!outDir) return res.status(404).json({ error: 'Round not found' });
+
+      // Check if there are existing serials for this round to preview
+      const { rows: existingSerials } = await db.query(
+        'SELECT serial_number FROM ballot_serials WHERE round_id = $1 LIMIT $2',
+        [roundId, SIZES[requestedSize].perPage]
+      );
+
+      if (existingSerials.length === 0) {
+        return res.status(404).json({ error: 'Generate ballots first to see a preview' });
+      }
+
+      // Generate a temporary preview PDF using existing serials
+      const previewPath = path.join(outDir, `preview-${requestedSize}.pdf`);
+      const { generatePreviewPdf } = require('../pdf/ballotGenerator');
+      await generatePreviewPdf({
+        roundId,
+        sizeKey: requestedSize,
+        serialNumbers: existingSerials.map(s => s.serial_number),
+        outputPath: previewPath,
+      });
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline');
+      fs.createReadStream(previewPath).pipe(res);
+      return;
+    }
+
+    // Default: return the existing generated PDF
+    const outDir = await getOutputDir(roundId);
     if (!outDir) return res.status(404).json({ error: 'Round not found' });
 
     const pdfPath = path.join(outDir, 'ballots.pdf');
@@ -96,13 +132,12 @@ router.get('/rounds/:id/ballot-preview', async (req, res) => {
       return res.status(404).json({ error: 'Ballots not yet generated' });
     }
 
-    // Send the full PDF — the client will display the first page
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline');
     fs.createReadStream(pdfPath).pipe(res);
   } catch (err) {
     console.error('Ballot preview error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 

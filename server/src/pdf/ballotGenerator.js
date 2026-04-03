@@ -5,107 +5,79 @@ const path = require('path');
 const archiver = require('archiver');
 const db = require('../db');
 const { generateSerials } = require('../services/serialGenerator');
+const { DEFAULT_CONFIG } = require('../routes/ballotDesign');
 
 // Ballot sizes in points (1 inch = 72 points)
+const LETTER_W = 8.5 * 72;
+const LETTER_H = 11 * 72;
+
 const SIZES = {
-  letter:        { width: 8.5 * 72,  height: 11 * 72,    label: 'Letter (8.5" x 11")' },
-  half_letter:   { width: 5.5 * 72,  height: 8.5 * 72,   label: 'Half Letter (5.5" x 8.5")' },
-  quarter_letter:{ width: 4.25 * 72, height: 5.5 * 72,   label: 'Quarter Letter (4.25" x 5.5")' },
-  eighth_letter: { width: 2.75 * 72, height: 4.25 * 72,  label: '1/8 Letter (2.75" x 4.25")' },
+  letter:        { width: 8.5 * 72,  height: 11 * 72,   label: 'Letter (8.5" x 11")',           perPage: 1, cols: 1, rows: 1 },
+  half_letter:   { width: 5.5 * 72,  height: 8.5 * 72,  label: 'Half Letter (5.5" x 8.5")',     perPage: 2, cols: 1, rows: 2 },
+  quarter_letter:{ width: 4.25 * 72, height: 5.5 * 72,  label: 'Quarter Letter (4.25" x 5.5")', perPage: 4, cols: 2, rows: 2 },
+  eighth_letter: { width: 2.75 * 72, height: 4.25 * 72, label: '1/8 Letter (2.75" x 4.25")',    perPage: 8, cols: 2, rows: 4 },
 };
+
+// For eighth_letter multi-up: 2 cols × 4 rows on a letter page
+// Each cell: 4.25" wide × 2.75" tall (ballot rendered landscape)
+// 4.25*2 = 8.5", 2.75*4 = 11"  — perfect fit
 
 /**
  * Fetch all data needed for ballot generation.
  */
 async function fetchBallotData(roundId) {
-  const { rows: [round] } = await db.query(
-    'SELECT * FROM rounds WHERE id = $1', [roundId]
-  );
+  const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
   if (!round) throw new Error('Round not found');
-
-  const { rows: [race] } = await db.query(
-    'SELECT * FROM races WHERE id = $1', [round.race_id]
-  );
-
-  const { rows: [election] } = await db.query(
-    'SELECT * FROM elections WHERE id = $1', [race.election_id]
-  );
-
+  const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
+  const { rows: [election] } = await db.query('SELECT * FROM elections WHERE id = $1', [race.election_id]);
   const { rows: candidates } = await db.query(
     `SELECT * FROM candidates WHERE race_id = $1 AND status = 'active' ORDER BY display_order`,
     [round.race_id]
   );
-
   return { round, race, election, candidates };
 }
 
 /**
- * Generate a QR code as a data URL (PNG buffer).
+ * Load design config for an election, merged with defaults.
  */
+async function loadDesignConfig(electionId) {
+  const { rows: [design] } = await db.query(
+    'SELECT config FROM ballot_designs WHERE election_id = $1', [electionId]
+  );
+  if (!design) return { ...DEFAULT_CONFIG };
+  const merged = {};
+  for (const key of Object.keys(DEFAULT_CONFIG)) {
+    merged[key] = { ...DEFAULT_CONFIG[key], ...(design.config[key] || {}) };
+  }
+  return merged;
+}
+
 async function generateQR(data, size) {
   return QRCode.toBuffer(JSON.stringify(data), {
-    errorCorrectionLevel: 'M',
-    margin: 1,
-    width: size,
+    errorCorrectionLevel: 'M', margin: 1, width: size,
     color: { dark: '#000000', light: '#ffffff' },
   });
 }
 
-/**
- * Draw a single filled oval (example of correct mark).
- */
+// === Oval drawing helpers ===
 function drawFilledOval(doc, x, y, rx, ry) {
-  doc.save();
-  doc.ellipse(x, y, rx, ry).fill('#000');
-  doc.restore();
+  doc.save(); doc.ellipse(x, y, rx, ry).fill('#000'); doc.restore();
 }
-
-/**
- * Draw an empty oval outline.
- */
 function drawEmptyOval(doc, x, y, rx, ry) {
-  doc.save();
-  doc.lineWidth(1.5);
-  doc.ellipse(x, y, rx, ry).stroke('#000');
-  doc.restore();
+  doc.save(); doc.lineWidth(1.5); doc.ellipse(x, y, rx, ry).stroke('#000'); doc.restore();
 }
-
-/**
- * Draw a partial-fill oval (bad example).
- */
 function drawPartialOval(doc, x, y, rx, ry) {
-  doc.save();
-  doc.lineWidth(1.5);
-  doc.ellipse(x, y, rx, ry).stroke('#000');
-  // partial fill - small filled area
-  doc.ellipse(x, y, rx * 0.4, ry * 0.4).fill('#000');
-  doc.restore();
+  doc.save(); doc.lineWidth(1.5); doc.ellipse(x, y, rx, ry).stroke('#000');
+  doc.ellipse(x, y, rx * 0.4, ry * 0.4).fill('#000'); doc.restore();
 }
-
-/**
- * Draw a check mark inside an oval (bad example).
- */
 function drawCheckOval(doc, x, y, rx, ry) {
-  doc.save();
-  doc.lineWidth(1.5);
-  doc.ellipse(x, y, rx, ry).stroke('#000');
-  // draw check mark
+  doc.save(); doc.lineWidth(1.5); doc.ellipse(x, y, rx, ry).stroke('#000');
   doc.lineWidth(2);
-  doc.moveTo(x - rx * 0.4, y)
-     .lineTo(x - rx * 0.1, y + ry * 0.4)
-     .lineTo(x + rx * 0.5, y - ry * 0.4)
-     .stroke('#000');
+  doc.moveTo(x - rx * 0.4, y).lineTo(x - rx * 0.1, y + ry * 0.4).lineTo(x + rx * 0.5, y - ry * 0.4).stroke('#000');
   doc.restore();
 }
-
-/**
- * Draw an X inside an oval (bad example).
- */
 function drawXOval(doc, x, y, rx, ry) {
-  doc.save();
-  doc.lineWidth(1.5);
-  doc.ellipse(x, y, rx, ry).stroke('#000');
-  // draw X
+  doc.save(); doc.lineWidth(1.5); doc.ellipse(x, y, rx, ry).stroke('#000');
   doc.lineWidth(2);
   const off = Math.min(rx, ry) * 0.45;
   doc.moveTo(x - off, y - off).lineTo(x + off, y + off).stroke('#000');
@@ -114,171 +86,253 @@ function drawXOval(doc, x, y, rx, ry) {
 }
 
 /**
- * Render one ballot page.
+ * Compute scale factors based on ballot size.
  */
-async function renderBallotPage(doc, { election, race, round, candidate, serialNumber, sizeKey, logoPath }) {
-  const size = SIZES[sizeKey];
-  const margin = Math.max(size.width * 0.06, 18);
-  const contentWidth = size.width - margin * 2;
+function getScale(sizeKey, cfg) {
   const isSmall = sizeKey === 'eighth_letter';
   const isQuarter = sizeKey === 'quarter_letter';
+  const isHalf = sizeKey === 'half_letter';
 
-  // Scale factors for smaller ballots
-  const titleSize = isSmall ? 10 : isQuarter ? 12 : 16;
-  const subtitleSize = isSmall ? 8 : isQuarter ? 10 : 12;
-  const bodySize = isSmall ? 7 : isQuarter ? 9 : 11;
-  const footerSize = isSmall ? 5.5 : isQuarter ? 6.5 : 8;
-  const ovalRx = isSmall ? 6 : isQuarter ? 7 : 9;
-  const ovalRy = isSmall ? 4 : isQuarter ? 5 : 6;
-  const lineHeight = isSmall ? 14 : isQuarter ? 18 : 24;
-  const qrSize = isSmall ? 50 : isQuarter ? 65 : 90;
+  const spacingMult = cfg.candidates.spacing === 'compact' ? 0.8 : cfg.candidates.spacing === 'spacious' ? 1.3 : 1;
+  const ovalMult = cfg.candidates.ovalSize === 'small' ? 0.75 : cfg.candidates.ovalSize === 'large' ? 1.25 : 1;
 
-  let y = margin;
-
-  // === HEADER ===
-  // Logo (if provided)
-  if (logoPath && fs.existsSync(logoPath)) {
-    const logoSize = isSmall ? 24 : isQuarter ? 32 : 48;
-    doc.image(logoPath, margin, y, { width: logoSize, height: logoSize });
-    // Title next to logo
-    doc.fontSize(titleSize).font('Helvetica-Bold');
-    doc.text(election.name, margin + (isSmall ? 28 : isQuarter ? 38 : 56), y, { width: contentWidth - 60 });
-    y += logoSize + 4;
-  } else {
-    doc.fontSize(titleSize).font('Helvetica-Bold');
-    doc.text(election.name, margin, y, { width: contentWidth, align: 'center' });
-    y += titleSize + 6;
-  }
-
-  // Race name
-  doc.fontSize(subtitleSize).font('Helvetica-Bold');
-  doc.text(race.name, margin, y, { width: contentWidth, align: 'center' });
-  y += subtitleSize + 4;
-
-  // Round info
-  doc.fontSize(bodySize).font('Helvetica');
-  doc.text(`Round ${round.round_number}`, margin, y, { width: contentWidth, align: 'center' });
-  y += bodySize + 8;
-
-  // Divider line
-  doc.lineWidth(0.5);
-  doc.moveTo(margin, y).lineTo(size.width - margin, y).stroke('#000');
-  y += 8;
-
-  // === BODY: Candidates with ovals ===
-  doc.font('Helvetica');
-  for (const c of candidate) {
-    const ovalX = margin + ovalRx + 4;
-    const ovalY = y + lineHeight / 2;
-    drawEmptyOval(doc, ovalX, ovalY, ovalRx, ovalRy);
-    doc.fontSize(bodySize);
-    doc.text(c.name, margin + ovalRx * 2 + 14, y + (lineHeight - bodySize) / 2, { width: contentWidth - ovalRx * 2 - 20 });
-    y += lineHeight;
-  }
-
-  y += 6;
-
-  // Divider
-  doc.lineWidth(0.5);
-  doc.moveTo(margin, y).lineTo(size.width - margin, y).stroke('#000');
-  y += 6;
-
-  // === FOOTER ===
-  doc.fontSize(footerSize).font('Helvetica-Bold');
-  doc.text('Do NOT bend. Completely fill the oval of your vote.', margin, y, { width: contentWidth, align: 'center' });
-  y += footerSize + 4;
-
-  doc.fontSize(footerSize).font('Helvetica');
-  doc.text('You are encouraged to take a photo of your completed ballot before submitting for your validation.', margin, y, { width: contentWidth, align: 'center' });
-  y += footerSize * 2 + 6;
-
-  // Visual examples
-  const exampleOvalRx = isSmall ? 5 : isQuarter ? 6 : 8;
-  const exampleOvalRy = isSmall ? 3.5 : isQuarter ? 4 : 5.5;
-  const exGap = contentWidth / 4;
-  const exY = y + exampleOvalRy + 2;
-  const labelY = exY + exampleOvalRy + 4;
-
-  // Good example
-  const exX1 = margin + exGap * 0.5;
-  drawFilledOval(doc, exX1, exY, exampleOvalRx, exampleOvalRy);
-  doc.fontSize(footerSize - 1).font('Helvetica');
-  doc.text('CORRECT', exX1 - 20, labelY, { width: 40, align: 'center' });
-
-  // Bad: partial fill
-  const exX2 = margin + exGap * 1.5;
-  drawPartialOval(doc, exX2, exY, exampleOvalRx, exampleOvalRy);
-  doc.text('WRONG', exX2 - 20, labelY, { width: 40, align: 'center' });
-
-  // Bad: check mark
-  const exX3 = margin + exGap * 2.5;
-  drawCheckOval(doc, exX3, exY, exampleOvalRx, exampleOvalRy);
-  doc.text('WRONG', exX3 - 20, labelY, { width: 40, align: 'center' });
-
-  // Bad: X mark
-  const exX4 = margin + exGap * 3.5;
-  drawXOval(doc, exX4, exY, exampleOvalRx, exampleOvalRy);
-  doc.text('WRONG', exX4 - 20, labelY, { width: 40, align: 'center' });
-
-  y = labelY + footerSize + 8;
-
-  // === QR CODE + SN ===
-  // Position QR at bottom-right to avoid interfering with candidate area
-  const qrData = { sn: serialNumber, round_id: round.id, race_id: race.id };
-  const qrBuffer = await generateQR(qrData, qrSize);
-
-  const qrX = size.width - margin - qrSize;
-  const qrY = size.height - margin - qrSize - (isSmall ? 10 : 14);
-
-  doc.image(qrBuffer, qrX, qrY, { width: qrSize, height: qrSize });
-
-  // SN text below QR
-  doc.fontSize(isSmall ? 5.5 : isQuarter ? 7 : 9).font('Courier-Bold');
-  doc.text(serialNumber, qrX, qrY + qrSize + 2, { width: qrSize, align: 'center' });
+  return {
+    titleSize:    isSmall ? 10 : isQuarter ? 12 : isHalf ? 14 : cfg.header.electionNameSize,
+    subtitleSize: isSmall ? 8  : isQuarter ? 10 : isHalf ? 12 : cfg.header.raceNameSize,
+    bodySize:     isSmall ? 7  : isQuarter ? 9  : isHalf ? 10 : cfg.candidates.fontSize,
+    footerSize:   isSmall ? 5.5 : isQuarter ? 6.5 : isHalf ? 7 : cfg.instructions.fontSize,
+    ovalRx:       (isSmall ? 6 : isQuarter ? 7 : 9) * ovalMult,
+    ovalRy:       (isSmall ? 4 : isQuarter ? 5 : 6) * ovalMult,
+    lineHeight:   (isSmall ? 14 : isQuarter ? 18 : 24) * spacingMult,
+    qrSize:       isSmall ? 50 : isQuarter ? 65 : isHalf ? 80 : 90,
+  };
 }
 
 /**
- * Generate ballot PDF and data ZIP for a round.
- * Returns { pdfPath, zipPath, serials }
+ * Render one ballot within a clipping region.
+ * ox, oy = origin offset on the page. bw, bh = ballot dimensions.
+ */
+async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candidates, serialNumber, sizeKey, logoPath, cfg }) {
+  const margin = Math.max(bw * 0.06, 14);
+  const contentWidth = bw - margin * 2;
+  const sc = getScale(sizeKey, cfg);
+
+  let y = oy + margin;
+  const left = ox + margin;
+
+  // === HEADER ===
+  if (cfg.header.show) {
+    if (cfg.logo.show && logoPath && fs.existsSync(logoPath)) {
+      const logoW = Math.min(cfg.logo.maxWidth, bw * 0.15);
+      const logoX = cfg.logo.position === 'top-right' ? ox + bw - margin - logoW
+        : cfg.logo.position === 'top-center' ? ox + (bw - logoW) / 2
+        : left;
+      doc.image(logoPath, logoX, y, { width: logoW, height: logoW });
+      if (cfg.logo.position !== 'top-center') {
+        const textX = cfg.logo.position === 'top-left' ? left + logoW + 6 : left;
+        const textW = cfg.logo.position === 'top-left' ? contentWidth - logoW - 6 : contentWidth - logoW - 6;
+        doc.fontSize(sc.titleSize).font('Helvetica-Bold');
+        doc.text(election.name, textX, y, { width: textW });
+        y += logoW + 4;
+      } else {
+        y += logoW + 4;
+        doc.fontSize(sc.titleSize).font('Helvetica-Bold');
+        doc.text(election.name, left, y, { width: contentWidth, align: 'center' });
+        y += sc.titleSize + 6;
+      }
+    } else {
+      doc.fontSize(sc.titleSize).font('Helvetica-Bold');
+      doc.text(election.name, left, y, { width: contentWidth, align: 'center' });
+      y += sc.titleSize + 6;
+    }
+
+    doc.fontSize(sc.subtitleSize).font('Helvetica-Bold');
+    doc.text(race.name, left, y, { width: contentWidth, align: 'center' });
+    y += sc.subtitleSize + 4;
+
+    doc.fontSize(sc.bodySize).font('Helvetica');
+    doc.text(`Round ${round.round_number}`, left, y, { width: contentWidth, align: 'center' });
+    y += sc.bodySize + 6;
+  }
+
+  // Divider
+  doc.lineWidth(0.5).moveTo(left, y).lineTo(left + contentWidth, y).stroke('#000');
+  y += 6;
+
+  // === CANDIDATES (auto-placed) ===
+  doc.font('Helvetica');
+  for (const c of candidates) {
+    const ovalX = left + sc.ovalRx + 4;
+    const ovalY = y + sc.lineHeight / 2;
+    drawEmptyOval(doc, ovalX, ovalY, sc.ovalRx, sc.ovalRy);
+    doc.fontSize(sc.bodySize);
+    doc.text(c.name, left + sc.ovalRx * 2 + 14, y + (sc.lineHeight - sc.bodySize) / 2, { width: contentWidth - sc.ovalRx * 2 - 20 });
+    y += sc.lineHeight;
+  }
+  y += 4;
+
+  // Divider
+  doc.lineWidth(0.5).moveTo(left, y).lineTo(left + contentWidth, y).stroke('#000');
+  y += 5;
+
+  // === INSTRUCTIONS ===
+  if (cfg.instructions.show) {
+    doc.fontSize(sc.footerSize).font('Helvetica-Bold');
+    doc.text(cfg.instructions.text, left, y, { width: contentWidth, align: 'center' });
+    y += sc.footerSize + 3;
+  }
+
+  if (cfg.encouragement.show) {
+    doc.fontSize(sc.footerSize).font('Helvetica');
+    doc.text(cfg.encouragement.text, left, y, { width: contentWidth, align: 'center' });
+    y += sc.footerSize * 2 + 4;
+  }
+
+  // === EXAMPLES ===
+  if (cfg.examples.show) {
+    const exRx = sc.footerSize * 0.9;
+    const exRy = sc.footerSize * 0.65;
+    const exGap = contentWidth / 4;
+    const exY = y + exRy + 2;
+    const labelY = exY + exRy + 3;
+
+    drawFilledOval(doc, left + exGap * 0.5, exY, exRx, exRy);
+    doc.fontSize(sc.footerSize - 1).font('Helvetica');
+    doc.text('CORRECT', left + exGap * 0.5 - 20, labelY, { width: 40, align: 'center' });
+
+    drawPartialOval(doc, left + exGap * 1.5, exY, exRx, exRy);
+    doc.text('WRONG', left + exGap * 1.5 - 20, labelY, { width: 40, align: 'center' });
+
+    drawCheckOval(doc, left + exGap * 2.5, exY, exRx, exRy);
+    doc.text('WRONG', left + exGap * 2.5 - 20, labelY, { width: 40, align: 'center' });
+
+    drawXOval(doc, left + exGap * 3.5, exY, exRx, exRy);
+    doc.text('WRONG', left + exGap * 3.5 - 20, labelY, { width: 40, align: 'center' });
+
+    y = labelY + sc.footerSize + 4;
+  }
+
+  // === CUSTOM NOTES ===
+  if (cfg.notes.show && cfg.notes.text) {
+    doc.fontSize(sc.footerSize).font('Helvetica-Oblique');
+    doc.text(cfg.notes.text, left, y, { width: contentWidth, align: 'center' });
+    y += sc.footerSize + 4;
+  }
+
+  // === QR CODE + SN ===
+  if (cfg.qr.show) {
+    const qrData = { sn: serialNumber, round_id: round.id, race_id: race.id };
+    const qrBuffer = await generateQR(qrData, sc.qrSize);
+
+    const qrX = cfg.qr.position === 'bottom-left' ? left
+      : cfg.qr.position === 'bottom-center' ? ox + (bw - sc.qrSize) / 2
+      : ox + bw - margin - sc.qrSize; // bottom-right
+
+    const qrY = oy + bh - margin - sc.qrSize - (sizeKey === 'eighth_letter' ? 8 : 12);
+    doc.image(qrBuffer, qrX, qrY, { width: sc.qrSize, height: sc.qrSize });
+
+    if (cfg.sn.show) {
+      const snSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
+      doc.fontSize(snSize).font('Courier-Bold');
+      doc.text(serialNumber, qrX, qrY + sc.qrSize + 2, { width: sc.qrSize, align: 'center' });
+    }
+  } else if (cfg.sn.show) {
+    // SN without QR — place at bottom center
+    const snSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
+    doc.fontSize(snSize).font('Courier-Bold');
+    doc.text(serialNumber, left, oy + bh - margin - snSize - 4, { width: contentWidth, align: 'center' });
+  }
+}
+
+/**
+ * Generate ballot PDF (multi-up on letter pages) and data ZIP.
  */
 async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
   if (!SIZES[sizeKey]) throw new Error(`Invalid size: ${sizeKey}`);
 
   const data = await fetchBallotData(roundId);
   const { round, race, election, candidates } = data;
+  const cfg = await loadDesignConfig(election.id);
 
-  // Generate serial numbers
   const serials = await generateSerials(roundId, quantity);
 
-  // Ensure output directory
   const outDir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(election.id), 'rounds', String(roundId));
   fs.mkdirSync(outDir, { recursive: true });
 
   const pdfPath = path.join(outDir, 'ballots.pdf');
   const zipPath = path.join(outDir, 'ballot-data.zip');
 
-  // === Generate PDF ===
   const size = SIZES[sizeKey];
-  const doc = new PDFDocument({
-    size: [size.width, size.height],
-    margin: 0,
-    autoFirstPage: false,
-  });
+  const { perPage, cols, rows } = size;
 
+  // For eighth_letter multi-up: each cell is 4.25" wide × 2.75" tall
+  // The ballot content (2.75w × 4.25h) is rendered rotated into landscape cells.
+  // For simplicity, we use a different cell layout for eighth that swaps w/h.
+  const isEighth = sizeKey === 'eighth_letter';
+  const cellW = isEighth ? (4.25 * 72) : size.width;
+  const cellH = isEighth ? (2.75 * 72) : size.height;
+
+  // For non-eighth: ballot w/h = cell w/h (content fills naturally)
+  // For eighth: we render the ballot content into a portrait area within a landscape cell
+  // Actually let's keep it simple: for eighth, render portrait ballot into a landscape cell
+  // by using the cell dimensions directly. The content auto-scales via getScale().
+
+  // Compute grid offsets to center the grid on the letter page
+  const gridW = cols * cellW;
+  const gridH = rows * cellH;
+  const padX = (LETTER_W - gridW) / 2;
+  const padY = (LETTER_H - gridH) / 2;
+
+  // PDF is always letter-size for printing
+  const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: false });
   const pdfStream = fs.createWriteStream(pdfPath);
   doc.pipe(pdfStream);
 
-  for (const serial of serials) {
-    doc.addPage({ size: [size.width, size.height], margin: 0 });
-    await renderBallotPage(doc, {
-      election,
-      race,
-      round,
-      candidate: candidates,
-      serialNumber: serial.serial_number,
-      sizeKey,
-      logoPath,
-    });
+  // If letter size, one ballot per page at full size (no tiling)
+  if (sizeKey === 'letter') {
+    for (const serial of serials) {
+      doc.addPage({ size: 'LETTER', margin: 0 });
+      await renderBallot(doc, 0, 0, size.width, size.height, {
+        election, race, round, candidates,
+        serialNumber: serial.serial_number, sizeKey, logoPath, cfg,
+      });
+    }
+  } else {
+    // Multi-up: tile ballots onto letter pages
+    let slotIndex = 0;
+
+    for (const serial of serials) {
+      if (slotIndex % perPage === 0) {
+        doc.addPage({ size: 'LETTER', margin: 0 });
+      }
+
+      const posOnPage = slotIndex % perPage;
+      const col = posOnPage % cols;
+      const row = Math.floor(posOnPage / cols);
+
+      const ox = padX + col * cellW;
+      const oy = padY + row * cellH;
+
+      // For eighth_letter: render into landscape cell, content adapts via scale
+      const ballotW = isEighth ? cellW : size.width;
+      const ballotH = isEighth ? cellH : size.height;
+
+      await renderBallot(doc, ox, oy, ballotW, ballotH, {
+        election, race, round, candidates,
+        serialNumber: serial.serial_number, sizeKey, logoPath, cfg,
+      });
+
+      // Draw light cut guide border
+      if (perPage > 1) {
+        doc.save();
+        doc.lineWidth(0.25).strokeColor('#ccc');
+        doc.rect(ox, oy, ballotW, ballotH).stroke();
+        doc.restore();
+        doc.strokeColor('#000'); // reset
+      }
+
+      slotIndex++;
+    }
   }
 
   doc.end();
@@ -287,12 +341,13 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
     pdfStream.on('error', reject);
   });
 
-  // === Generate ZIP (metadata only, no PDF) ===
+  // === Generate ZIP (metadata only) ===
   const metadata = {
     election: { id: election.id, name: election.name, date: election.date },
     race: { id: race.id, name: race.name },
     round: { id: round.id, number: round.round_number, paper_color: round.paper_color },
     ballot_size: SIZES[sizeKey].label,
+    ballots_per_page: perPage,
     generated_at: new Date().toISOString(),
     quantity,
     serial_numbers: serials.map(s => s.serial_number),
@@ -311,4 +366,68 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
   return { pdfPath, zipPath, serials, outDir };
 }
 
-module.exports = { generateBallots, SIZES };
+/**
+ * Generate a preview PDF (using existing serial numbers, no new ones created).
+ * Fills one letter page with as many ballots as the size allows.
+ */
+async function generatePreviewPdf({ roundId, sizeKey, serialNumbers, outputPath }) {
+  const data = await fetchBallotData(roundId);
+  const { round, race, election, candidates } = data;
+  const cfg = await loadDesignConfig(election.id);
+  const size = SIZES[sizeKey];
+  const { perPage, cols, rows } = size;
+
+  const isEighth = sizeKey === 'eighth_letter';
+  const cellW = isEighth ? (4.25 * 72) : size.width;
+  const cellH = isEighth ? (2.75 * 72) : size.height;
+  const gridW = cols * cellW;
+  const gridH = rows * cellH;
+  const padX = (LETTER_W - gridW) / 2;
+  const padY = (LETTER_H - gridH) / 2;
+
+  const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: false });
+  const stream = fs.createWriteStream(outputPath);
+  doc.pipe(stream);
+
+  if (sizeKey === 'letter') {
+    doc.addPage({ size: 'LETTER', margin: 0 });
+    await renderBallot(doc, 0, 0, size.width, size.height, {
+      election, race, round, candidates,
+      serialNumber: serialNumbers[0] || 'PREVIEW1', sizeKey, logoPath: null, cfg,
+    });
+  } else {
+    doc.addPage({ size: 'LETTER', margin: 0 });
+    const count = Math.min(serialNumbers.length, perPage);
+    // Fill with available SNs, repeat if needed to show full page layout
+    for (let i = 0; i < perPage; i++) {
+      const sn = serialNumbers[i % serialNumbers.length] || `PREV${i + 1}`;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const ox = padX + col * cellW;
+      const oy = padY + row * cellH;
+      const ballotW = isEighth ? cellW : size.width;
+      const ballotH = isEighth ? cellH : size.height;
+
+      await renderBallot(doc, ox, oy, ballotW, ballotH, {
+        election, race, round, candidates,
+        serialNumber: sn, sizeKey, logoPath: null, cfg,
+      });
+
+      if (perPage > 1) {
+        doc.save();
+        doc.lineWidth(0.25).strokeColor('#ccc');
+        doc.rect(ox, oy, ballotW, ballotH).stroke();
+        doc.restore();
+        doc.strokeColor('#000');
+      }
+    }
+  }
+
+  doc.end();
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+}
+
+module.exports = { generateBallots, generatePreviewPdf, SIZES };
