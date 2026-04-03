@@ -194,8 +194,92 @@ export default function ElectionDetail() {
         ))}
       </div>
 
+      {/* Scanners Section */}
+      <ScannersSection electionId={id} />
+
       {/* Export Section */}
       <ExportSection electionId={id} />
+    </div>
+  );
+}
+
+function ScannersSection({ electionId }) {
+  const [scanners, setScanners] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState('');
+  const [folderPath, setFolderPath] = useState('');
+
+  const fetchScanners = async () => {
+    try {
+      const { data } = await api.get(`/admin/elections/${electionId}/scanners`);
+      setScanners(data);
+    } catch {}
+  };
+
+  useEffect(() => { fetchScanners(); }, [electionId]);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !folderPath.trim()) return;
+    await api.post(`/admin/elections/${electionId}/scanners`, { name, watch_folder_path: folderPath });
+    setName('');
+    setFolderPath('');
+    setShowForm(false);
+    fetchScanners();
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this scanner?')) return;
+    await api.delete(`/admin/scanners/${id}`);
+    fetchScanners();
+  };
+
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionHeader}>
+        <h2>Scanners</h2>
+        <button style={styles.btnPrimary} onClick={() => setShowForm(!showForm)}>
+          {showForm ? 'Cancel' : 'Add Scanner'}
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={handleAdd} style={styles.form}>
+          <input
+            style={styles.input}
+            placeholder="Scanner Name"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            required
+          />
+          <input
+            style={{ ...styles.input, flex: 1 }}
+            placeholder="Watch Folder Path (e.g. C:\Scans\Scanner1)"
+            value={folderPath}
+            onChange={e => setFolderPath(e.target.value)}
+            required
+          />
+          <button style={styles.btnPrimary} type="submit">Add</button>
+        </form>
+      )}
+
+      {scanners.length === 0 && <p style={styles.muted}>No scanners registered.</p>}
+      {scanners.map(s => (
+        <div key={s.id} style={styles.boxRow}>
+          <div style={{ flex: 1 }}>
+            <span style={{ fontWeight: 600 }}>{s.name}</span>
+            <span style={styles.muted}> — {s.watch_folder_path}</span>
+          </div>
+          <span style={{
+            padding: '2px 8px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 600,
+            background: s.status === 'active' ? '#dcfce7' : '#fee2e2',
+            color: s.status === 'active' ? '#166534' : '#dc2626',
+          }}>
+            {s.status}
+          </span>
+          <button style={styles.btnDanger} onClick={() => handleDelete(s.id)}>Delete</button>
+        </div>
+      ))}
     </div>
   );
 }
