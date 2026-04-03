@@ -288,6 +288,10 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   }
 
   // 6. Analyze each candidate oval using QR-relative offsets
+  const markedThreshold = ballotSpec.omr_thresholds?.marked ?? 0.25;
+  const unmarkedThreshold = ballotSpec.omr_thresholds?.unmarked ?? 0.16;
+  console.log(`[OMR] Thresholds — marked: >${markedThreshold}, unmarked: <${unmarkedThreshold}`);
+
   const candidateResults = [];
   for (const candidate of ballotSpec.candidates) {
     // x_offset_from_qr and y_offset_from_qr are in 300 DPI pixels
@@ -304,8 +308,8 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
 
     const fillRatio = await analyzeOvalFill(uprightBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
 
-    const isMarked = fillRatio > ballotSpec.omr_thresholds.marked;
-    const isUnmarked = fillRatio < ballotSpec.omr_thresholds.unmarked;
+    const isMarked = fillRatio > markedThreshold;
+    const isUnmarked = fillRatio < unmarkedThreshold;
 
     candidateResults.push({
       candidate_id: candidate.candidate_id,
