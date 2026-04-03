@@ -174,24 +174,19 @@ async function rotateToUpright(imageBuffer, rotationDeg) {
 
 /**
  * Analyze fill ratio of an oval region in a grayscale image.
- * The oval is defined by center + radii in 300 DPI pixel coordinates.
- * Returns a fill ratio 0.0-1.0 (ratio of dark pixels in the zone).
+ * cropX/cropY/cropW/cropH are in actual image pixels.
+ * Returns a fill ratio 0.0-1.0 (ratio of dark pixels in the oval zone).
  */
-async function analyzeOvalFill(imageBuffer, ovalSpec, imageDpi) {
-  // Convert oval spec (300 DPI) to actual image pixel coords
-  const dpiScale = imageDpi / 300;
-  const cx = Math.round(ovalSpec.x * dpiScale + ovalSpec.width * dpiScale / 2);
-  const cy = Math.round(ovalSpec.y * dpiScale + ovalSpec.height * dpiScale / 2);
-  const rx = Math.round(ovalSpec.width * dpiScale / 2);
-  const ry = Math.round(ovalSpec.height * dpiScale / 2);
+async function analyzeOvalFill(imageBuffer, cropX, cropY, cropW, cropH, imgWidth, imgHeight) {
+  // Clamp to image bounds
+  cropX = Math.max(0, Math.round(cropX));
+  cropY = Math.max(0, Math.round(cropY));
+  cropW = Math.round(cropW);
+  cropH = Math.round(cropH);
 
-  // Crop the bounding box of the oval
-  const cropX = Math.max(0, cx - rx);
-  const cropY = Math.max(0, cy - ry);
-  const cropW = rx * 2;
-  const cropH = ry * 2;
-
-  if (cropW <= 0 || cropH <= 0) return 0;
+  if (cropX + cropW > imgWidth) cropW = imgWidth - cropX;
+  if (cropY + cropH > imgHeight) cropH = imgHeight - cropY;
+  if (cropW <= 2 || cropH <= 2) return 0;
 
   try {
     const { data: pixels, info } = await sharp(imageBuffer)
@@ -200,13 +195,13 @@ async function analyzeOvalFill(imageBuffer, ovalSpec, imageDpi) {
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    // Count dark pixels (threshold: < 128 on 0-255 scale)
+    const rx = info.width / 2;
+    const ry = info.height / 2;
     let darkCount = 0;
     let totalInOval = 0;
 
     for (let py = 0; py < info.height; py++) {
       for (let px = 0; px < info.width; px++) {
-        // Check if pixel is inside the oval
         const relX = (px - rx) / rx;
         const relY = (py - ry) / ry;
         if (relX * relX + relY * relY <= 1) {
@@ -219,30 +214,17 @@ async function analyzeOvalFill(imageBuffer, ovalSpec, imageDpi) {
     }
 
     return totalInOval > 0 ? darkCount / totalInOval : 0;
-  } catch {
+  } catch (err) {
+    console.log(`[OMR] Oval crop error at (${cropX},${cropY} ${cropW}x${cropH}): ${err.message}`);
     return 0;
   }
 }
 
 /**
- * Estimate the DPI of a scanned image based on its pixel dimensions
- * and the known ballot size in inches.
- */
-function estimateDpi(imageWidth, imageHeight, ballotWidthPts, ballotHeightPts) {
-  const ballotWidthInches = ballotWidthPts / 72;
-  const ballotHeightInches = ballotHeightPts / 72;
-  const dpiW = imageWidth / ballotWidthInches;
-  const dpiH = imageHeight / ballotHeightInches;
-  return Math.round((dpiW + dpiH) / 2);
-}
-
-/**
  * Full OMR pipeline: QR detection, rotation, oval analysis.
- *
- * @param {Buffer} imageBuffer - The scanned ballot image
- * @param {Object} ballotSpec - The ballot-spec.json contents
- * @param {Object} sizes - The SIZES map from ballotGenerator
- * @returns {Object} OMR result
+ * Uses the QR code position as anchor — oval positions are calculated
+ * relative to QR using x_offset_from_qr / y_offset_from_qr from the spec.
+ * This works regardless of whether the scan is a full page or a cut ballot.
  */
 async function processScannedBallot(imageBuffer, ballotSpec) {
   // 1. Find QR code
@@ -268,19 +250,59 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   const rotation = qrResult.rotation;
   const uprightBuffer = await rotateToUpright(imageBuffer, rotation);
 
-  // 3. Get image dimensions after rotation
+  // 3. Re-find QR in upright image to get accurate pixel position
+  const uprightQR = await findQRInImage(uprightBuffer);
   const uprightMeta = await sharp(uprightBuffer).metadata();
 
-  // 4. Estimate DPI from image size vs ballot spec
-  // Use letter size as the page size (ballots are printed on letter)
-  const LETTER_W_PTS = 8.5 * 72;
-  const LETTER_H_PTS = 11 * 72;
-  const imageDpi = estimateDpi(uprightMeta.width, uprightMeta.height, LETTER_W_PTS, LETTER_H_PTS);
+  // 4. Calculate scale factor: spec is in 300 DPI pixels, need to map to actual image pixels
+  // Use the QR code size as the reference: compare spec QR size to detected QR size in image
+  let scaleFromSpec = 1;
+  if (uprightQR && uprightQR.location && ballotSpec.qr_code) {
+    // Detected QR size in image pixels (accounting for any resize during detection)
+    const detectedScale = uprightQR.scale || 1;
+    const qrTopLeft = uprightQR.location.topLeftCorner;
+    const qrTopRight = uprightQR.location.topRightCorner;
+    const qrBottomLeft = uprightQR.location.bottomLeftCorner;
+    const detectedQRWidth = Math.sqrt(
+      Math.pow((qrTopRight.x - qrTopLeft.x) / detectedScale, 2) +
+      Math.pow((qrTopRight.y - qrTopLeft.y) / detectedScale, 2)
+    );
+    const specQRWidth = ballotSpec.qr_code.width; // in 300 DPI pixels
+    if (specQRWidth > 0 && detectedQRWidth > 0) {
+      scaleFromSpec = detectedQRWidth / specQRWidth;
+    }
+    console.log(`[OMR] QR size — spec: ${specQRWidth}px @300dpi, detected: ${Math.round(detectedQRWidth)}px in image, scale: ${scaleFromSpec.toFixed(3)}`);
+  }
 
-  // 5. Analyze each candidate oval
+  // 5. Get QR anchor position in the upright image
+  let qrAnchorX = 0, qrAnchorY = 0;
+  if (uprightQR && uprightQR.location) {
+    const s = uprightQR.scale || 1;
+    // Use the center of the QR as anchor (more stable than corner)
+    const tl = uprightQR.location.topLeftCorner;
+    const tr = uprightQR.location.topRightCorner;
+    const bl = uprightQR.location.bottomLeftCorner;
+    qrAnchorX = ((tl.x + tr.x + bl.x) / 3) / s;
+    qrAnchorY = ((tl.y + tr.y + bl.y) / 3) / s;
+    console.log(`[OMR] QR anchor in image: (${Math.round(qrAnchorX)}, ${Math.round(qrAnchorY)}) in ${uprightMeta.width}x${uprightMeta.height} image`);
+  }
+
+  // 6. Analyze each candidate oval using QR-relative offsets
   const candidateResults = [];
   for (const candidate of ballotSpec.candidates) {
-    const fillRatio = await analyzeOvalFill(uprightBuffer, candidate.oval, imageDpi);
+    // x_offset_from_qr and y_offset_from_qr are in 300 DPI pixels
+    // Scale them to actual image pixels and add to QR anchor
+    const ovalCenterX = qrAnchorX + (candidate.oval.x_offset_from_qr * scaleFromSpec);
+    const ovalCenterY = qrAnchorY + (candidate.oval.y_offset_from_qr * scaleFromSpec);
+    const ovalW = candidate.oval.width * scaleFromSpec;
+    const ovalH = candidate.oval.height * scaleFromSpec;
+
+    const cropX = ovalCenterX - ovalW / 2;
+    const cropY = ovalCenterY - ovalH / 2;
+
+    console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), size=${Math.round(ovalW)}x${Math.round(ovalH)}`);
+
+    const fillRatio = await analyzeOvalFill(uprightBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
 
     const isMarked = fillRatio > ballotSpec.omr_thresholds.marked;
     const isUnmarked = fillRatio < ballotSpec.omr_thresholds.unmarked;
