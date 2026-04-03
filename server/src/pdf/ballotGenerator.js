@@ -141,7 +141,6 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
   // Track positions for ballot-spec
   const ovalPositions = [];
   let qrPosition = null;
-  let qrTopLeftPosition = null;
 
   let y = oy + margin;
   const left = ox + margin;
@@ -256,25 +255,10 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
     y += sc.footerSize + 4;
   }
 
-  // === TWO QR CODES: top-left and bottom-right for affine alignment ===
+  // === SINGLE QR CODE (bottom-right) + SN below ===
   if (cfg.qr.show) {
     const qrBuffer = await generateQR(serialNumber, sc.qrSize);
 
-    // Top-left QR (80% of main QR size — large enough for reliable detection)
-    const tlQrSize = Math.round(sc.qrSize * 0.8);
-    const tlQrBuffer = await generateQR(serialNumber, tlQrSize);
-    const tlQrX = ox + margin;
-    const tlQrY = oy + margin;
-    doc.image(tlQrBuffer, tlQrX, tlQrY, { width: tlQrSize, height: tlQrSize });
-
-    qrTopLeftPosition = {
-      x: tlQrX - ox,
-      y: tlQrY - oy,
-      width: tlQrSize,
-      height: tlQrSize,
-    };
-
-    // Bottom-right QR (main QR)
     const qrX = ox + bw - margin - sc.qrSize;
     const qrY = oy + bh - margin - sc.qrSize - (sizeKey === 'eighth_letter' ? 8 : 12);
     doc.image(qrBuffer, qrX, qrY, { width: sc.qrSize, height: sc.qrSize });
@@ -299,13 +283,13 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
 
   // No back side — nothing printed on back
 
-  return { qrPosition, qrTopLeftPosition, ovalPositions };
+  return { qrPosition, ovalPositions };
 }
 
 /**
  * Build the ballot-spec.json OMR zone map from rendered positions.
  */
-function buildBallotSpec({ election, race, round, sizeKey, qrPosition, qrTopLeftPosition, ovalPositions }) {
+function buildBallotSpec({ election, race, round, sizeKey, qrPosition, ovalPositions }) {
   const spec = {
     election_id: election.id,
     race_id: race.id,
@@ -319,14 +303,6 @@ function buildBallotSpec({ election, race, round, sizeKey, qrPosition, qrTopLeft
       y: ptToPx(qrPosition.y),
       width: ptToPx(qrPosition.width),
       height: ptToPx(qrPosition.height),
-    } : null,
-    qr_code_top_left: qrTopLeftPosition ? {
-      corner: 'top-left',
-      encoding: 'plain_serial_number',
-      x: ptToPx(qrTopLeftPosition.x),
-      y: ptToPx(qrTopLeftPosition.y),
-      width: ptToPx(qrTopLeftPosition.width),
-      height: ptToPx(qrTopLeftPosition.height),
     } : null,
     candidates: ovalPositions.map(o => ({
       candidate_id: o.candidateId,
@@ -461,7 +437,6 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
   const ballotSpec = buildBallotSpec({
     election, race, round, sizeKey,
     qrPosition: specPositions?.qrPosition || null,
-    qrTopLeftPosition: specPositions?.qrTopLeftPosition || null,
     ovalPositions: specPositions?.ovalPositions || [],
   });
   fs.writeFileSync(specPath, JSON.stringify(ballotSpec, null, 2));
@@ -599,14 +574,6 @@ async function generateCalibrationPdf({ roundId, outputPath }) {
     doc.fontSize(6).fillColor('#00aa00').text('BR QR', positions.qrPosition.x, positions.qrPosition.y - 8);
     doc.restore();
 
-    // Draw TL QR bounding box in green
-    if (positions.qrTopLeftPosition) {
-      doc.save();
-      doc.lineWidth(1).strokeColor('#00aa00');
-      doc.rect(positions.qrTopLeftPosition.x, positions.qrTopLeftPosition.y, positions.qrTopLeftPosition.width, positions.qrTopLeftPosition.height).stroke();
-      doc.fontSize(6).fillColor('#00aa00').text('TL QR', positions.qrTopLeftPosition.x, positions.qrTopLeftPosition.y - 8);
-      doc.restore();
-    }
 
     for (const oval of positions.ovalPositions) {
       // Full oval bounding box (blue)
