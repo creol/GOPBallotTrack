@@ -292,7 +292,14 @@ function GenerateAllBallots({ electionId }) {
     } catch {}
   };
 
-  useEffect(() => { fetchBallotList(); }, [electionId]);
+  const fetchLastSize = async () => {
+    try {
+      const { data } = await api.get(`/admin/elections/${electionId}/ballot-design`);
+      if (data.config?.lastBallotSize) setSize(data.config.lastBallotSize);
+    } catch {}
+  };
+
+  useEffect(() => { fetchBallotList(); fetchLastSize(); }, [electionId]);
 
   const handleGenerate = async () => {
     setGenerating(true);

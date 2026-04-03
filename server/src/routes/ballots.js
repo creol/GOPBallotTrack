@@ -129,6 +129,13 @@ router.post('/elections/:id/generate-all-ballots', async (req, res) => {
       }
     }
 
+    // Save the size as the election's last-used size
+    await db.query(
+      `INSERT INTO ballot_designs (election_id, config) VALUES ($1, $2)
+       ON CONFLICT (election_id) DO UPDATE SET config = ballot_designs.config || $2, updated_at = NOW()`,
+      [electionId, JSON.stringify({ lastBallotSize: sizeKey })]
+    );
+
     res.json({ message: `Generated ballot PDFs for ${results.filter(r => r.status === 'generated').length} rounds`, results });
   } catch (err) {
     console.error('Generate all ballots error:', err);
