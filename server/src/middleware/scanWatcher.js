@@ -12,10 +12,6 @@ const UPLOADS_BASE = '/app/uploads';
 // Track active watchers so we can restart them
 const activeWatchers = new Map();
 
-// Buffer for duplex pair detection: scannerId -> { files: [], timer }
-const duplexBuffers = new Map();
-
-const DUPLEX_WAIT_MS = 500;
 const SUPPORTED_EXT = /\.(jpg|jpeg|png|tif|tiff|bmp)$/i;
 
 /**
@@ -97,11 +93,11 @@ async function getOrCreateActivePass(roundId) {
 }
 
 /**
- * Process a pair of scanned images (duplex: front + back).
- * Identifies which is the front (has QR), processes OMR, records result.
+ * Process a single scanned ballot image.
+ * Tries to decode QR, run OMR, and record result.
  */
-async function processDuplexPair(files, scannerId, io) {
-  console.log(`[ScanWatcher] Processing ballot image(s): ${files.map(f => path.basename(f)).join(', ')}`);
+async function processSingleBallot(filePath, scannerId, io) {
+  console.log(`[ScanWatcher] Processing ballot: ${path.basename(filePath)}`);
 
   const scanner = await db.query('SELECT * FROM scanners WHERE id = $1', [scannerId]);
   if (!scanner.rows[0]) {
@@ -110,53 +106,30 @@ async function processDuplexPair(files, scannerId, io) {
   }
   const scannerRow = scanner.rows[0];
 
-  let frontBuffer = null;
-  let frontPath = null;
-  let backPath = null;
-
-  // Try each image for QR code
-  for (const filePath of files) {
-    try {
-      console.log(`[ScanWatcher] Checking for QR in: ${path.basename(filePath)}`);
-      const buf = fs.readFileSync(filePath);
-      const qrResult = await findQRInImage(buf);
-      console.log(`[ScanWatcher] QR decode result for ${path.basename(filePath)}: ${qrResult ? JSON.stringify(qrResult.qrData) : 'NOT FOUND'}`);
-      if (qrResult && qrResult.qrData) {
-        frontBuffer = buf;
-        frontPath = filePath;
-      } else if (!backPath) {
-        backPath = filePath;
-      }
-    } catch (err) {
-      console.error(`[ScanWatcher] Error reading scan file ${filePath}:`, err.message);
-    }
+  // Read image and try QR decode
+  let frontBuffer;
+  try {
+    frontBuffer = fs.readFileSync(filePath);
+  } catch (err) {
+    console.error(`[ScanWatcher] Error reading file ${filePath}:`, err.message);
+    return;
   }
 
-  // If no QR found in any image
-  if (!frontBuffer) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — No QR found in any image from scanner ${scannerRow.name}`);
-    for (const f of files) {
-      moveFile(f, path.join(SCAN_BASE, 'errors'), `noqr-${Date.now()}-${path.basename(f)}`);
-    }
+  console.log(`[ScanWatcher] Checking for QR in: ${path.basename(filePath)}`);
+  const qrResult = await findQRInImage(frontBuffer);
+  console.log(`[ScanWatcher] QR decode result for ${path.basename(filePath)}: ${qrResult ? JSON.stringify(qrResult.qrData) : 'NOT FOUND'}`);
+
+  if (!qrResult || !qrResult.qrData) {
+    console.log(`[ScanWatcher] Final outcome: ERROR — No QR found in ${path.basename(filePath)}`);
+    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `noqr-${Date.now()}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'qr_not_found', scanner_id: scannerId, scanner_name: scannerRow.name });
     return;
   }
 
-  console.log(`[ScanWatcher] Front image identified: ${path.basename(frontPath)}`);
-
-  // Discard the back image (move to processed but don't analyze)
-  if (backPath && backPath !== frontPath) {
-    console.log(`[ScanWatcher] Back image discarded: ${path.basename(backPath)}`);
-    moveFile(backPath, path.join(SCAN_BASE, 'processed', 'backs'), `back-${Date.now()}-${path.basename(backPath)}`);
-  }
-
-  // Get QR data to find the round
-  const qrResult = await findQRInImage(frontBuffer);
   const qrData = typeof qrResult.qrData === 'object' ? qrResult.qrData : null;
-
   if (!qrData || !qrData.sn || !qrData.round_id || !qrData.race_id) {
     console.log(`[ScanWatcher] Final outcome: ERROR — QR data invalid: ${JSON.stringify(qrResult.qrData)}`);
-    moveFile(frontPath, path.join(SCAN_BASE, 'errors'), `badqr-${Date.now()}-${path.basename(frontPath)}`);
+    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `badqr-${Date.now()}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'invalid_qr', scanner_id: scannerId });
     return;
   }
@@ -172,7 +145,7 @@ async function processDuplexPair(files, scannerId, io) {
 
   if (!ballotSerial) {
     console.log(`[ScanWatcher] Final outcome: ERROR — Invalid SN: ${serialNumber} for round ${roundId}`);
-    moveFile(frontPath, path.join(SCAN_BASE, 'errors'), `invalid-${serialNumber}-${path.basename(frontPath)}`);
+    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `invalid-${serialNumber}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'invalid_sn', serial_number: serialNumber, scanner_id: scannerId });
     return;
   }
@@ -186,7 +159,7 @@ async function processDuplexPair(files, scannerId, io) {
 
   if (existingScan) {
     console.log(`[ScanWatcher] Final outcome: ERROR — Duplicate SN: ${serialNumber} in pass ${pass.pass_number}`);
-    moveFile(frontPath, path.join(SCAN_BASE, 'errors'), `dup-${serialNumber}-${path.basename(frontPath)}`);
+    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `dup-${serialNumber}-${path.basename(filePath)}`);
     if (io) io.emit('scan:duplicate', { serial_number: serialNumber, scanner_id: scannerId });
     return;
   }
@@ -200,7 +173,7 @@ async function processDuplexPair(files, scannerId, io) {
     await db.query(
       `INSERT INTO flagged_ballots (round_id, pass_id, ballot_serial_id, scanner_id, flag_reason, image_path)
        VALUES ($1, $2, $3, $4, 'uncertain', $5)`,
-      [roundId, pass.id, ballotSerial.id, scannerId, frontPath]
+      [roundId, pass.id, ballotSerial.id, scannerId, filePath]
     );
     if (io) io.emit('scan:flagged', { serial_number: serialNumber, reason: 'no_spec', scanner_id: scannerId });
     return;
@@ -221,7 +194,7 @@ async function processDuplexPair(files, scannerId, io) {
 
   if (omrResult.flag_reason) {
     // Flagged ballot — needs manual review
-    const flaggedPath = moveFile(frontPath, path.join(SCAN_BASE, 'flagged'),
+    const flaggedPath = moveFile(filePath, path.join(SCAN_BASE, 'flagged'),
       `${serialNumber}-${omrResult.flag_reason}-${Date.now()}.jpg`);
 
     await db.query(
@@ -241,7 +214,7 @@ async function processDuplexPair(files, scannerId, io) {
     });
   } else {
     // Clear vote — record it
-    const processedPath = moveFile(frontPath, destBase, `${serialNumber}.jpg`);
+    const processedPath = moveFile(filePath, destBase, `${serialNumber}.jpg`);
 
     await db.query(
       `INSERT INTO scans (pass_id, ballot_serial_id, candidate_id, scanner_id, scanned_by, image_path, omr_confidence, omr_method)
@@ -293,54 +266,29 @@ function onNewFile(filePath, scannerId, io) {
 
   console.log(`[ScanWatcher] File detected: ${filePath}`);
 
-  const key = scannerId;
-  if (!duplexBuffers.has(key)) {
-    duplexBuffers.set(key, { files: [], timer: null });
-  }
-
-  const buf = duplexBuffers.get(key);
-
-  // If we already have 2 files buffered, flush them as a pair before adding more
-  if (buf.files.length >= 2) {
-    if (buf.timer) clearTimeout(buf.timer);
-    const pairFiles = buf.files.splice(0, 2);
-    processPair(pairFiles, scannerId, io);
-  }
-
-  buf.files.push(filePath);
-
-  // Reset the timer — wait for the duplex partner
-  if (buf.timer) clearTimeout(buf.timer);
-  buf.timer = setTimeout(async () => {
-    const files = [...buf.files];
-    buf.files = [];
-    buf.timer = null;
-    processPair(files, scannerId, io);
-  }, DUPLEX_WAIT_MS);
+  // Process each file individually — no duplex pairing
+  enqueueProcessing(filePath, scannerId, io);
 }
 
 // Sequential processing queue per scanner (prevents concurrent DB writes)
 const processingQueues = new Map();
 
 /**
- * Enqueue a pair for sequential processing.
+ * Enqueue a single file for sequential processing.
  */
-function processPair(files, scannerId, io) {
+function enqueueProcessing(filePath, scannerId, io) {
   if (!processingQueues.has(scannerId)) {
     processingQueues.set(scannerId, Promise.resolve());
   }
 
   processingQueues.set(scannerId, processingQueues.get(scannerId).then(async () => {
-    console.log(`[ScanWatcher] Processing ${files.length} file(s) as duplex pair: ${files.map(f => path.basename(f)).join(', ')}`);
     try {
-      await processDuplexPair(files, scannerId, io);
+      await processSingleBallot(filePath, scannerId, io);
     } catch (err) {
-      console.error(`[ScanWatcher] Error processing files from scanner ${scannerId}:`, err);
-      for (const f of files) {
-        try {
-          moveFile(f, path.join(SCAN_BASE, 'errors'), `err-${Date.now()}-${path.basename(f)}`);
-        } catch {}
-      }
+      console.error(`[ScanWatcher] Error processing ${path.basename(filePath)}:`, err);
+      try {
+        moveFile(filePath, path.join(SCAN_BASE, 'errors'), `err-${Date.now()}-${path.basename(filePath)}`);
+      } catch {}
     }
   }));
 }
