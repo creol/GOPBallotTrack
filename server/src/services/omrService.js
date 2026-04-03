@@ -344,8 +344,6 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
 
   return {
     serial_number: serialNumber,
-    race_id,
-    round_id,
     rotation_applied: rotation,
     candidates: candidateResults,
     detected_vote: detectedVote,
