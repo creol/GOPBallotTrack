@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ballottrack
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-ballottrack_prod}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ballottrack}
       POSTGRES_DB: ballottrack
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -22,7 +22,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgres://ballottrack:${DB_PASSWORD:-ballottrack_prod}@db:5432/ballottrack
+      DATABASE_URL: postgres://ballottrack:${DB_PASSWORD:-ballottrack}@db:5432/ballottrack
       NODE_ENV: production
       PORT: 3000
       ADMIN_PIN: ${ADMIN_PIN:-1234}
