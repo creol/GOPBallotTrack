@@ -7,6 +7,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
 import RoundDetail from './pages/RoundDetail';
+import FlaggedReview from './pages/FlaggedReview';
 import BallotDesigner from './pages/BallotDesigner';
 import Scanner from './pages/Scanner';
 import SpoiledBallot from './pages/SpoiledBallot';
@@ -94,6 +95,9 @@ export default function App() {
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/chair" element={
           <ProtectedRoute auth={auth} requiredRoles={['chair']}><ChairDecision /></ProtectedRoute>
+        } />
+        <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/review" element={
+          <ProtectedRoute auth={auth}><FlaggedReview /></ProtectedRoute>
         } />
 
         {/* Scanner routes — no auth (tally operators) */}

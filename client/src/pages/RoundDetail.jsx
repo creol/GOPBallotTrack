@@ -20,6 +20,7 @@ export default function RoundDetail() {
   const [showRegenerate, setShowRegenerate] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [error, setError] = useState(null);
+  const [flaggedCount, setFlaggedCount] = useState(0);
 
   const fetchRound = async () => {
     const { data } = await api.get(`/admin/rounds/${roundId}`);
@@ -35,7 +36,14 @@ export default function RoundDetail() {
     }
   };
 
-  useEffect(() => { fetchRound(); fetchBallotStatus(); }, [roundId]);
+  const fetchFlaggedCount = async () => {
+    try {
+      const { data } = await api.get(`/rounds/${roundId}/flagged`);
+      setFlaggedCount(Array.isArray(data) ? data.length : 0);
+    } catch {}
+  };
+
+  useEffect(() => { fetchRound(); fetchBallotStatus(); fetchFlaggedCount(); }, [roundId]);
 
   const handleGenerate = async (e) => {
     e.preventDefault();
@@ -112,6 +120,12 @@ export default function RoundDetail() {
         <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={styles.btnLink} target="_blank">
           Calibration PDF
         </a>
+        {flaggedCount > 0 && (
+          <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/review`}
+            style={{ ...styles.btnLink, background: '#dc2626', position: 'relative' }}>
+            Review Flagged ({flaggedCount})
+          </Link>
+        )}
       </div>
 
       {/* Passes summary */}

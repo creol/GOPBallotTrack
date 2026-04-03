@@ -21,6 +21,7 @@ const publicRouter = require('./routes/public');
 const exportsRouter = require('./routes/exports');
 const ballotDesignRouter = require('./routes/ballotDesign');
 const scannersRouter = require('./routes/scanners');
+const flaggedRouter = require('./routes/flagged');
 const { startWatchers } = require('./middleware/scanWatcher');
 
 const app = express();
@@ -59,6 +60,9 @@ app.use('/api/admin', requireAdmin, scannersRouter);
 // Scanning & pass routes (no PIN — tally operators access directly)
 app.use('/api', passesRouter);
 app.use('/api', scansRouter);
+
+// Flagged ballot review (requireJudge — judge or chair)
+app.use('/api', requireJudge, flaggedRouter);
 
 // Confirmation routes (requireJudge for confirm, requireChair for release)
 app.use('/api', confirmationRouter);
