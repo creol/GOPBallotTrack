@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 
+const NAV_ITEMS = [
+  { key: 'races', label: 'Races' },
+  { key: 'ballots', label: 'Ballot Generation' },
+  { key: 'boxes', label: 'Ballot Boxes' },
+  { key: 'scanners', label: 'Scanners' },
+  { key: 'export', label: 'Export' },
+];
+
 export default function ElectionDetail() {
   const { id } = useParams();
   const [election, setElection] = useState(null);
@@ -11,6 +19,7 @@ export default function ElectionDetail() {
   const [raceForm, setRaceForm] = useState({ name: '', threshold_type: 'majority', threshold_value: '', ballot_count: '', max_rounds: '' });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
+  const [activeSection, setActiveSection] = useState('races');
 
   const fetchElection = async () => {
     const { data } = await api.get(`/admin/elections/${id}`);
@@ -71,6 +80,7 @@ export default function ElectionDetail() {
     <div style={styles.container}>
       <Link to="/admin" style={styles.backLink}>&larr; All Elections</Link>
 
+      {/* Election Info — always visible */}
       {editing ? (
         <form onSubmit={handleUpdate} style={styles.form}>
           <input style={styles.input} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
@@ -93,112 +103,103 @@ export default function ElectionDetail() {
         </div>
       )}
 
-      {/* Races Section */}
-      <div style={styles.section}>
-        <div style={styles.sectionHeader}>
-          <h2>Races</h2>
-          <button style={styles.btnPrimary} onClick={() => setShowRaceForm(!showRaceForm)}>
-            {showRaceForm ? 'Cancel' : 'Add Race'}
-          </button>
-        </div>
-
-        {showRaceForm && (
-          <form onSubmit={handleAddRace} style={styles.form}>
-            <input
-              style={styles.input}
-              placeholder="Race Name"
-              value={raceForm.name}
-              onChange={e => setRaceForm({ ...raceForm, name: e.target.value })}
-              required
-            />
-            <select
-              style={styles.input}
-              value={raceForm.threshold_type}
-              onChange={e => setRaceForm({ ...raceForm, threshold_type: e.target.value })}
+      {/* Sidebar + Content Layout */}
+      <div style={styles.layout} data-layout>
+        {/* Sidebar — desktop */}
+        <nav style={styles.sidebar} data-sidebar>
+          {NAV_ITEMS.map(item => (
+            <button
+              key={item.key}
+              style={activeSection === item.key ? styles.navItemActive : styles.navItem}
+              onClick={() => setActiveSection(item.key)}
             >
-              <option value="majority">Majority</option>
-              <option value="two_thirds">Two-Thirds</option>
-              <option value="custom">Custom</option>
-            </select>
-            {raceForm.threshold_type === 'custom' && (
-              <input
-                style={styles.input}
-                type="number"
-                step="0.00001"
-                placeholder="Threshold %"
-                value={raceForm.threshold_value}
-                onChange={e => setRaceForm({ ...raceForm, threshold_value: e.target.value })}
-              />
-            )}
-            <input
-              style={{ ...styles.input, width: 130 }}
-              type="number"
-              min="1"
-              placeholder="# of Ballots"
-              value={raceForm.ballot_count}
-              onChange={e => setRaceForm({ ...raceForm, ballot_count: e.target.value })}
-              required
-            />
-            <input
-              style={{ ...styles.input, width: 130 }}
-              type="number"
-              min="1"
-              placeholder="Max Rounds"
-              value={raceForm.max_rounds}
-              onChange={e => setRaceForm({ ...raceForm, max_rounds: e.target.value })}
-              required
-            />
-            <button style={styles.btnPrimary} type="submit">Add Race</button>
-          </form>
-        )}
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-        {(!election.races || election.races.length === 0) && <p style={styles.muted}>No races yet.</p>}
-        {election.races?.map(race => (
-          <Link
-            key={race.id}
-            to={`/admin/elections/${id}/races/${race.id}`}
-            style={styles.raceCard}
-          >
-            <span style={styles.raceName}>{race.name}</span>
-            <span style={{ ...styles.statusBadge, background: statusColor[race.status] || '#999' }}>
-              {race.status}
-            </span>
-            <span style={styles.muted}>{race.threshold_type}</span>
-          </Link>
-        ))}
+        {/* Mobile tab bar */}
+        <nav style={styles.mobileNav} data-mobilenav>
+          {NAV_ITEMS.map(item => (
+            <button
+              key={item.key}
+              style={activeSection === item.key ? styles.mobileTabActive : styles.mobileTab}
+              onClick={() => setActiveSection(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* Content area */}
+        <div style={styles.content}>
+          {activeSection === 'races' && (
+            <div>
+              <div style={styles.sectionHeader}>
+                <h2>Races</h2>
+                <button style={styles.btnPrimary} onClick={() => setShowRaceForm(!showRaceForm)}>
+                  {showRaceForm ? 'Cancel' : 'Add Race'}
+                </button>
+              </div>
+
+              {showRaceForm && (
+                <form onSubmit={handleAddRace} style={styles.form}>
+                  <input style={styles.input} placeholder="Race Name" value={raceForm.name}
+                    onChange={e => setRaceForm({ ...raceForm, name: e.target.value })} required />
+                  <select style={styles.input} value={raceForm.threshold_type}
+                    onChange={e => setRaceForm({ ...raceForm, threshold_type: e.target.value })}>
+                    <option value="majority">Majority</option>
+                    <option value="two_thirds">Two-Thirds</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                  {raceForm.threshold_type === 'custom' && (
+                    <input style={styles.input} type="number" step="0.00001" placeholder="Threshold %"
+                      value={raceForm.threshold_value} onChange={e => setRaceForm({ ...raceForm, threshold_value: e.target.value })} />
+                  )}
+                  <input style={{ ...styles.input, width: 130 }} type="number" min="1" placeholder="# of Ballots"
+                    value={raceForm.ballot_count} onChange={e => setRaceForm({ ...raceForm, ballot_count: e.target.value })} required />
+                  <input style={{ ...styles.input, width: 130 }} type="number" min="1" placeholder="Max Rounds"
+                    value={raceForm.max_rounds} onChange={e => setRaceForm({ ...raceForm, max_rounds: e.target.value })} required />
+                  <button style={styles.btnPrimary} type="submit">Add Race</button>
+                </form>
+              )}
+
+              {(!election.races || election.races.length === 0) && <p style={styles.muted}>No races yet.</p>}
+              {election.races?.map(race => (
+                <Link key={race.id} to={`/admin/elections/${id}/races/${race.id}`} style={styles.raceCard}>
+                  <span style={styles.raceName}>{race.name}</span>
+                  <span style={{ ...styles.statusBadge, background: statusColor[race.status] || '#999' }}>{race.status}</span>
+                  <span style={styles.muted}>{race.threshold_type}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {activeSection === 'ballots' && <GenerateAllBallots electionId={id} />}
+
+          {activeSection === 'boxes' && (
+            <div>
+              <h2>Ballot Boxes</h2>
+              <form onSubmit={handleAddBoxes} style={styles.form}>
+                <input style={{ ...styles.input, width: 120 }} type="number" min="1" placeholder="How many?"
+                  value={boxCount} onChange={e => setBoxCount(e.target.value)} />
+                <button style={styles.btnPrimary} type="submit">Add Boxes</button>
+              </form>
+              {ballotBoxes.length === 0 && <p style={styles.muted}>No ballot boxes.</p>}
+              {ballotBoxes.map(box => (
+                <div key={box.id} style={styles.boxRow}>
+                  <span>{box.name}</span>
+                  <button style={styles.btnDanger} onClick={() => handleDeleteBox(box.id)}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeSection === 'scanners' && <ScannersSection electionId={id} />}
+
+          {activeSection === 'export' && <ExportSection electionId={id} />}
+        </div>
       </div>
-
-      {/* Generate All Ballots Section */}
-      <GenerateAllBallots electionId={id} />
-
-      {/* Ballot Boxes Section */}
-      <div style={styles.section}>
-        <h2>Ballot Boxes</h2>
-        <form onSubmit={handleAddBoxes} style={styles.form}>
-          <input
-            style={{ ...styles.input, width: 120 }}
-            type="number"
-            min="1"
-            placeholder="How many?"
-            value={boxCount}
-            onChange={e => setBoxCount(e.target.value)}
-          />
-          <button style={styles.btnPrimary} type="submit">Add Boxes</button>
-        </form>
-        {ballotBoxes.length === 0 && <p style={styles.muted}>No ballot boxes.</p>}
-        {ballotBoxes.map(box => (
-          <div key={box.id} style={styles.boxRow}>
-            <span>{box.name}</span>
-            <button style={styles.btnDanger} onClick={() => handleDeleteBox(box.id)}>Remove</button>
-          </div>
-        ))}
-      </div>
-
-      {/* Scanners Section */}
-      <ScannersSection electionId={id} />
-
-      {/* Export Section */}
-      <ExportSection electionId={id} />
     </div>
   );
 }
@@ -235,7 +236,7 @@ function ScannersSection({ electionId }) {
   };
 
   return (
-    <div style={styles.section}>
+    <div>
       <div style={styles.sectionHeader}>
         <h2>Scanners</h2>
         <button style={styles.btnPrimary} onClick={() => setShowForm(!showForm)}>
@@ -245,20 +246,10 @@ function ScannersSection({ electionId }) {
 
       {showForm && (
         <form onSubmit={handleAdd} style={styles.form}>
-          <input
-            style={styles.input}
-            placeholder="Scanner Name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            required
-          />
-          <input
-            style={{ ...styles.input, flex: 1 }}
-            placeholder="Watch Folder Path (e.g. C:\Scans\Scanner1)"
-            value={folderPath}
-            onChange={e => setFolderPath(e.target.value)}
-            required
-          />
+          <input style={styles.input} placeholder="Scanner Name" value={name}
+            onChange={e => setName(e.target.value)} required />
+          <input style={{ ...styles.input, flex: 1 }} placeholder="Watch Folder Path (e.g. C:\Scans\Scanner1)"
+            value={folderPath} onChange={e => setFolderPath(e.target.value)} required />
           <button style={styles.btnPrimary} type="submit">Add</button>
         </form>
       )}
@@ -310,8 +301,8 @@ function GenerateAllBallots({ electionId }) {
   };
 
   return (
-    <div style={styles.section}>
-      <h2>Generate All Ballot PDFs</h2>
+    <div>
+      <h2>Ballot Generation</h2>
       <p style={styles.muted}>
         Generate printable PDFs for every round across all races. Serial numbers must already exist (set ballot count when creating races).
       </p>
@@ -386,7 +377,7 @@ function ExportSection({ electionId }) {
   };
 
   return (
-    <div style={styles.section}>
+    <div>
       <h2>Export</h2>
       <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
         {imageStatus === 'ready' ? (
@@ -425,13 +416,45 @@ function ExportSection({ electionId }) {
 }
 
 const styles = {
-  container: { maxWidth: 900, margin: '0 auto', padding: '1rem', fontFamily: 'system-ui, sans-serif' },
+  container: { maxWidth: 1100, margin: '0 auto', padding: '1rem', fontFamily: 'system-ui, sans-serif' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' },
   backLink: { color: '#2563eb', textDecoration: 'none', display: 'inline-block', marginBottom: '1rem' },
   form: { display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' },
   input: { padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem' },
-  section: { marginTop: '2rem' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+
+  // Sidebar layout
+  layout: { display: 'flex', gap: '1.5rem', alignItems: 'flex-start', marginTop: '1.5rem' },
+  sidebar: {
+    width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '2px',
+    borderRight: '1px solid #e5e7eb', paddingRight: '1rem',
+  },
+  navItem: {
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '0.6rem 0.75rem', background: 'none', border: 'none', borderLeft: '3px solid transparent',
+    cursor: 'pointer', fontSize: '0.9rem', color: '#4b5563', borderRadius: '0 4px 4px 0',
+  },
+  navItemActive: {
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '0.6rem 0.75rem', background: '#eff6ff', border: 'none', borderLeft: '3px solid #2563eb',
+    cursor: 'pointer', fontSize: '0.9rem', color: '#1d4ed8', fontWeight: 600, borderRadius: '0 4px 4px 0',
+  },
+  content: { flex: 1, minWidth: 0 },
+
+  // Mobile nav — hidden on desktop via media query workaround
+  mobileNav: {
+    display: 'none', overflowX: 'auto', gap: '0.25rem', padding: '0.25rem 0',
+    borderBottom: '1px solid #e5e7eb', marginBottom: '1rem',
+  },
+  mobileTab: {
+    padding: '0.5rem 0.75rem', background: 'none', border: 'none', borderBottom: '2px solid transparent',
+    cursor: 'pointer', fontSize: '0.82rem', color: '#6b7280', whiteSpace: 'nowrap',
+  },
+  mobileTabActive: {
+    padding: '0.5rem 0.75rem', background: 'none', border: 'none', borderBottom: '2px solid #2563eb',
+    cursor: 'pointer', fontSize: '0.82rem', color: '#2563eb', fontWeight: 600, whiteSpace: 'nowrap',
+  },
+
   raceCard: {
     display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem 1rem',
     border: '1px solid #ddd', borderRadius: 6, marginBottom: '0.5rem',
@@ -439,10 +462,26 @@ const styles = {
   },
   raceName: { fontWeight: 600, flex: 1 },
   statusBadge: { color: '#fff', padding: '2px 10px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 600 },
-  boxRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid #eee' },
+  boxRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0', borderBottom: '1px solid #eee' },
   btnPrimary: { padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
   btnSmall: { padding: '0.25rem 0.5rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },
   btnDanger: { padding: '0.25rem 0.5rem', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },
   btnDownload: { padding: '0.5rem 1rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'none', display: 'inline-block' },
   muted: { color: '#666', fontSize: '0.9rem' },
 };
+
+// Inject a <style> tag for responsive sidebar/mobile nav toggle
+if (typeof document !== 'undefined') {
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
+    @media (max-width: 768px) {
+      [data-sidebar] { display: none !important; }
+      [data-mobilenav] { display: flex !important; }
+      [data-layout] { flex-direction: column !important; }
+    }
+    @media (min-width: 769px) {
+      [data-mobilenav] { display: none !important; }
+    }
+  `;
+  document.head.appendChild(styleEl);
+}
