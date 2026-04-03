@@ -75,20 +75,12 @@ export default function Scanner() {
   }, []);
 
   const handleQRScan = (decodedText) => {
-    try {
-      const data = JSON.parse(decodedText);
-      if (data.sn) {
-        setScannedSN(data.sn);
-        stopScanner();
-        setFeedback(null);
-      }
-    } catch {
-      // Try as plain text SN
-      if (decodedText.length >= 8) {
-        setScannedSN(decodedText.toUpperCase());
-        stopScanner();
-        setFeedback(null);
-      }
+    // QR encodes plain serial number string
+    const sn = decodedText.trim().toUpperCase();
+    if (sn.length >= 8) {
+      setScannedSN(sn);
+      stopScanner();
+      setFeedback(null);
     }
   };
 

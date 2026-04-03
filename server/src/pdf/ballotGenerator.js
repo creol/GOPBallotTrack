@@ -51,7 +51,9 @@ async function loadDesignConfig(electionId) {
 }
 
 async function generateQR(data, size) {
-  return QRCode.toBuffer(JSON.stringify(data), {
+  // Encode as plain string (not JSON) for simpler, more readable QR codes
+  const payload = typeof data === 'string' ? data : String(data);
+  return QRCode.toBuffer(payload, {
     errorCorrectionLevel: 'M', margin: 1, width: size,
     color: { dark: '#000000', light: '#ffffff' },
   });
@@ -255,8 +257,8 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
 
   // === SINGLE QR CODE (bottom-right) + SN below ===
   if (cfg.qr.show) {
-    const qrData = { sn: serialNumber, round_id: round.id, race_id: race.id };
-    const qrBuffer = await generateQR(qrData, sc.qrSize);
+    // QR encodes only the serial number as a plain string
+    const qrBuffer = await generateQR(serialNumber, sc.qrSize);
 
     // Always bottom-right for ADF orientation detection via finder patterns
     const qrX = ox + bw - margin - sc.qrSize;
@@ -300,6 +302,7 @@ function buildBallotSpec({ election, race, round, sizeKey, qrPosition, ovalPosit
     dpi: DPI,
     qr_code: qrPosition ? {
       corner: 'bottom-right',
+      encoding: 'plain_serial_number',
       x: ptToPx(qrPosition.x),
       y: ptToPx(qrPosition.y),
       width: ptToPx(qrPosition.width),

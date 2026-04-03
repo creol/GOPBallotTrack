@@ -126,35 +126,44 @@ async function processSingleBallot(filePath, scannerId, io) {
     return;
   }
 
-  const qrData = typeof qrResult.qrData === 'object' ? qrResult.qrData : null;
-  if (!qrData || !qrData.sn || !qrData.round_id || !qrData.race_id) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — QR data invalid: ${JSON.stringify(qrResult.qrData)}`);
+  // QR encodes only the serial number as a plain string
+  const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData.trim() : null;
+  if (!serialNumber || serialNumber.length < 8) {
+    console.log(`[ScanWatcher] Final outcome: ERROR — QR data invalid: "${qrResult.qrData}"`);
     moveFile(filePath, path.join(SCAN_BASE, 'errors'), `badqr-${Date.now()}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'invalid_qr', scanner_id: scannerId });
     return;
   }
 
-  const { sn: serialNumber, round_id: roundId, race_id: raceId } = qrData;
-  console.log(`[ScanWatcher] QR decoded — SN: ${serialNumber}, round: ${roundId}, race: ${raceId}`);
+  console.log(`[ScanWatcher] QR decoded — SN: ${serialNumber}`);
 
-  // Validate the serial number exists
-  const { rows: [ballotSerial] } = await db.query(
-    'SELECT * FROM ballot_serials WHERE serial_number = $1 AND round_id = $2',
-    [serialNumber, roundId]
+  // Look up round and race from the database by serial number
+  const { rows: [ballotInfo] } = await db.query(
+    `SELECT bs.*, r.race_id, r.id as round_id, rc.election_id
+     FROM ballot_serials bs
+     JOIN rounds r ON bs.round_id = r.id
+     JOIN races rc ON r.race_id = rc.id
+     WHERE bs.serial_number = $1`,
+    [serialNumber]
   );
 
-  if (!ballotSerial) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — Invalid SN: ${serialNumber} for round ${roundId}`);
+  if (!ballotInfo) {
+    console.log(`[ScanWatcher] Final outcome: ERROR — SN not found in database: ${serialNumber}`);
     moveFile(filePath, path.join(SCAN_BASE, 'errors'), `invalid-${serialNumber}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'invalid_sn', serial_number: serialNumber, scanner_id: scannerId });
     return;
   }
 
+  const roundId = ballotInfo.round_id;
+  const raceId = ballotInfo.race_id;
+  const electionId = ballotInfo.election_id;
+  console.log(`[ScanWatcher] DB lookup — SN: ${serialNumber}, round: ${roundId}, race: ${raceId}, election: ${electionId}`);
+
   // Check for duplicate
   const pass = await getOrCreateActivePass(roundId);
   const { rows: [existingScan] } = await db.query(
     'SELECT id FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2',
-    [pass.id, ballotSerial.id]
+    [pass.id, ballotInfo.id]
   );
 
   if (existingScan) {
@@ -165,15 +174,14 @@ async function processSingleBallot(filePath, scannerId, io) {
   }
 
   // Load ballot spec for OMR
-  const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [raceId]);
-  const ballotSpec = loadBallotSpec(race.election_id, roundId);
+  const ballotSpec = loadBallotSpec(electionId, roundId);
 
   if (!ballotSpec) {
     console.log(`[ScanWatcher] Final outcome: FLAGGED — No ballot-spec.json for round ${roundId}, flagging for manual review`);
     await db.query(
       `INSERT INTO flagged_ballots (round_id, pass_id, ballot_serial_id, scanner_id, flag_reason, image_path)
        VALUES ($1, $2, $3, $4, 'uncertain', $5)`,
-      [roundId, pass.id, ballotSerial.id, scannerId, filePath]
+      [roundId, pass.id, ballotInfo.id, scannerId, filePath]
     );
     if (io) io.emit('scan:flagged', { serial_number: serialNumber, reason: 'no_spec', scanner_id: scannerId });
     return;
@@ -187,8 +195,9 @@ async function processSingleBallot(filePath, scannerId, io) {
 
   // Determine destination folder
   const { rows: [roundRow] } = await db.query('SELECT round_number FROM rounds WHERE id = $1', [roundId]);
+  const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [raceId]);
   const destBase = path.join(SCAN_BASE, 'processed',
-    String(race.election_id), race.name.toLowerCase().replace(/\s+/g, '-'),
+    String(electionId), race.name.toLowerCase().replace(/\s+/g, '-'),
     `round-${roundRow.round_number}`
   );
 
@@ -200,7 +209,7 @@ async function processSingleBallot(filePath, scannerId, io) {
     await db.query(
       `INSERT INTO flagged_ballots (round_id, pass_id, ballot_serial_id, scanner_id, flag_reason, image_path, omr_scores)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [roundId, pass.id, ballotSerial.id, scannerId, omrResult.flag_reason, flaggedPath,
+      [roundId, pass.id, ballotInfo.id, scannerId, omrResult.flag_reason, flaggedPath,
        JSON.stringify(omrResult.candidates)]
     );
 
@@ -219,11 +228,11 @@ async function processSingleBallot(filePath, scannerId, io) {
     await db.query(
       `INSERT INTO scans (pass_id, ballot_serial_id, candidate_id, scanner_id, scanned_by, image_path, omr_confidence, omr_method)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'auto')`,
-      [pass.id, ballotSerial.id, omrResult.detected_vote, scannerId, `ADF:${scannerRow.name}`,
+      [pass.id, ballotInfo.id, omrResult.detected_vote, scannerId, `ADF:${scannerRow.name}`,
        processedPath, omrResult.confidence]
     );
 
-    await db.query("UPDATE ballot_serials SET status = 'counted' WHERE id = $1", [ballotSerial.id]);
+    await db.query("UPDATE ballot_serials SET status = 'counted' WHERE id = $1", [ballotInfo.id]);
 
     const { rows: [{ count }] } = await db.query(
       'SELECT COUNT(*) as count FROM scans WHERE pass_id = $1', [pass.id]

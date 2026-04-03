@@ -29,12 +29,8 @@ export default function SpoiledBallot() {
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 200, height: 200 } },
         (decodedText) => {
-          try {
-            const data = JSON.parse(decodedText);
-            if (data.sn) setSerialNumber(data.sn);
-          } catch {
-            if (decodedText.length >= 8) setSerialNumber(decodedText.toUpperCase());
-          }
+          const sn = decodedText.trim().toUpperCase();
+          if (sn.length >= 8) setSerialNumber(sn);
           stopScanner();
         },
         () => {}

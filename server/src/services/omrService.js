@@ -3,16 +3,14 @@ const jsQR = require('jsqr');
 
 /**
  * Attempt to decode a QR code from a raw RGBA pixel buffer.
- * Returns the parsed JSON data or null.
+ * Returns { data: string, location } or null.
+ * QR encodes only the serial number as a plain string.
  */
 function decodeQR(rgbaBuffer, width, height) {
   const code = jsQR(new Uint8ClampedArray(rgbaBuffer), width, height);
-  if (!code) return null;
-  try {
-    return { data: JSON.parse(code.data), location: code.location };
-  } catch {
-    return { data: code.data, location: code.location };
-  }
+  if (!code || !code.data) return null;
+  // Return raw string — no JSON parsing needed
+  return { data: code.data.trim(), location: code.location };
 }
 
 /**
@@ -87,9 +85,8 @@ async function findQRInImage(imageBuffer) {
         const result = await tryDecodeWithPreprocess(imageBuffer, metadata, maxDim, preprocess);
         if (result && result.data) {
           // Verify we got real data, not empty string
-          const hasData = typeof result.data === 'object'
-            ? (result.data.sn || result.data.round_id)
-            : (typeof result.data === 'string' && result.data.length > 0);
+          // QR encodes plain serial number string — just check it's non-empty
+          const hasData = typeof result.data === 'string' && result.data.length >= 8;
           if (hasData) {
             console.log(`[OMR] QR found with ${label}: ${JSON.stringify(result.data)}`);
             return {
@@ -232,8 +229,6 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   if (!qrResult) {
     return {
       serial_number: null,
-      race_id: null,
-      round_id: null,
       rotation_applied: 0,
       candidates: [],
       detected_vote: null,
@@ -242,9 +237,8 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
     };
   }
 
-  const { sn: serialNumber, race_id, round_id } = typeof qrResult.qrData === 'object'
-    ? qrResult.qrData
-    : { sn: null, race_id: null, round_id: null };
+  // QR encodes only the serial number as a plain string
+  const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData : null;
 
   // 2. Rotate to upright
   const rotation = qrResult.rotation;
