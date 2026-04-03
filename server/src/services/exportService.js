@@ -21,6 +21,7 @@ async function exportImages(electionId) {
     fs.mkdirSync(outDir, { recursive: true });
     const zipPath = path.join(outDir, 'ballot-images.zip');
 
+    const { rows: [election] } = await db.query('SELECT * FROM elections WHERE id = $1', [electionId]);
     const { rows: races } = await db.query(
       'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order',
       [electionId]
@@ -28,6 +29,7 @@ async function exportImages(electionId) {
 
     const output = fs.createWriteStream(zipPath);
     const archive = archiver('zip', { zlib: { level: 6 } });
+    let fileCount = 0;
 
     await new Promise((resolve, reject) => {
       output.on('close', resolve);
@@ -35,8 +37,11 @@ async function exportImages(electionId) {
       archive.pipe(output);
 
       (async () => {
+        const manifest = { election: election.name, exported_at: new Date().toISOString(), races: [] };
+
         for (const race of races) {
-          const raceDirName = `race-${race.name.toLowerCase().replace(/\s+/g, '-')}`;
+          const raceDirName = race.name.toLowerCase().replace(/\s+/g, '-');
+          const raceManifest = { name: race.name, rounds: [] };
 
           const { rows: rounds } = await db.query(
             'SELECT * FROM rounds WHERE race_id = $1 ORDER BY round_number',
@@ -45,7 +50,17 @@ async function exportImages(electionId) {
 
           for (const round of rounds) {
             const roundDirName = `round-${round.round_number}`;
+            const prefix = `${raceDirName}/${roundDirName}`;
+            let scanImageCount = 0;
 
+            // Include generated ballot PDF if it exists
+            const ballotPdf = path.join(UPLOADS_BASE, 'elections', String(electionId), 'rounds', String(round.id), 'ballots.pdf');
+            if (fs.existsSync(ballotPdf)) {
+              archive.file(ballotPdf, { name: `${prefix}/ballots.pdf` });
+              fileCount++;
+            }
+
+            // Include scanned ballot images
             const { rows: scans } = await db.query(
               `SELECT s.front_image_path, s.back_image_path, bs.serial_number
                FROM scans s
@@ -57,24 +72,45 @@ async function exportImages(electionId) {
             );
 
             for (const scan of scans) {
-              const prefix = `ballot-images/${raceDirName}/${roundDirName}`;
               if (scan.front_image_path && fs.existsSync(scan.front_image_path)) {
                 const ext = path.extname(scan.front_image_path) || '.jpg';
-                archive.file(scan.front_image_path, { name: `${prefix}/${scan.serial_number}-front${ext}` });
+                archive.file(scan.front_image_path, { name: `${prefix}/scans/${scan.serial_number}-front${ext}` });
+                scanImageCount++;
+                fileCount++;
               }
               if (scan.back_image_path && fs.existsSync(scan.back_image_path)) {
                 const ext = path.extname(scan.back_image_path) || '.jpg';
-                archive.file(scan.back_image_path, { name: `${prefix}/${scan.serial_number}-back${ext}` });
+                archive.file(scan.back_image_path, { name: `${prefix}/scans/${scan.serial_number}-back${ext}` });
+                fileCount++;
               }
             }
+
+            // Serial number list
+            const { rows: serials } = await db.query(
+              'SELECT serial_number, status FROM ballot_serials WHERE round_id = $1 ORDER BY serial_number',
+              [round.id]
+            );
+
+            raceManifest.rounds.push({
+              round_number: round.round_number,
+              paper_color: round.paper_color,
+              status: round.status,
+              serial_count: serials.length,
+              scan_images: scanImageCount,
+              has_ballot_pdf: fs.existsSync(ballotPdf),
+            });
           }
+
+          manifest.races.push(raceManifest);
         }
 
+        // Always include a manifest so the ZIP is never empty
+        archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
         archive.finalize();
       })();
     });
 
-    exportJobs[jobKey] = { status: 'ready', path: zipPath, completed: Date.now() };
+    exportJobs[jobKey] = { status: 'ready', path: zipPath, completed: Date.now(), file_count: fileCount };
     return zipPath;
   } catch (err) {
     exportJobs[jobKey] = { status: 'error', error: err.message };

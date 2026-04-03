@@ -168,6 +168,9 @@ export default function ElectionDetail() {
         ))}
       </div>
 
+      {/* Generate All Ballots Section */}
+      <GenerateAllBallots electionId={id} />
+
       {/* Ballot Boxes Section */}
       <div style={styles.section}>
         <h2>Ballot Boxes</h2>
@@ -193,6 +196,66 @@ export default function ElectionDetail() {
 
       {/* Export Section */}
       <ExportSection electionId={id} />
+    </div>
+  );
+}
+
+const BALLOT_SIZES = [
+  { value: 'letter', label: 'Letter (1/page)' },
+  { value: 'half_letter', label: 'Half Letter (2/page)' },
+  { value: 'quarter_letter', label: 'Quarter (4/page)' },
+  { value: 'eighth_letter', label: '1/8 Letter (8/page)' },
+];
+
+function GenerateAllBallots({ electionId }) {
+  const [size, setSize] = useState('letter');
+  const [generating, setGenerating] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setResult(null);
+    try {
+      const { data } = await api.post(`/admin/elections/${electionId}/generate-all-ballots`, { size });
+      setResult(data);
+    } catch (err) {
+      setResult({ error: err.response?.data?.error || 'Failed to generate' });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  return (
+    <div style={styles.section}>
+      <h2>Generate All Ballot PDFs</h2>
+      <p style={styles.muted}>
+        Generate printable PDFs for every round across all races. Serial numbers must already exist (set ballot count when creating races).
+      </p>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+        <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
+          {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <button
+          style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }}
+          onClick={handleGenerate}
+          disabled={generating}
+        >
+          {generating ? 'Generating...' : 'Generate All PDFs'}
+        </button>
+      </div>
+      {result && !result.error && (
+        <div style={{ marginTop: '0.75rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '0.75rem' }}>
+          <strong>{result.message}</strong>
+          <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem' }}>
+            {result.results?.map((r, i) => (
+              <li key={i} style={{ color: r.status === 'generated' ? '#166534' : '#dc2626', fontSize: '0.9rem' }}>
+                {r.race} Round {r.round}: {r.status === 'generated' ? `${r.serial_count} ballots` : r.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {result?.error && <p style={{ color: '#dc2626', marginTop: '0.5rem' }}>{result.error}</p>}
     </div>
   );
 }

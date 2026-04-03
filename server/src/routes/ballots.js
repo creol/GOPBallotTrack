@@ -41,7 +41,7 @@ router.post('/rounds/:id/generate-ballots', upload.single('logo'), async (req, r
     const logoPath = req.file ? req.file.path : null;
     const confirmRegenerate = req.body.confirm_regenerate === 'true';
 
-    // Check if SNs already exist (pre-generated at race creation)
+    // Check existing state
     const { rows: [{ count: existingSNCount }] } = await db.query(
       'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [roundId]
     );
@@ -55,27 +55,21 @@ router.post('/rounds/:id/generate-ballots', upload.single('logo'), async (req, r
       return res.status(400).json({ error: `Invalid size. Valid: ${Object.keys(SIZES).join(', ')}` });
     }
 
-    // Check if ballots already exist for this round
-    const { rows: [{ count }] } = await db.query(
-      'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [roundId]
-    );
-    if (parseInt(count) > 0 && !confirmRegenerate) {
+    // Only block if a PDF already exists (not just SNs — SNs are pre-generated at race creation)
+    const outDir = await getOutputDir(roundId);
+    const pdfExists = outDir && fs.existsSync(path.join(outDir, 'ballots.pdf'));
+    if (pdfExists && !confirmRegenerate) {
       return res.status(409).json({
-        error: 'Ballots already generated for this round',
-        existing_count: parseInt(count),
-        message: 'Generating again will create NEW serial numbers and overwrite the existing PDF. If ballots have already been printed, do NOT regenerate. Send confirm_regenerate=true to proceed anyway.',
+        error: 'Ballot PDF already exists for this round',
+        existing_count: parseInt(existingSNCount),
+        message: 'Regenerating will overwrite the existing PDF. If ballots have already been printed, the serial numbers will remain the same but the layout may change. Send confirm_regenerate=true to proceed.',
       });
-    }
-
-    // If regenerating, clear old serials first
-    if (parseInt(count) > 0 && confirmRegenerate) {
-      await db.query("DELETE FROM ballot_serials WHERE round_id = $1 AND status = 'unused'", [roundId]);
     }
 
     const result = await generateBallots({ roundId, quantity, sizeKey, logoPath });
 
     res.json({
-      message: `Generated ${quantity} ballots`,
+      message: `Generated ${result.serials.length} ballots`,
       serial_count: result.serials.length,
       pdf_url: `/api/admin/rounds/${roundId}/ballot-pdf`,
       zip_url: `/api/admin/rounds/${roundId}/ballot-data`,
@@ -83,6 +77,58 @@ router.post('/rounds/:id/generate-ballots', upload.single('logo'), async (req, r
     });
   } catch (err) {
     console.error('Generate ballots error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// POST /api/admin/elections/:id/generate-all-ballots — Generate PDFs for all rounds in the election
+router.post('/elections/:id/generate-all-ballots', async (req, res) => {
+  try {
+    const electionId = parseInt(req.params.id);
+    const sizeKey = req.body.size || 'letter';
+    if (!SIZES[sizeKey]) {
+      return res.status(400).json({ error: `Invalid size. Valid: ${Object.keys(SIZES).join(', ')}` });
+    }
+
+    const { rows: races } = await db.query(
+      'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order', [electionId]
+    );
+
+    const results = [];
+    for (const race of races) {
+      const { rows: rounds } = await db.query(
+        'SELECT * FROM rounds WHERE race_id = $1 ORDER BY round_number', [race.id]
+      );
+
+      for (const round of rounds) {
+        // Check if SNs exist
+        const { rows: [{ count }] } = await db.query(
+          'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [round.id]
+        );
+        if (parseInt(count) === 0) continue; // skip rounds with no SNs
+
+        try {
+          const result = await generateBallots({ roundId: round.id, quantity: null, sizeKey, logoPath: null });
+          results.push({
+            race: race.name,
+            round: round.round_number,
+            serial_count: result.serials.length,
+            status: 'generated',
+          });
+        } catch (err) {
+          results.push({
+            race: race.name,
+            round: round.round_number,
+            status: 'error',
+            error: err.message,
+          });
+        }
+      }
+    }
+
+    res.json({ message: `Generated ballot PDFs for ${results.filter(r => r.status === 'generated').length} rounds`, results });
+  } catch (err) {
+    console.error('Generate all ballots error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
