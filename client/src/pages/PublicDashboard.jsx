@@ -27,7 +27,7 @@ export default function PublicDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const { data } = await api.get(`/api/public/${electionId}`);
+      const { data } = await api.get(`/public/${electionId}`);
       setElection(data);
     } catch {}
   }, [electionId]);
@@ -45,7 +45,7 @@ export default function PublicDashboard() {
     e.preventDefault();
     if (searchSN.length < 8) return;
     try {
-      const { data } = await api.get(`/api/public/${electionId}/search?sn=${searchSN}`);
+      const { data } = await api.get(`/public/${electionId}/search?sn=${searchSN}`);
       setSearchResult(data);
       if (data.found) {
         navigate(`/public/${electionId}/ballots/${data.serial_number}`);

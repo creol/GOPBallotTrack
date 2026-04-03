@@ -8,7 +8,7 @@ export default function PublicRoundDetail() {
   const [snFilter, setSnFilter] = useState('');
 
   useEffect(() => {
-    api.get(`/api/public/${electionId}/rounds/${roundId}`).then(({ data }) => setData(data));
+    api.get(`/public/${electionId}/rounds/${roundId}`).then(({ data }) => setData(data));
   }, [electionId, roundId]);
 
   if (!data) return <div style={styles.container}><p>Loading...</p></div>;

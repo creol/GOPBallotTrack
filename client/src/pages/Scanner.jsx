@@ -106,7 +106,7 @@ export default function Scanner() {
     if (!activePass || !scannedSN || submitting) return;
     setSubmitting(true);
     try {
-      const { data } = await api.post(`/api/passes/${activePass.id}/scans`, {
+      const { data } = await api.post(`/passes/${activePass.id}/scans`, {
         serial_number: scannedSN,
         candidate_id: candidateId,
         ballot_box_id: selectedBox || undefined,
@@ -123,7 +123,7 @@ export default function Scanner() {
   };
 
   const handleCreatePass = async () => {
-    const { data } = await api.post(`/api/rounds/${roundId}/passes`);
+    const { data } = await api.post(`/rounds/${roundId}/passes`);
     setActivePass(data);
     setScanCount(0);
     fetchRoundData();
@@ -132,7 +132,7 @@ export default function Scanner() {
   const handleCompletePass = async () => {
     if (!activePass) return;
     if (!confirm(`Complete Pass ${activePass.pass_number}? This cannot be undone.`)) return;
-    await api.put(`/api/passes/${activePass.id}/complete`);
+    await api.put(`/passes/${activePass.id}/complete`);
     setActivePass(null);
     fetchRoundData();
   };

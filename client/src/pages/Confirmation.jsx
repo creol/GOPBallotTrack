@@ -14,7 +14,7 @@ export default function Confirmation() {
 
   const fetchComparison = async () => {
     try {
-      const { data: comp } = await api.get(`/api/rounds/${roundId}/comparison`);
+      const { data: comp } = await api.get(`/rounds/${roundId}/comparison`);
       setData(comp);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load comparison');
@@ -28,7 +28,7 @@ export default function Confirmation() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/api/rounds/${roundId}/confirm`, { confirmed_by_name: judgeName });
+      await api.post(`/rounds/${roundId}/confirm`, { confirmed_by_name: judgeName });
       navigate(`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/chair`);
     } catch (err) {
       setError(err.response?.data?.error || 'Confirmation failed');
@@ -43,7 +43,7 @@ export default function Confirmation() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/api/rounds/${roundId}/confirm-override`, {
+      await api.post(`/rounds/${roundId}/confirm-override`, {
         confirmed_by_name: judgeName,
         override_notes: overrideNotes,
       });

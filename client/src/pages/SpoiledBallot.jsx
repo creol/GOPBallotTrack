@@ -68,7 +68,7 @@ export default function SpoiledBallot() {
       if (notes) formData.append('notes', notes);
       if (image) formData.append('image', image);
 
-      await api.post(`/api/rounds/${roundId}/spoiled`, formData, {
+      await api.post(`/rounds/${roundId}/spoiled`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 

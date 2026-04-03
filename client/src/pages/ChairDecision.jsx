@@ -14,7 +14,7 @@ export default function ChairDecision() {
 
   const fetchData = async () => {
     try {
-      const { data: decision } = await api.get(`/api/rounds/${roundId}/chair-decision`);
+      const { data: decision } = await api.get(`/rounds/${roundId}/chair-decision`);
       setData(decision);
       if (decision.round.status === 'released') setReleased(true);
     } catch (err) {
@@ -29,7 +29,7 @@ export default function ChairDecision() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/api/rounds/${roundId}/release`, { released_by_name: chairName });
+      await api.post(`/rounds/${roundId}/release`, { released_by_name: chairName });
       setReleased(true);
     } catch (err) {
       setError(err.response?.data?.error || 'Release failed');

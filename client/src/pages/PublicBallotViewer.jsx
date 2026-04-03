@@ -8,7 +8,7 @@ export default function PublicBallotViewer() {
   const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
-    api.get(`/api/public/${electionId}/search?sn=${serialNumber}`)
+    api.get(`/public/${electionId}/search?sn=${serialNumber}`)
       .then(({ data }) => setData(data))
       .catch(() => setData({ found: false, message: 'Ballot not found or results not yet released' }));
   }, [electionId, serialNumber]);
