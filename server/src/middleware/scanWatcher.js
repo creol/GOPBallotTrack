@@ -5,9 +5,9 @@ const sharp = require('sharp');
 const db = require('../db');
 const { findQRInImage, processScannedBallot } = require('../services/omrService');
 
-// Use path.resolve so relative paths in the DB work from any cwd on Windows
-const SCAN_BASE = path.resolve(__dirname, '..', '..', '..', 'data', 'scans');
-const UPLOADS_BASE = path.resolve(__dirname, '..', '..', '..', 'uploads');
+// Fixed container paths — mapped via docker volume mount ./data/scans:/app/data/scans
+const SCAN_BASE = '/app/data/scans';
+const UPLOADS_BASE = '/app/uploads';
 
 // Track active watchers so we can restart them
 const activeWatchers = new Map();
@@ -316,8 +316,8 @@ function onNewFile(filePath, scannerId, io) {
  * Start a watcher for a single scanner.
  */
 function startWatcher(scanner, io) {
-  // Use the path exactly as stored in the DB (Windows paths like C:\Scans\Scanner1)
-  const watchPath = path.resolve(scanner.watch_folder_path);
+  // Path is stored as container path (e.g. /app/data/scans/scanner1/incoming)
+  const watchPath = scanner.watch_folder_path;
 
   // Create the incoming folder if it doesn't exist
   fs.mkdirSync(watchPath, { recursive: true });

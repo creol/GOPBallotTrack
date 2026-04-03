@@ -4,16 +4,20 @@ const db = require('../db');
 const router = Router();
 
 // POST /api/admin/elections/:electionId/scanners — Register scanner
+// Only requires a name — path is auto-generated as /app/data/scans/{slug}/incoming
 router.post('/elections/:electionId/scanners', async (req, res) => {
   try {
-    const { name, watch_folder_path } = req.body;
+    const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
-    if (!watch_folder_path) return res.status(400).json({ error: 'watch_folder_path is required' });
+
+    // Auto-generate container path from scanner name
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const watchPath = `/app/data/scans/${slug}/incoming`;
 
     const { rows: [scanner] } = await db.query(
       `INSERT INTO scanners (election_id, name, watch_folder_path)
        VALUES ($1, $2, $3) RETURNING *`,
-      [req.params.electionId, name, watch_folder_path]
+      [req.params.electionId, name, watchPath]
     );
     res.status(201).json(scanner);
   } catch (err) {

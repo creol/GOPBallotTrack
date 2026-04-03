@@ -205,7 +205,6 @@ function ScannersSection({ electionId }) {
   const [scanners, setScanners] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
-  const [folderPath, setFolderPath] = useState('');
 
   const fetchScanners = async () => {
     try {
@@ -218,10 +217,9 @@ function ScannersSection({ electionId }) {
 
   const handleAdd = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !folderPath.trim()) return;
-    await api.post(`/admin/elections/${electionId}/scanners`, { name, watch_folder_path: folderPath });
+    if (!name.trim()) return;
+    await api.post(`/admin/elections/${electionId}/scanners`, { name });
     setName('');
-    setFolderPath('');
     setShowForm(false);
     fetchScanners();
   };
@@ -243,12 +241,14 @@ function ScannersSection({ electionId }) {
 
       {showForm && (
         <form onSubmit={handleAdd} style={styles.form}>
-          <input style={styles.input} placeholder="Scanner Name" value={name}
+          <input style={styles.input} placeholder="Scanner Name (e.g. ScanSnap1)" value={name}
             onChange={e => setName(e.target.value)} required />
-          <input style={{ ...styles.input, flex: 1 }} placeholder="Watch Folder Path (e.g. C:\Scans\Scanner1)"
-            value={folderPath} onChange={e => setFolderPath(e.target.value)} required />
           <button style={styles.btnPrimary} type="submit">Add</button>
         </form>
+        <p style={styles.muted}>
+          The watch folder will be auto-created at: <code>data/scans/{'{name}'}/incoming/</code>
+          — configure your scanner software to save files there.
+        </p>
       )}
 
       {scanners.length === 0 && <p style={styles.muted}>No scanners registered.</p>}
@@ -256,7 +256,7 @@ function ScannersSection({ electionId }) {
         <div key={s.id} style={styles.boxRow}>
           <div style={{ flex: 1 }}>
             <span style={{ fontWeight: 600 }}>{s.name}</span>
-            <span style={styles.muted}> — {s.watch_folder_path}</span>
+            <span style={styles.muted}> — {s.watch_folder_path.replace('/app/', '')}</span>
           </div>
           <span style={{
             padding: '2px 8px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 600,

@@ -30,6 +30,7 @@ services:
       CHAIR_PIN: ${CHAIR_PIN:-9012}
     volumes:
       - ./uploads:/app/uploads
+      - ./data/scans:/app/data/scans
     depends_on:
       db:
         condition: service_healthy
