@@ -298,13 +298,19 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
     // Scale them to actual image pixels and add to QR anchor
     const ovalCenterX = qrAnchorX + (candidate.oval.x_offset_from_qr * scaleFromSpec);
     const ovalCenterY = qrAnchorY + (candidate.oval.y_offset_from_qr * scaleFromSpec);
-    const ovalW = candidate.oval.width * scaleFromSpec;
-    const ovalH = candidate.oval.height * scaleFromSpec;
+    const ovalFullW = candidate.oval.width * scaleFromSpec;
+    const ovalFullH = candidate.oval.height * scaleFromSpec;
+
+    // Shrink crop to inner 65% to exclude the printed oval outline
+    // and any adjacent candidate name text bleeding into the zone
+    const shrink = 0.65;
+    const ovalW = ovalFullW * shrink;
+    const ovalH = ovalFullH * shrink;
 
     const cropX = ovalCenterX - ovalW / 2;
     const cropY = ovalCenterY - ovalH / 2;
 
-    console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), size=${Math.round(ovalW)}x${Math.round(ovalH)}`);
+    console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), crop=${Math.round(ovalW)}x${Math.round(ovalH)} (inner ${shrink * 100}% of ${Math.round(ovalFullW)}x${Math.round(ovalFullH)})`);
 
     const fillRatio = await analyzeOvalFill(uprightBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
 

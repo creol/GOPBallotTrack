@@ -320,10 +320,11 @@ function buildBallotSpec({ election, race, round, sizeKey, qrPosition, ovalPosit
       },
     })),
     omr_thresholds: {
-      // The printed oval outline alone produces ~0.12-0.14 fill ratio.
-      // A voter's filled oval adds significantly more darkness.
-      marked: 0.25,    // clearly filled by voter (well above oval outline baseline)
-      unmarked: 0.16,  // just the printed oval outline, no voter mark
+      // With inner-65% crop, the oval outline is excluded.
+      // Empty inner area: ~0.02-0.06 (just paper noise)
+      // Filled inner area: ~0.40+ (dark pencil/pen fill)
+      marked: 0.20,    // clearly filled by voter
+      unmarked: 0.10,  // empty (just paper noise, no mark)
     },
   };
   return spec;
