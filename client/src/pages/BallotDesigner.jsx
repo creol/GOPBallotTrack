@@ -11,10 +11,16 @@ export default function BallotDesigner() {
   const [previewSize, setPreviewSize] = useState('letter');
   const [previewUrl, setPreviewUrl] = useState(null);
   const [generatingPreview, setGeneratingPreview] = useState(false);
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
     api.get(`/admin/elections/${electionId}`).then(({ data }) => setElection(data));
     api.get(`/admin/elections/${electionId}/ballot-design`).then(({ data }) => setConfig(data.config));
+    // Check if logo already exists
+    fetch(`/api/admin/elections/${electionId}/ballot-design/logo`, { method: 'HEAD' })
+      .then(r => { if (r.ok) setLogoUrl(`/api/admin/elections/${electionId}/ballot-design/logo`); })
+      .catch(() => {});
   }, [electionId]);
 
   const updateField = (section, field, value) => {
@@ -23,6 +29,30 @@ export default function BallotDesigner() {
       [section]: { ...prev[section], [field]: value },
     }));
     setSaved(false);
+  };
+
+  const handleLogoUpload = async (file) => {
+    if (!file) return;
+    setUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.append('logo', file);
+      await api.post(`/admin/elections/${electionId}/ballot-design/logo`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setLogoUrl(`/api/admin/elections/${electionId}/ballot-design/logo?t=${Date.now()}`);
+      updateField('logo', 'show', true);
+    } catch (err) {
+      alert('Logo upload failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleLogoRemove = async () => {
+    await api.delete(`/admin/elections/${electionId}/ballot-design/logo`);
+    setLogoUrl(null);
+    updateField('logo', 'show', false);
   };
 
   const handleSave = async () => {
@@ -105,6 +135,19 @@ export default function BallotDesigner() {
           <Section title="Logo">
             <Toggle label="Show logo" value={config.logo.show} onChange={v => updateField('logo', 'show', v)} />
             {config.logo.show && <>
+              {logoUrl ? (
+                <div style={{ marginBottom: '0.5rem' }}>
+                  <img src={logoUrl} alt="Logo" style={{ maxWidth: 80, maxHeight: 80, border: '1px solid #d1d5db', borderRadius: 4, display: 'block', marginBottom: '0.4rem' }} />
+                  <button style={s.btnRemove} onClick={handleLogoRemove}>Remove logo</button>
+                </div>
+              ) : (
+                <div style={{ marginBottom: '0.5rem' }}>
+                  <span style={s.fieldLabel}>Upload logo image</span>
+                  <input type="file" accept="image/*" style={{ fontSize: '0.82rem' }}
+                    onChange={e => handleLogoUpload(e.target.files[0])} disabled={uploadingLogo} />
+                  {uploadingLogo && <span style={s.muted}> Uploading...</span>}
+                </div>
+              )}
               <SelectField label="Position" value={config.logo.position} options={[
                 { value: 'top-left', label: 'Top Left' },
                 { value: 'top-right', label: 'Top Right' },
@@ -287,6 +330,7 @@ const s = {
   previewFrame: { width: '100%', height: 600, border: '1px solid #d1d5db', borderRadius: 6 },
   previewPlaceholder: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, padding: '3rem', textAlign: 'center', color: '#666' },
   btnPrimary: { padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
+  btnRemove: { padding: '0.2rem 0.5rem', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.78rem' },
   btnSecondary: { padding: '0.5rem 1rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
   muted: { color: '#9ca3af', fontSize: '0.82rem' },
 };

@@ -112,22 +112,35 @@ function getScale(sizeKey, cfg) {
  * Render one ballot within a clipping region.
  * ox, oy = origin offset on the page. bw, bh = ballot dimensions.
  */
+/**
+ * Find the logo file for an election from the uploads directory.
+ */
+function findElectionLogo(electionId) {
+  const dir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(electionId), 'logos');
+  if (!fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir).filter(f => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(f));
+  return files.length > 0 ? path.join(dir, files[0]) : null;
+}
+
 async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candidates, serialNumber, sizeKey, logoPath, cfg }) {
   const margin = Math.max(bw * 0.06, 14);
   const contentWidth = bw - margin * 2;
   const sc = getScale(sizeKey, cfg);
+
+  // Resolve logo: explicit path > election's uploaded logo
+  const resolvedLogo = logoPath || findElectionLogo(election.id);
 
   let y = oy + margin;
   const left = ox + margin;
 
   // === HEADER ===
   if (cfg.header.show) {
-    if (cfg.logo.show && logoPath && fs.existsSync(logoPath)) {
+    if (cfg.logo.show && resolvedLogo && fs.existsSync(resolvedLogo)) {
       const logoW = Math.min(cfg.logo.maxWidth, bw * 0.15);
       const logoX = cfg.logo.position === 'top-right' ? ox + bw - margin - logoW
         : cfg.logo.position === 'top-center' ? ox + (bw - logoW) / 2
         : left;
-      doc.image(logoPath, logoX, y, { width: logoW, height: logoW });
+      doc.image(resolvedLogo, logoX, y, { width: logoW, height: logoW });
       if (cfg.logo.position !== 'top-center') {
         const textX = cfg.logo.position === 'top-left' ? left + logoW + 6 : left;
         const textW = cfg.logo.position === 'top-left' ? contentWidth - logoW - 6 : contentWidth - logoW - 6;

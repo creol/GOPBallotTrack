@@ -1,7 +1,23 @@
 const { Router } = require('express');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const db = require('../db');
 
 const router = Router();
+
+const logoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', req.params.id, 'logos');
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.png';
+    cb(null, `logo${ext}`);
+  },
+});
+const logoUpload = multer({ storage: logoStorage });
 
 const DEFAULT_CONFIG = {
   header: {
@@ -110,6 +126,33 @@ router.put('/elections/:id/ballot-design', async (req, res) => {
 // GET /api/admin/elections/:id/ballot-design/defaults — Get default config
 router.get('/elections/:id/ballot-design/defaults', (req, res) => {
   res.json(DEFAULT_CONFIG);
+});
+
+// POST /api/admin/elections/:id/ballot-design/logo — Upload logo
+router.post('/elections/:id/ballot-design/logo', logoUpload.single('logo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const logoPath = req.file.path;
+  const logoUrl = `/api/admin/elections/${req.params.id}/ballot-design/logo`;
+  res.json({ path: logoPath, url: logoUrl });
+});
+
+// GET /api/admin/elections/:id/ballot-design/logo — Serve the logo image
+router.get('/elections/:id/ballot-design/logo', (req, res) => {
+  const dir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', req.params.id, 'logos');
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: 'No logo uploaded' });
+  const files = fs.readdirSync(dir).filter(f => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(f));
+  if (files.length === 0) return res.status(404).json({ error: 'No logo uploaded' });
+  res.sendFile(path.join(dir, files[0]));
+});
+
+// DELETE /api/admin/elections/:id/ballot-design/logo — Remove logo
+router.delete('/elections/:id/ballot-design/logo', (req, res) => {
+  const dir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', req.params.id, 'logos');
+  if (fs.existsSync(dir)) {
+    const files = fs.readdirSync(dir);
+    for (const f of files) fs.unlinkSync(path.join(dir, f));
+  }
+  res.json({ message: 'Logo removed' });
 });
 
 module.exports = router;
