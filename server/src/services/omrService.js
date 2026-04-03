@@ -288,25 +288,35 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
     uprightMeta = imgMeta;
   }
 
-  // 4. Calculate scale and anchor from QR finder patterns
-  const us = uprightQR.scale || 1;
-  const tl = uprightQR.location.topLeftCorner;
-  const tr = uprightQR.location.topRightCorner;
-  const bl = uprightQR.location.bottomLeftCorner;
+  // 4. Calculate scale from image dimensions vs spec ballot dimensions
+  // This is the most reliable method — no guessing about QR bounding boxes.
+  // The spec is at 300 DPI. A quarter-letter ballot = 4.25" x 5.5" = 1275 x 1650 px at 300 DPI.
+  const BALLOT_SIZES_PX = {
+    'letter': { w: 2550, h: 3300 },
+    'half_letter': { w: 1650, h: 2550 },
+    'quarter_letter': { w: 1275, h: 1650 },
+    'eighth_letter': { w: 825, h: 1275 },
+  };
+  const specBallot = BALLOT_SIZES_PX[ballotSpec.ballot_size] || BALLOT_SIZES_PX['quarter_letter'];
+  const scaleX = uprightMeta.width / specBallot.w;
+  const scaleY = uprightMeta.height / specBallot.h;
+  const scaleFromSpec = (scaleX + scaleY) / 2;
 
-  const f2fX = Math.abs(tr.x - tl.x) / us;
-  const f2fY = Math.abs(bl.y - tl.y) / us;
-  const expansion = 1.44;
-  const mX = (f2fX * expansion - f2fX) / 2;
-  const mY = (f2fY * expansion - f2fY) / 2;
-  const anchorX = (tl.x / us) - mX;
-  const anchorY = (tl.y / us) - mY;
-
+  // Anchor = QR top-left corner in the image, estimated from finder pattern center
+  // The QR center in the spec is at (qr.x + qr.width/2, qr.y + qr.height/2)
+  // The QR center in the image is detected by jsQR
   const specQR = ballotSpec.qr_code;
-  const detectedQRWidth = f2fX * expansion;
-  const scaleFromSpec = detectedQRWidth / specQR.width;
+  const us = uprightQR.scale || 1;
+  const qrImgCx = (uprightQR.location.topLeftCorner.x + uprightQR.location.topRightCorner.x) / 2 / us;
+  const qrImgCy = (uprightQR.location.topLeftCorner.y + uprightQR.location.bottomLeftCorner.y) / 2 / us;
+  const specQRcx = specQR.x + specQR.width / 2;
+  const specQRcy = specQR.y + specQR.height / 2;
 
-  console.log(`[OMR] Anchor=(${Math.round(anchorX)},${Math.round(anchorY)}), scale=${scaleFromSpec.toFixed(3)}, f2f=${Math.round(f2fX)}x${Math.round(f2fY)}`);
+  // The anchor is the QR's spec top-left position mapped to image coordinates
+  const anchorX = qrImgCx - (specQRcx - specQR.x) * scaleFromSpec;
+  const anchorY = qrImgCy - (specQRcy - specQR.y) * scaleFromSpec;
+
+  console.log(`[OMR] Scale: ${scaleFromSpec.toFixed(4)} (imgW=${uprightMeta.width}, specW=${specBallot.w}), QR center img=(${Math.round(qrImgCx)},${Math.round(qrImgCy)}), anchor=(${Math.round(anchorX)},${Math.round(anchorY)})`);
 
   // 5. Map oval positions using QR-relative offsets and analyze fills
   const candidateResults = [];
