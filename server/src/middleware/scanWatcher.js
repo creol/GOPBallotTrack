@@ -270,13 +270,24 @@ async function processDuplexPair(files, scannerId, io) {
   }
 }
 
+// Track files that existed before watcher started (skip them)
+const existingFiles = new Set();
+
 /**
  * Handle a new file appearing in a scanner's watch folder.
- * Buffers files for DUPLEX_WAIT_MS to detect front/back pairs.
+ * Buffers files for DUPLEX_WAIT_MS to collect a duplex pair (max 2 files).
+ * If more arrive, flushes the current pair and starts a new buffer.
  */
 function onNewFile(filePath, scannerId, io) {
   if (!SUPPORTED_EXT.test(filePath)) {
     console.log(`[ScanWatcher] Ignoring non-image file: ${filePath}`);
+    return;
+  }
+
+  // Skip files that existed before watcher started
+  if (existingFiles.has(filePath)) {
+    console.log(`[ScanWatcher] Skipping pre-existing file: ${path.basename(filePath)}`);
+    existingFiles.delete(filePath);
     return;
   }
 
@@ -288,17 +299,39 @@ function onNewFile(filePath, scannerId, io) {
   }
 
   const buf = duplexBuffers.get(key);
+
+  // If we already have 2 files buffered, flush them as a pair before adding more
+  if (buf.files.length >= 2) {
+    if (buf.timer) clearTimeout(buf.timer);
+    const pairFiles = buf.files.splice(0, 2);
+    processPair(pairFiles, scannerId, io);
+  }
+
   buf.files.push(filePath);
 
-  // Reset the timer — wait for the duplex pair
+  // Reset the timer — wait for the duplex partner
   if (buf.timer) clearTimeout(buf.timer);
   buf.timer = setTimeout(async () => {
     const files = [...buf.files];
     buf.files = [];
     buf.timer = null;
+    processPair(files, scannerId, io);
+  }, DUPLEX_WAIT_MS);
+}
 
-    console.log(`[ScanWatcher] Processing batch of ${files.length} file(s) from scanner ${scannerId}`);
+// Sequential processing queue per scanner (prevents concurrent DB writes)
+const processingQueues = new Map();
 
+/**
+ * Enqueue a pair for sequential processing.
+ */
+function processPair(files, scannerId, io) {
+  if (!processingQueues.has(scannerId)) {
+    processingQueues.set(scannerId, Promise.resolve());
+  }
+
+  processingQueues.set(scannerId, processingQueues.get(scannerId).then(async () => {
+    console.log(`[ScanWatcher] Processing ${files.length} file(s) as duplex pair: ${files.map(f => path.basename(f)).join(', ')}`);
     try {
       await processDuplexPair(files, scannerId, io);
     } catch (err) {
@@ -309,7 +342,25 @@ function onNewFile(filePath, scannerId, io) {
         } catch {}
       }
     }
-  }, DUPLEX_WAIT_MS);
+  }));
+}
+
+/**
+ * Snapshot existing files in a folder so we can skip them.
+ */
+function snapshotExistingFiles(watchPath) {
+  try {
+    const files = fs.readdirSync(watchPath);
+    for (const f of files) {
+      if (SUPPORTED_EXT.test(f)) {
+        const fullPath = path.join(watchPath, f);
+        existingFiles.add(fullPath);
+      }
+    }
+    if (files.length > 0) {
+      console.log(`[ScanWatcher] Found ${existingFiles.size} pre-existing file(s) in ${watchPath} — will skip them`);
+    }
+  } catch {}
 }
 
 /**
@@ -322,13 +373,16 @@ function startWatcher(scanner, io) {
   // Create the incoming folder if it doesn't exist
   fs.mkdirSync(watchPath, { recursive: true });
 
+  // Snapshot existing files so we don't process them on startup
+  snapshotExistingFiles(watchPath);
+
   console.log(`[ScanWatcher] Starting watcher for scanner: ${scanner.name} at path: ${watchPath}`);
 
   const watcher = chokidar.watch(watchPath, {
     ignored: /(^|[\/\\])\../, // ignore dotfiles
     persistent: true,
-    ignoreInitial: true,
-    usePolling: true, // required for some Windows setups / network drives
+    ignoreInitial: false, // we handle skip via existingFiles set
+    usePolling: true, // required for Docker volume mounts and some Windows setups
     interval: 500,
     awaitWriteFinish: {
       stabilityThreshold: 300,
