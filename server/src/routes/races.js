@@ -1,12 +1,13 @@
 const { Router } = require('express');
 const db = require('../db');
+const { generateSerials } = require('../services/serialGenerator');
 
 const router = Router();
 
 // POST /api/admin/elections/:id/races — Create race
 router.post('/elections/:id/races', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value } = req.body;
+    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     // Get next display_order
@@ -16,10 +17,25 @@ router.post('/elections/:id/races', async (req, res) => {
     );
 
     const { rows: [race] } = await db.query(
-      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.params.id, name, threshold_type || 'majority', threshold_value || null, max + 1]
+      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.params.id, name, threshold_type || 'majority', threshold_value || null, max + 1,
+       ballot_count || null, max_rounds || null]
     );
+
+    // If ballot_count and max_rounds provided, auto-create rounds with SNs
+    if (ballot_count && max_rounds && max_rounds > 0) {
+      const colors = paper_colors || [];
+      for (let i = 1; i <= max_rounds; i++) {
+        const color = colors[i - 1] || `Round ${i}`;
+        const { rows: [round] } = await db.query(
+          `INSERT INTO rounds (race_id, round_number, paper_color) VALUES ($1, $2, $3) RETURNING id`,
+          [race.id, i, color]
+        );
+        await generateSerials(round.id, ballot_count);
+      }
+    }
+
     res.status(201).json(race);
   } catch (err) {
     console.error('Create race error:', err);

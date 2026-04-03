@@ -3,10 +3,10 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 
 const BALLOT_SIZES = [
-  { value: 'letter', label: 'Letter (8.5" x 11")' },
-  { value: 'half_letter', label: 'Half Letter (5.5" x 8.5")' },
-  { value: 'quarter_letter', label: 'Quarter Letter (4.25" x 5.5")' },
-  { value: 'eighth_letter', label: '1/8 Letter (2.75" x 4.25")' },
+  { value: 'letter', label: 'Letter (8.5" x 11") — 1 per page' },
+  { value: 'half_letter', label: 'Half Letter (5.5" x 8.5") — 2 per page' },
+  { value: 'quarter_letter', label: 'Quarter Letter (4.25" x 5.5") — 4 per page' },
+  { value: 'eighth_letter', label: '1/8 Letter (2.75" x 4.25") — 8 per page' },
 ];
 
 export default function RoundDetail() {
@@ -16,37 +16,52 @@ export default function RoundDetail() {
   const [size, setSize] = useState('letter');
   const [logo, setLogo] = useState(null);
   const [generating, setGenerating] = useState(false);
-  const [generated, setGenerated] = useState(false);
+  const [ballotStatus, setBallotStatus] = useState(null); // { generated, serial_count, pdf_exists }
+  const [showRegenerate, setShowRegenerate] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [error, setError] = useState(null);
 
   const fetchRound = async () => {
     const { data } = await api.get(`/admin/rounds/${roundId}`);
     setRound(data);
-    // Check if ballots already exist by trying preview
-    try {
-      const resp = await fetch(`/api/admin/rounds/${roundId}/ballot-preview`, { method: 'HEAD' });
-      if (resp.ok) setGenerated(true);
-    } catch {}
   };
 
-  useEffect(() => { fetchRound(); }, [roundId]);
+  const fetchBallotStatus = async () => {
+    try {
+      const { data } = await api.get(`/admin/rounds/${roundId}/ballot-status`);
+      setBallotStatus(data);
+    } catch {
+      setBallotStatus({ has_serials: false, serial_count: 0, pdf_exists: false });
+    }
+  };
+
+  useEffect(() => { fetchRound(); fetchBallotStatus(); }, [roundId]);
 
   const handleGenerate = async (e) => {
     e.preventDefault();
+
+    // If PDF already exists, require confirmation to regenerate
+    if (ballotStatus?.pdf_exists && !showRegenerate) {
+      setShowRegenerate(true);
+      return;
+    }
+
     setGenerating(true);
     setError(null);
     try {
       const formData = new FormData();
-      formData.append('quantity', quantity);
+      // Only send quantity if no pre-existing SNs
+      if (!ballotStatus?.has_serials) formData.append('quantity', quantity);
       formData.append('size', size);
       if (logo) formData.append('logo', logo);
+      if (ballotStatus?.pdf_exists) formData.append('confirm_regenerate', 'true');
 
       await api.post(`/admin/rounds/${roundId}/generate-ballots`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setGenerated(true);
+      setShowRegenerate(false);
       setPreviewUrl(`/api/admin/rounds/${roundId}/ballot-preview?t=${Date.now()}`);
+      fetchBallotStatus();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to generate ballots');
     } finally {
@@ -57,6 +72,8 @@ export default function RoundDetail() {
   if (!round) return <div style={styles.container}><p>Loading...</p></div>;
 
   const statusColor = { pending: '#f59e0b', scanning: '#3b82f6', confirmed: '#10b981', pending_release: '#8b5cf6', released: '#6366f1' };
+  const hasSerials = ballotStatus?.has_serials;
+  const hasPdf = ballotStatus?.pdf_exists;
 
   return (
     <div style={styles.container}>
@@ -120,82 +137,127 @@ export default function RoundDetail() {
         </div>
       )}
 
-      {/* Generate Ballots Section */}
+      {/* Ballots Section */}
       <div style={styles.section}>
-        <h2>Generate Ballots</h2>
+        <h2>Ballots</h2>
 
-        <form onSubmit={handleGenerate} style={styles.genForm}>
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Quantity</label>
-            <input
-              style={styles.input}
-              type="number"
-              min="1"
-              max="5000"
-              value={quantity}
-              onChange={e => setQuantity(parseInt(e.target.value) || 1)}
-              required
-            />
-          </div>
+        {/* State: SNs exist + PDF exists → download */}
+        {hasSerials && hasPdf && (
+          <>
+            <div style={styles.generatedBanner}>
+              <strong>{ballotStatus.serial_count} serial numbers &nbsp;|&nbsp; PDF ready</strong>
+              <p style={styles.muted}>
+                The PDF and serial numbers are saved. Download and print at any time —
+                the serial numbers will not change.
+              </p>
+            </div>
 
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Ballot Size</label>
-            <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
-              {BALLOT_SIZES.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div style={styles.formGroup}>
-            <label style={styles.label}>Logo (optional)</label>
-            <input
-              style={styles.input}
-              type="file"
-              accept="image/*"
-              onChange={e => setLogo(e.target.files[0] || null)}
-            />
-          </div>
-
-          <button
-            style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }}
-            type="submit"
-            disabled={generating}
-          >
-            {generating ? 'Generating...' : 'Generate Ballots'}
-          </button>
-        </form>
-
-        {error && <p style={styles.errorMsg}>{error}</p>}
-
-        {generated && (
-          <div style={styles.downloadSection}>
-            <h3>Downloads</h3>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <a
-                href={`/api/admin/rounds/${roundId}/ballot-pdf`}
-                style={styles.btnDownload}
-                download
-              >
-                Download PDF
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+              <a href={`/api/admin/rounds/${roundId}/ballot-pdf`} style={styles.btnDownloadLarge} download>
+                Download Ballot PDF
               </a>
-              <a
-                href={`/api/admin/rounds/${roundId}/ballot-data`}
-                style={styles.btnDownload}
-                download
-              >
+              <a href={`/api/admin/rounds/${roundId}/ballot-data`} style={styles.btnDownload} download>
                 Download Data ZIP
               </a>
             </div>
 
-            <h3 style={{ marginTop: '1rem' }}>Preview</h3>
-            <iframe
-              src={previewUrl || `/api/admin/rounds/${roundId}/ballot-preview`}
-              style={styles.previewFrame}
-              title="Ballot Preview"
-            />
-          </div>
+            <div style={{ marginTop: '1rem' }}>
+              <iframe src={previewUrl || `/api/admin/rounds/${roundId}/ballot-preview`}
+                style={styles.previewFrame} title="Ballot Preview" />
+            </div>
+
+            {/* Regenerate PDF with different size — hidden behind button */}
+            <div style={{ marginTop: '1.5rem' }}>
+              {!showRegenerate ? (
+                <button style={styles.btnDangerSmall} onClick={() => setShowRegenerate(true)}>
+                  Regenerate PDF with different size...
+                </button>
+              ) : (
+                <div style={styles.warningBox}>
+                  <h3 style={{ margin: '0 0 0.5rem', color: '#dc2626' }}>Regenerate PDF</h3>
+                  <p style={{ margin: '0 0 0.75rem', color: '#374151' }}>
+                    This will overwrite the existing PDF using the same serial numbers but a different size layout.
+                  </p>
+                  <form onSubmit={handleGenerate} style={styles.genForm}>
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>Ballot Size</label>
+                      <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
+                        {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button style={{ ...styles.btnDanger, opacity: generating ? 0.6 : 1 }} type="submit" disabled={generating}>
+                        {generating ? 'Generating...' : 'Regenerate PDF'}
+                      </button>
+                      <button style={styles.btnSmall} type="button" onClick={() => setShowRegenerate(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          </>
         )}
+
+        {/* State: SNs exist but no PDF yet → generate PDF */}
+        {hasSerials && !hasPdf && (
+          <>
+            <div style={styles.generatedBanner}>
+              <strong>{ballotStatus.serial_count} serial numbers ready</strong>
+              <p style={styles.muted}>
+                Serial numbers were generated when this round was created. Choose a ballot size to generate the printable PDF.
+              </p>
+            </div>
+
+            <form onSubmit={handleGenerate} style={{ ...styles.genForm, marginTop: '0.75rem' }}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Ballot Size</label>
+                <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
+                  {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Logo (optional)</label>
+                <input style={styles.input} type="file" accept="image/*"
+                  onChange={e => setLogo(e.target.files[0] || null)} />
+              </div>
+              <button style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }} type="submit" disabled={generating}>
+                {generating ? 'Generating...' : 'Generate Ballot PDF'}
+              </button>
+            </form>
+          </>
+        )}
+
+        {/* State: No SNs at all → full generate form (legacy / no ballot_count on race) */}
+        {!hasSerials && (
+          <>
+            <p style={styles.muted}>
+              No serial numbers for this round. Set ballot count when creating the race to auto-generate, or enter a quantity below.
+            </p>
+            <form onSubmit={handleGenerate} style={styles.genForm}>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Quantity</label>
+                <input style={styles.input} type="number" min="1" max="5000" value={quantity}
+                  onChange={e => setQuantity(parseInt(e.target.value) || 1)} required />
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Ballot Size</label>
+                <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
+                  {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Logo (optional)</label>
+                <input style={styles.input} type="file" accept="image/*"
+                  onChange={e => setLogo(e.target.files[0] || null)} />
+              </div>
+              <button style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }} type="submit" disabled={generating}>
+                {generating ? 'Generating...' : 'Generate Ballots'}
+              </button>
+            </form>
+          </>
+        )}
+
+        {error && <p style={styles.errorMsg}>{error}</p>}
       </div>
     </div>
   );
@@ -212,14 +274,19 @@ const styles = {
   formGroup: { display: 'flex', flexDirection: 'column', gap: '0.25rem' },
   label: { fontWeight: 600, fontSize: '0.85rem' },
   input: { padding: '0.5rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.9rem' },
-  downloadSection: { marginTop: '1.5rem', padding: '1rem', background: '#f0fdf4', borderRadius: 8, border: '1px solid #bbf7d0' },
-  previewFrame: { width: '100%', height: 500, border: '1px solid #ddd', borderRadius: 4, marginTop: '0.5rem' },
+  generatedBanner: { background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '1rem' },
+  warningBox: { background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '1rem' },
+  previewFrame: { width: '100%', height: 500, border: '1px solid #ddd', borderRadius: 4 },
   statusBadge: { color: '#fff', padding: '4px 12px', borderRadius: 12, fontSize: '0.8rem', fontWeight: 600 },
   btnPrimary: { padding: '0.6rem 1.2rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.95rem', alignSelf: 'flex-start' },
-  btnDownload: { padding: '0.5rem 1rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'none', display: 'inline-block' },
+  btnDownloadLarge: { padding: '0.75rem 1.5rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '1.05rem', fontWeight: 700, textDecoration: 'none', display: 'inline-block' },
+  btnDownload: { padding: '0.5rem 1rem', background: '#6b7280', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'none', display: 'inline-block' },
   btnLink: { padding: '0.5rem 1rem', background: '#3b82f6', color: '#fff', borderRadius: 4, textDecoration: 'none', fontSize: '0.9rem' },
   btnLinkGreen: { padding: '0.5rem 1rem', background: '#16a34a', color: '#fff', borderRadius: 4, textDecoration: 'none', fontSize: '0.9rem' },
   btnLinkPurple: { padding: '0.5rem 1rem', background: '#7c3aed', color: '#fff', borderRadius: 4, textDecoration: 'none', fontSize: '0.9rem' },
+  btnDanger: { padding: '0.6rem 1.2rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.95rem' },
+  btnDangerSmall: { padding: '0.35rem 0.75rem', background: '#fff', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },
+  btnSmall: { padding: '0.4rem 0.8rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' },
   errorMsg: { color: '#dc2626', marginTop: '0.5rem' },
   muted: { color: '#666', fontSize: '0.9rem' },
 };

@@ -10,19 +10,66 @@ const router = Router();
 // Multer for optional logo upload
 const upload = multer({ dest: path.join(__dirname, '..', '..', '..', 'uploads', 'logos') });
 
+// GET /api/admin/rounds/:id/ballot-status — Check if ballots already exist
+router.get('/rounds/:id/ballot-status', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows: [{ count }] } = await db.query(
+      'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [roundId]
+    );
+    const serialCount = parseInt(count);
+
+    const outDir = await getOutputDir(roundId);
+    const pdfExists = outDir && fs.existsSync(path.join(outDir, 'ballots.pdf'));
+
+    res.json({
+      has_serials: serialCount > 0,
+      serial_count: serialCount,
+      pdf_exists: !!pdfExists,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/admin/rounds/:id/generate-ballots
 router.post('/rounds/:id/generate-ballots', upload.single('logo'), async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
-    const quantity = parseInt(req.body.quantity);
+    const quantity = parseInt(req.body.quantity) || 0;
     const sizeKey = req.body.size || 'letter';
     const logoPath = req.file ? req.file.path : null;
+    const confirmRegenerate = req.body.confirm_regenerate === 'true';
 
-    if (!quantity || quantity < 1) {
+    // Check if SNs already exist (pre-generated at race creation)
+    const { rows: [{ count: existingSNCount }] } = await db.query(
+      'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [roundId]
+    );
+    const hasExistingSNs = parseInt(existingSNCount) > 0;
+
+    // Only require quantity if no pre-existing SNs
+    if (!hasExistingSNs && (!quantity || quantity < 1)) {
       return res.status(400).json({ error: 'quantity must be at least 1' });
     }
     if (!SIZES[sizeKey]) {
       return res.status(400).json({ error: `Invalid size. Valid: ${Object.keys(SIZES).join(', ')}` });
+    }
+
+    // Check if ballots already exist for this round
+    const { rows: [{ count }] } = await db.query(
+      'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [roundId]
+    );
+    if (parseInt(count) > 0 && !confirmRegenerate) {
+      return res.status(409).json({
+        error: 'Ballots already generated for this round',
+        existing_count: parseInt(count),
+        message: 'Generating again will create NEW serial numbers and overwrite the existing PDF. If ballots have already been printed, do NOT regenerate. Send confirm_regenerate=true to proceed anyway.',
+      });
+    }
+
+    // If regenerating, clear old serials first
+    if (parseInt(count) > 0 && confirmRegenerate) {
+      await db.query("DELETE FROM ballot_serials WHERE round_id = $1 AND status = 'unused'", [roundId]);
     }
 
     const result = await generateBallots({ roundId, quantity, sizeKey, logoPath });
@@ -97,23 +144,25 @@ router.get('/rounds/:id/ballot-preview', async (req, res) => {
       const outDir = await getOutputDir(roundId);
       if (!outDir) return res.status(404).json({ error: 'Round not found' });
 
-      // Check if there are existing serials for this round to preview
+      // Use existing serials if available, otherwise use dummy SNs for design preview
       const { rows: existingSerials } = await db.query(
         'SELECT serial_number FROM ballot_serials WHERE round_id = $1 LIMIT $2',
         [roundId, SIZES[requestedSize].perPage]
       );
 
-      if (existingSerials.length === 0) {
-        return res.status(404).json({ error: 'Generate ballots first to see a preview' });
-      }
+      const serialNumbers = existingSerials.length > 0
+        ? existingSerials.map(s => s.serial_number)
+        : Array.from({ length: SIZES[requestedSize].perPage }, (_, i) => `SAMPLE${String(i + 1).padStart(2, '0')}`);
 
-      // Generate a temporary preview PDF using existing serials
+      // Ensure output directory exists
+      fs.mkdirSync(outDir, { recursive: true });
+
       const previewPath = path.join(outDir, `preview-${requestedSize}.pdf`);
       const { generatePreviewPdf } = require('../pdf/ballotGenerator');
       await generatePreviewPdf({
         roundId,
         sizeKey: requestedSize,
-        serialNumbers: existingSerials.map(s => s.serial_number),
+        serialNumbers,
         outputPath: previewPath,
       });
 

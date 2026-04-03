@@ -8,7 +8,7 @@ export default function ElectionDetail() {
   const [ballotBoxes, setBallotBoxes] = useState([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', date: '', description: '' });
-  const [raceForm, setRaceForm] = useState({ name: '', threshold_type: 'majority', threshold_value: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', threshold_type: 'majority', threshold_value: '', ballot_count: '', max_rounds: '' });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
 
@@ -38,8 +38,10 @@ export default function ElectionDetail() {
       name: raceForm.name,
       threshold_type: raceForm.threshold_type,
       threshold_value: raceForm.threshold_value || null,
+      ballot_count: raceForm.ballot_count ? parseInt(raceForm.ballot_count) : null,
+      max_rounds: raceForm.max_rounds ? parseInt(raceForm.max_rounds) : null,
     });
-    setRaceForm({ name: '', threshold_type: 'majority', threshold_value: '' });
+    setRaceForm({ name: '', threshold_type: 'majority', threshold_value: '', ballot_count: '', max_rounds: '' });
     setShowRaceForm(false);
     fetchElection();
   };
@@ -128,6 +130,24 @@ export default function ElectionDetail() {
                 onChange={e => setRaceForm({ ...raceForm, threshold_value: e.target.value })}
               />
             )}
+            <input
+              style={{ ...styles.input, width: 130 }}
+              type="number"
+              min="1"
+              placeholder="# of Ballots"
+              value={raceForm.ballot_count}
+              onChange={e => setRaceForm({ ...raceForm, ballot_count: e.target.value })}
+              required
+            />
+            <input
+              style={{ ...styles.input, width: 130 }}
+              type="number"
+              min="1"
+              placeholder="Max Rounds"
+              value={raceForm.max_rounds}
+              onChange={e => setRaceForm({ ...raceForm, max_rounds: e.target.value })}
+              required
+            />
             <button style={styles.btnPrimary} type="submit">Add Race</button>
           </form>
         )}

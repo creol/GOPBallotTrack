@@ -148,6 +148,8 @@ export default function RaceDetail() {
             <h1>{race.name}</h1>
             <p style={styles.muted}>
               Threshold: {race.threshold_type === 'custom' ? `${race.threshold_value}%` : race.threshold_type.replace('_', ' ')}
+              {race.ballot_count && <> &nbsp;|&nbsp; {race.ballot_count} ballots per round</>}
+              {race.max_rounds && <> &nbsp;|&nbsp; {race.max_rounds} max rounds</>}
             </p>
           </div>
           <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
@@ -195,6 +197,11 @@ export default function RaceDetail() {
       {/* Rounds Section */}
       <div style={styles.section}>
         <h2>Rounds</h2>
+        {race.ballot_count && (
+          <p style={styles.muted}>
+            {race.ballot_count} ballots per round — serial numbers are generated automatically when rounds are created.
+          </p>
+        )}
 
         {rounds.length === 0 && <p style={styles.muted}>No rounds yet.</p>}
         {rounds.map(round => (
@@ -211,14 +218,20 @@ export default function RaceDetail() {
           </Link>
         ))}
 
-        <form onSubmit={handleCreateRound} style={{ ...styles.form, marginTop: '0.5rem' }}>
+        <h3 style={{ marginTop: '1rem', fontSize: '0.95rem' }}>Add Additional Round</h3>
+        <p style={styles.muted}>
+          {race.ballot_count
+            ? `${race.ballot_count} serial numbers will be generated automatically.`
+            : 'Set ballot count on the race to auto-generate serial numbers.'}
+        </p>
+        <form onSubmit={handleCreateRound} style={{ ...styles.form, marginTop: '0.25rem' }}>
           <input
             style={styles.input}
             placeholder="Paper Color (e.g. White, Blue)"
             value={paperColor}
             onChange={e => setPaperColor(e.target.value)}
           />
-          <button style={styles.btnPrimary} type="submit">Create Round</button>
+          <button style={styles.btnPrimary} type="submit">Add Round</button>
         </form>
       </div>
     </div>

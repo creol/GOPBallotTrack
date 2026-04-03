@@ -254,7 +254,20 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
   const { round, race, election, candidates } = data;
   const cfg = await loadDesignConfig(election.id);
 
-  const serials = await generateSerials(roundId, quantity);
+  // Use existing SNs if they exist (pre-generated at race/round creation).
+  // Only generate new ones if none exist (backward compat).
+  const { rows: existingSerials } = await db.query(
+    'SELECT * FROM ballot_serials WHERE round_id = $1 ORDER BY id', [roundId]
+  );
+
+  let serials;
+  if (existingSerials.length > 0) {
+    serials = existingSerials;
+  } else if (quantity) {
+    serials = await generateSerials(roundId, quantity);
+  } else {
+    throw new Error('No serial numbers exist for this round. Set ballot count on the race or provide a quantity.');
+  }
 
   const outDir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(election.id), 'rounds', String(roundId));
   fs.mkdirSync(outDir, { recursive: true });
