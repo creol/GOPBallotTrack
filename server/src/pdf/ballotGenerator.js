@@ -533,4 +533,109 @@ async function generatePreviewPdf({ roundId, sizeKey, serialNumbers, outputPath 
   });
 }
 
-module.exports = { generateBallots, generatePreviewPdf, SIZES };
+/**
+ * Generate a calibration PDF that shows OMR crop zones as colored overlays.
+ * Red rectangle = current OMR crop zone (what the scanner actually samples)
+ * Blue rectangle = full oval bounding box from spec
+ * Green crosshair = oval center point
+ */
+async function generateCalibrationPdf({ roundId, outputPath }) {
+  const data = await fetchBallotData(roundId);
+  const { round, race, election, candidates } = data;
+  const cfg = await loadDesignConfig(election.id);
+  const sizeKey = 'quarter_letter'; // Use whatever size was last generated
+  const size = SIZES[sizeKey];
+
+  // Load the ballot spec to get oval positions
+  const specPath = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(election.id), 'rounds', String(roundId), 'ballot-spec.json');
+  let ballotSpec = null;
+  if (fs.existsSync(specPath)) {
+    ballotSpec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+  }
+
+  const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: false });
+  const stream = fs.createWriteStream(outputPath);
+  doc.pipe(stream);
+
+  doc.addPage({ size: 'LETTER', margin: 0 });
+
+  // Render a normal ballot first
+  const sn = 'CALIBRATE';
+  const positions = await renderBallot(doc, 0, 0, size.width, size.height, {
+    election, race, round, candidates,
+    serialNumber: sn, sizeKey, logoPath: null, cfg,
+  });
+
+  // Now overlay the OMR crop zones
+  if (positions && positions.ovalPositions && positions.qrPosition) {
+    const qrCx = positions.qrPosition.x + positions.qrPosition.width / 2;
+    const qrCy = positions.qrPosition.y + positions.qrPosition.height / 2;
+
+    // Draw QR bounding box in green
+    doc.save();
+    doc.lineWidth(1).strokeColor('#00aa00');
+    doc.rect(positions.qrPosition.x, positions.qrPosition.y, positions.qrPosition.width, positions.qrPosition.height).stroke();
+    doc.fontSize(6).fillColor('#00aa00').text('QR ZONE', positions.qrPosition.x, positions.qrPosition.y - 8);
+    doc.restore();
+
+    for (const oval of positions.ovalPositions) {
+      // Full oval bounding box (blue)
+      const fullX = oval.cx - oval.rx;
+      const fullY = oval.cy - oval.ry;
+      const fullW = oval.rx * 2;
+      const fullH = oval.ry * 2;
+
+      doc.save();
+      doc.lineWidth(0.5).strokeColor('#0000ff');
+      doc.rect(fullX, fullY, fullW, fullH).stroke();
+      doc.restore();
+
+      // OMR crop zone (red) — matches the shrink + left-shift in omrService.js
+      const shrinkW = 0.55;
+      const shrinkH = 0.60;
+      const cropW = fullW * shrinkW;
+      const cropH = fullH * shrinkH;
+      const shiftLeft = fullW * 0.15;
+      const cropX = oval.cx - shiftLeft - cropW / 2;
+      const cropY = oval.cy - cropH / 2;
+
+      doc.save();
+      doc.lineWidth(1.5).strokeColor('#ff0000');
+      doc.rect(cropX, cropY, cropW, cropH).stroke();
+      // Semi-transparent red fill
+      doc.fillColor('#ff0000').opacity(0.1);
+      doc.rect(cropX, cropY, cropW, cropH).fill();
+      doc.restore();
+
+      // Center crosshair (green)
+      doc.save();
+      doc.lineWidth(0.5).strokeColor('#00aa00');
+      doc.moveTo(oval.cx - 3, oval.cy).lineTo(oval.cx + 3, oval.cy).stroke();
+      doc.moveTo(oval.cx, oval.cy - 3).lineTo(oval.cx, oval.cy + 3).stroke();
+      doc.restore();
+
+      // Label
+      doc.save();
+      doc.fontSize(5).fillColor('#ff0000');
+      doc.text(`CROP ${Math.round(cropW)}x${Math.round(cropH)}`, cropX, cropY - 7);
+      doc.restore();
+    }
+
+    // Legend
+    doc.save();
+    doc.fontSize(7).fillColor('#000');
+    const ly = size.height - 30;
+    doc.fillColor('#ff0000').text('RED = OMR crop zone (what scanner samples)', 10, ly);
+    doc.fillColor('#0000ff').text('BLUE = full oval bounding box', 10, ly + 9);
+    doc.fillColor('#00aa00').text('GREEN = oval center + QR zone', 10, ly + 18);
+    doc.restore();
+  }
+
+  doc.end();
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+}
+
+module.exports = { generateBallots, generatePreviewPdf, generateCalibrationPdf, SIZES };

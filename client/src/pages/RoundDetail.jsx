@@ -109,6 +109,9 @@ export default function RoundDetail() {
             Download Results PDF
           </a>
         )}
+        <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={styles.btnLink} target="_blank">
+          Calibration PDF
+        </a>
       </div>
 
       {/* Passes summary */}

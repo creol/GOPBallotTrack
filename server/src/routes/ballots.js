@@ -331,4 +331,29 @@ router.get('/rounds/:id/results-pdf', async (req, res) => {
   }
 });
 
+// GET /api/admin/rounds/:id/calibration-pdf — Generate a calibration ballot showing OMR crop zones
+router.get('/rounds/:id/calibration-pdf', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const outDir = await getOutputDir(roundId);
+    if (!outDir) return res.status(404).json({ error: 'Round not found' });
+
+    const specPath = path.join(outDir, 'ballot-spec.json');
+    if (!fs.existsSync(specPath)) {
+      return res.status(404).json({ error: 'ballot-spec.json not found — generate ballots first' });
+    }
+
+    const { generateCalibrationPdf } = require('../pdf/ballotGenerator');
+    const calibPath = path.join(outDir, 'calibration.pdf');
+    await generateCalibrationPdf({ roundId, outputPath: calibPath });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline');
+    fs.createReadStream(calibPath).pipe(res);
+  } catch (err) {
+    console.error('Calibration PDF error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
 module.exports = router;
