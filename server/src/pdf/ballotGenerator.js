@@ -260,8 +260,8 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
   if (cfg.qr.show) {
     const qrBuffer = await generateQR(serialNumber, sc.qrSize);
 
-    // Top-left QR (smaller — 60% of main QR size to not crowd the header)
-    const tlQrSize = Math.round(sc.qrSize * 0.6);
+    // Top-left QR (80% of main QR size — large enough for reliable detection)
+    const tlQrSize = Math.round(sc.qrSize * 0.8);
     const tlQrBuffer = await generateQR(serialNumber, tlQrSize);
     const tlQrX = ox + margin;
     const tlQrY = oy + margin;

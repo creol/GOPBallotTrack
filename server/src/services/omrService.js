@@ -241,51 +241,54 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData : null;
 
   // 2. Find BOTH QR codes in the image for two-point affine alignment
-  // The ballot has QR at top-left and bottom-right. We use both as anchor points
-  // to precisely map spec coordinates to image coordinates, correcting for
-  // rotation, scale, skew, and mirroring in one step.
-
-  // jsQR only returns one QR at a time. We need to find both.
-  // Strategy: find the first QR, mask it out, find the second.
+  // Strategy: scan each quadrant of the image independently for QR codes.
+  // The ballot has QRs in opposite corners (TL and BR).
   const imgMeta = await sharp(imageBuffer).metadata();
   const allQRs = [];
 
-  // First QR already found
+  // Scan each quadrant for QR codes
+  const halfW = Math.floor(imgMeta.width / 2);
+  const halfH = Math.floor(imgMeta.height / 2);
+  const quadrants = [
+    { name: 'TL', left: 0, top: 0, width: halfW, height: halfH },
+    { name: 'TR', left: halfW, top: 0, width: imgMeta.width - halfW, height: halfH },
+    { name: 'BL', left: 0, top: halfH, width: halfW, height: imgMeta.height - halfH },
+    { name: 'BR', left: halfW, top: halfH, width: imgMeta.width - halfW, height: imgMeta.height - halfH },
+  ];
+
+  for (const q of quadrants) {
+    try {
+      const cropBuf = await sharp(imageBuffer)
+        .extract({ left: q.left, top: q.top, width: q.width, height: q.height })
+        .toBuffer();
+      const qrRes = await findQRInImage(cropBuf);
+      if (qrRes && qrRes.qrData) {
+        const s = qrRes.scale || 1;
+        // Map QR center back to full image coordinates
+        const cx = (qrRes.location.topLeftCorner.x + qrRes.location.topRightCorner.x) / 2 / s + q.left;
+        const cy = (qrRes.location.topLeftCorner.y + qrRes.location.bottomLeftCorner.y) / 2 / s + q.top;
+        // Avoid duplicate (same QR found in overlapping regions)
+        const isDup = allQRs.some(existing => Math.abs(existing.cx - cx) < 100 && Math.abs(existing.cy - cy) < 100);
+        if (!isDup) {
+          allQRs.push({ cx, cy, quadrant: q.name, data: qrRes.qrData, location: qrRes.location, scale: s, qLeft: q.left, qTop: q.top });
+          console.log(`[OMR] QR found in ${q.name} quadrant: "${qrRes.qrData}" at (${Math.round(cx)},${Math.round(cy)})`);
+        }
+      }
+    } catch (err) {
+      // Quadrant scan failed — skip
+    }
+  }
+
+  // Also check the full image (first QR already found)
   const qr1Scale = qrResult.scale || 1;
   const qr1Cx = (qrResult.location.topLeftCorner.x + qrResult.location.topRightCorner.x) / 2 / qr1Scale;
   const qr1Cy = (qrResult.location.topLeftCorner.y + qrResult.location.bottomLeftCorner.y) / 2 / qr1Scale;
-  allQRs.push({ cx: qr1Cx, cy: qr1Cy, location: qrResult.location, scale: qr1Scale, data: qrResult.qrData });
-
-  // Try to find second QR by masking the first one's area
-  try {
-    const maskSize = 300; // pixels to white out around first QR
-    const maskX = Math.max(0, Math.round(qr1Cx - maskSize / 2));
-    const maskY = Math.max(0, Math.round(qr1Cy - maskSize / 2));
-    const maskW = Math.min(maskSize, imgMeta.width - maskX);
-    const maskH = Math.min(maskSize, imgMeta.height - maskY);
-
-    // Create a white rectangle overlay to mask the first QR
-    const whitePatch = await sharp({
-      create: { width: maskW, height: maskH, channels: 3, background: '#ffffff' }
-    }).jpeg().toBuffer();
-
-    const maskedBuffer = await sharp(imageBuffer)
-      .composite([{ input: whitePatch, left: maskX, top: maskY }])
-      .toBuffer();
-
-    const qr2Result = await findQRInImage(maskedBuffer);
-    if (qr2Result && qr2Result.qrData) {
-      const qr2Scale = qr2Result.scale || 1;
-      const qr2Cx = (qr2Result.location.topLeftCorner.x + qr2Result.location.topRightCorner.x) / 2 / qr2Scale;
-      const qr2Cy = (qr2Result.location.topLeftCorner.y + qr2Result.location.bottomLeftCorner.y) / 2 / qr2Scale;
-      allQRs.push({ cx: qr2Cx, cy: qr2Cy, location: qr2Result.location, scale: qr2Scale, data: qr2Result.qrData });
-      console.log(`[OMR] Found 2 QR codes: QR1=(${Math.round(qr1Cx)},${Math.round(qr1Cy)}), QR2=(${Math.round(qr2Cx)},${Math.round(qr2Cy)})`);
-    } else {
-      console.log(`[OMR] Only 1 QR code found — falling back to single-anchor mode`);
-    }
-  } catch (err) {
-    console.log(`[OMR] Second QR search failed: ${err.message} — using single anchor`);
+  const isDupFull = allQRs.some(existing => Math.abs(existing.cx - qr1Cx) < 100 && Math.abs(existing.cy - qr1Cy) < 100);
+  if (!isDupFull) {
+    allQRs.push({ cx: qr1Cx, cy: qr1Cy, quadrant: 'full', data: qrResult.qrData, location: qrResult.location, scale: qr1Scale, qLeft: 0, qTop: 0 });
   }
+
+  console.log(`[OMR] Total QR codes found: ${allQRs.length}`);
 
   // 3. Identify which QR is top-left and which is bottom-right
   // The bottom-right QR is the one closer to the bottom-right corner of the image
