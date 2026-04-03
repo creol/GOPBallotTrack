@@ -314,54 +314,63 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
 
   // 7. Adaptive vote detection — look for the outlier, not absolute thresholds
   //    A filled oval will have a MUCH higher fill than all other ovals on the same ballot.
+  //    Compare to the BASELINE (bottom half median), not just the second highest,
+  //    because positional noise (divider lines, nearby text) can inflate specific ovals.
   const sorted = [...candidateResults].sort((a, b) => b.fill_ratio - a.fill_ratio);
   const highest = sorted[0];
   const secondHighest = sorted.length > 1 ? sorted[1] : { fill_ratio: 0 };
-  const lowest = sorted[sorted.length - 1];
 
-  // Calculate the gap between highest and second highest
-  const gap = highest.fill_ratio - secondHighest.fill_ratio;
-  const ratio = secondHighest.fill_ratio > 0 ? highest.fill_ratio / secondHighest.fill_ratio : Infinity;
+  // Baseline: median of the bottom half of candidates (the truly unmarked ones)
+  const bottomHalf = sorted.slice(Math.ceil(sorted.length / 2));
+  const baseline = bottomHalf.length > 0
+    ? bottomHalf.reduce((sum, c) => sum + c.fill_ratio, 0) / bottomHalf.length
+    : 0;
 
-  console.log(`[OMR] Adaptive analysis: highest=${highest.name}@${highest.fill_ratio}, 2nd=${secondHighest.name}@${secondHighest.fill_ratio}, gap=${gap.toFixed(4)}, ratio=${ratio.toFixed(2)}, lowest=${lowest.fill_ratio}`);
+  // Signal: how far above baseline is the highest fill?
+  const signalAboveBaseline = highest.fill_ratio - baseline;
+  const secondSignal = secondHighest.fill_ratio - baseline;
+
+  // Ratio of highest signal to second highest signal (both relative to baseline)
+  const signalRatio = secondSignal > 0.01 ? signalAboveBaseline / secondSignal : Infinity;
+
+  console.log(`[OMR] Adaptive analysis: highest=${highest.name}@${highest.fill_ratio}, 2nd=${secondHighest.name}@${secondHighest.fill_ratio}, baseline=${baseline.toFixed(4)}, signal=${signalAboveBaseline.toFixed(4)}, 2ndSignal=${secondSignal.toFixed(4)}, signalRatio=${signalRatio.toFixed(2)}`);
 
   let detectedVote = null;
   let confidence = 0;
   let flagReason = null;
 
-  // Mark candidates as voted based on adaptive analysis
   for (const c of candidateResults) {
     c.is_marked = false;
     c.is_uncertain = false;
   }
 
-  if (highest.fill_ratio < 0.05) {
-    // All ovals essentially empty — no mark at all
+  if (highest.fill_ratio < 0.05 || signalAboveBaseline < 0.03) {
+    // No meaningful signal above baseline — blank ballot
     flagReason = 'no_mark';
-    console.log(`[OMR] Decision: NO_MARK — all fills below 0.05`);
-  } else if (ratio >= 2.0 && highest.fill_ratio >= 0.10 && gap >= 0.05) {
-    // Clear winner: highest is at least 2x the second, and meaningfully filled
+    console.log(`[OMR] Decision: NO_MARK — no signal above baseline (highest=${highest.fill_ratio}, baseline=${baseline.toFixed(4)})`);
+  } else if (signalAboveBaseline >= 0.05 && signalRatio >= 1.8) {
+    // Clear winner: one candidate stands out well above baseline and above all others
     const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
     winner.is_marked = true;
     detectedVote = winner.candidate_id;
-    confidence = highest.fill_ratio;
-    console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, ${ratio.toFixed(1)}x next)`);
-  } else if (highest.fill_ratio >= 0.10 && secondHighest.fill_ratio >= 0.10 && ratio < 1.5) {
-    // Two candidates with similar high fills — overvote
-    const top2 = sorted.filter(c => c.fill_ratio >= highest.fill_ratio * 0.6);
-    for (const c of top2) {
+    confidence = signalAboveBaseline;
+    console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ${signalRatio.toFixed(1)}x above 2nd)`);
+  } else if (signalAboveBaseline >= 0.05 && secondSignal >= 0.05 && signalRatio < 1.5) {
+    // Two candidates both well above baseline with similar signal — real overvote
+    const markedOnes = sorted.filter(c => (c.fill_ratio - baseline) >= 0.05);
+    for (const c of markedOnes) {
       const match = candidateResults.find(r => r.candidate_id === c.candidate_id);
       match.is_marked = true;
     }
     flagReason = 'overvote';
-    console.log(`[OMR] Decision: OVERVOTE — ${top2.map(c => c.name).join(', ')} have similar fills`);
+    console.log(`[OMR] Decision: OVERVOTE — ${markedOnes.map(c => c.name).join(', ')} all above baseline by 0.05+`);
   } else {
-    // Ambiguous — some signal but not clear enough
+    // Some signal but not conclusive
     flagReason = 'uncertain';
-    confidence = highest.fill_ratio;
+    confidence = signalAboveBaseline;
     const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
     winner.is_uncertain = true;
-    console.log(`[OMR] Decision: UNCERTAIN — highest ${highest.name}@${highest.fill_ratio}, ratio=${ratio.toFixed(2)}, gap=${gap.toFixed(4)}`);
+    console.log(`[OMR] Decision: UNCERTAIN — highest ${highest.name}@${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ratio=${signalRatio.toFixed(2)}`);
   }
 
   return {
