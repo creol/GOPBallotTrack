@@ -348,22 +348,23 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
     // No meaningful signal above baseline — blank ballot
     flagReason = 'no_mark';
     console.log(`[OMR] Decision: NO_MARK — no signal above baseline (highest=${highest.fill_ratio}, baseline=${baseline.toFixed(4)})`);
-  } else if (signalAboveBaseline >= 0.05 && signalRatio >= 1.8) {
-    // Clear winner: one candidate stands out well above baseline and above all others
+  } else if (signalAboveBaseline >= 0.05 && signalRatio >= 1.4) {
+    // Clear winner: one candidate's signal is at least 1.4x the next
+    // This covers the common case where positional noise inflates one neighbor
     const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
     winner.is_marked = true;
     detectedVote = winner.candidate_id;
     confidence = signalAboveBaseline;
     console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ${signalRatio.toFixed(1)}x above 2nd)`);
-  } else if (signalAboveBaseline >= 0.05 && secondSignal >= 0.05 && signalRatio < 1.5) {
-    // Two candidates both well above baseline with similar signal — real overvote
-    const markedOnes = sorted.filter(c => (c.fill_ratio - baseline) >= 0.05);
+  } else if (signalAboveBaseline >= 0.05 && secondSignal >= 0.05 && signalRatio < 1.2) {
+    // Two candidates with very similar signal above baseline — real overvote
+    const markedOnes = sorted.filter(c => (c.fill_ratio - baseline) >= 0.04);
     for (const c of markedOnes) {
       const match = candidateResults.find(r => r.candidate_id === c.candidate_id);
       match.is_marked = true;
     }
     flagReason = 'overvote';
-    console.log(`[OMR] Decision: OVERVOTE — ${markedOnes.map(c => c.name).join(', ')} all above baseline by 0.05+`);
+    console.log(`[OMR] Decision: OVERVOTE — ${markedOnes.map(c => c.name).join(', ')} all above baseline by 0.04+`);
   } else {
     // Some signal but not conclusive
     flagReason = 'uncertain';
