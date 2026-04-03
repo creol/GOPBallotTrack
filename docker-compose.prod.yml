@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ballottrack
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ballottrack_prod}
+      POSTGRES_DB: ballottrack
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ballottrack"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://ballottrack:${DB_PASSWORD:-ballottrack_prod}@db:5432/ballottrack
+      NODE_ENV: production
+      PORT: 3000
+      ADMIN_PIN: ${ADMIN_PIN:-1234}
+      JUDGE_PIN: ${JUDGE_PIN:-5678}
+      CHAIR_PIN: ${CHAIR_PIN:-9012}
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
