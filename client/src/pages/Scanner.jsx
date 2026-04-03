@@ -25,23 +25,16 @@ export default function Scanner() {
   const html5QrRef = useRef(null);
 
   const fetchRoundData = useCallback(async () => {
-    const { data: roundData } = await api.get(`/admin/rounds/${roundId}`);
+    // Use non-admin endpoints for scanner data (tally operators have no auth)
+    const { data: roundData } = await api.get(`/rounds/${roundId}/detail`);
     setRound(roundData);
 
-    const { data: cands } = await api.get(`/admin/races/${roundData.race_id}/candidates`);
-    setCandidates(cands.filter(c => c.status === 'active'));
+    setCandidates((roundData.candidates || []).filter(c => c.status === 'active'));
+    setBallotBoxes(roundData.ballot_boxes || []);
 
-    if (roundData.race) {
-      const { data: election } = await api.get(`/admin/elections/${roundData.race.election_id}`);
-      try {
-        const { data: boxes } = await api.get(`/admin/elections/${roundData.race.election_id}/ballot-boxes`);
-        setBallotBoxes(boxes);
-      } catch {}
-    }
-
-    const { data: passData } = await api.get(`/api/rounds/${roundId}/passes`);
-    setPasses(passData);
-    const active = passData.find(p => p.status === 'active');
+    const { data: passData } = await api.get(`/rounds/${roundId}/passes`);
+    setPasses(Array.isArray(passData) ? passData : []);
+    const active = (Array.isArray(passData) ? passData : []).find(p => p.status === 'active');
     if (active) {
       setActivePass(active);
       setScanCount(parseInt(active.scan_count) || 0);

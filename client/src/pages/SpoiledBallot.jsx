@@ -16,7 +16,7 @@ export default function SpoiledBallot() {
   const html5QrRef = useRef(null);
 
   useEffect(() => {
-    api.get(`/admin/rounds/${roundId}`).then(({ data }) => setRound(data));
+    api.get(`/rounds/${roundId}/detail`).then(({ data }) => setRound(data));
     return () => { stopScanner(); };
   }, [roundId]);
 

@@ -3,6 +3,28 @@ const db = require('../db');
 
 const router = Router();
 
+// GET /api/rounds/:id/detail — Round data for scanner (no auth, includes candidates + ballot boxes)
+router.get('/rounds/:id/detail', async (req, res) => {
+  try {
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [req.params.id]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+
+    const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
+    const { rows: [election] } = await db.query('SELECT * FROM elections WHERE id = $1', [race.election_id]);
+    const { rows: candidates } = await db.query(
+      'SELECT * FROM candidates WHERE race_id = $1 ORDER BY display_order', [round.race_id]
+    );
+    const { rows: ballotBoxes } = await db.query(
+      'SELECT * FROM ballot_boxes WHERE election_id = $1 ORDER BY created_at', [race.election_id]
+    );
+
+    res.json({ ...round, race, election, candidates, ballot_boxes: ballotBoxes });
+  } catch (err) {
+    console.error('Round detail error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/rounds/:id/passes — Create a pass (auto-numbers)
 router.post('/rounds/:id/passes', async (req, res) => {
   try {

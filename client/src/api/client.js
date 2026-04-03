@@ -5,11 +5,11 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Redirect to login on 401 (except for /auth endpoints)
+// Redirect to login on 401 (only for /admin endpoints)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && !error.config.url.includes('/auth/')) {
+    if (error.response?.status === 401 && error.config.url.includes('/admin')) {
       window.location.href = '/login';
     }
     return Promise.reject(error);
