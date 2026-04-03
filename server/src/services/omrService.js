@@ -269,16 +269,15 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   }
 
   // 5. Get QR anchor position in the upright image
+  // The ballot-spec offsets are relative to the QR's TOP-LEFT corner,
+  // so the anchor must be the top-left corner of the QR, not the center.
   let qrAnchorX = 0, qrAnchorY = 0;
   if (uprightQR && uprightQR.location) {
     const s = uprightQR.scale || 1;
-    // Use the center of the QR as anchor (more stable than corner)
     const tl = uprightQR.location.topLeftCorner;
-    const tr = uprightQR.location.topRightCorner;
-    const bl = uprightQR.location.bottomLeftCorner;
-    qrAnchorX = ((tl.x + tr.x + bl.x) / 3) / s;
-    qrAnchorY = ((tl.y + tr.y + bl.y) / 3) / s;
-    console.log(`[OMR] QR anchor in image: (${Math.round(qrAnchorX)}, ${Math.round(qrAnchorY)}) in ${uprightMeta.width}x${uprightMeta.height} image`);
+    qrAnchorX = tl.x / s;
+    qrAnchorY = tl.y / s;
+    console.log(`[OMR] QR anchor (top-left) in image: (${Math.round(qrAnchorX)}, ${Math.round(qrAnchorY)}) in ${uprightMeta.width}x${uprightMeta.height} image`);
   }
 
   // 6. Analyze each candidate oval using QR-relative offsets
