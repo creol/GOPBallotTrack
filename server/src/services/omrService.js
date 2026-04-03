@@ -282,64 +282,86 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   }
 
   // 6. Analyze each candidate oval using QR-relative offsets
-  const markedThreshold = ballotSpec.omr_thresholds?.marked ?? 0.25;
-  const unmarkedThreshold = ballotSpec.omr_thresholds?.unmarked ?? 0.16;
-  console.log(`[OMR] Thresholds — marked: >${markedThreshold}, unmarked: <${unmarkedThreshold}`);
-
+  // 6. Analyze each candidate oval — tighter crop, shifted left to avoid name text
   const candidateResults = [];
   for (const candidate of ballotSpec.candidates) {
-    // x_offset_from_qr and y_offset_from_qr are in 300 DPI pixels
-    // Scale them to actual image pixels and add to QR anchor
     const ovalCenterX = qrAnchorX + (candidate.oval.x_offset_from_qr * scaleFromSpec);
     const ovalCenterY = qrAnchorY + (candidate.oval.y_offset_from_qr * scaleFromSpec);
     const ovalFullW = candidate.oval.width * scaleFromSpec;
     const ovalFullH = candidate.oval.height * scaleFromSpec;
 
-    // Shrink crop to inner 65% to exclude the printed oval outline
-    // and any adjacent candidate name text bleeding into the zone
-    const shrink = 0.65;
-    const ovalW = ovalFullW * shrink;
-    const ovalH = ovalFullH * shrink;
+    // Shrink to inner 55% to exclude outline stroke and adjacent text
+    const shrinkW = 0.55;
+    const shrinkH = 0.60;
+    const ovalW = ovalFullW * shrinkW;
+    const ovalH = ovalFullH * shrinkH;
 
-    const cropX = ovalCenterX - ovalW / 2;
+    // Shift crop 15% of width to the LEFT to avoid candidate name text on the right
+    const shiftLeft = ovalFullW * 0.15;
+    const cropX = ovalCenterX - shiftLeft - ovalW / 2;
     const cropY = ovalCenterY - ovalH / 2;
 
-    console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), crop=${Math.round(ovalW)}x${Math.round(ovalH)} (inner ${shrink * 100}% of ${Math.round(ovalFullW)}x${Math.round(ovalFullH)})`);
+    console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), crop=pos(${Math.round(cropX)},${Math.round(cropY)}) size=${Math.round(ovalW)}x${Math.round(ovalH)}, full=${Math.round(ovalFullW)}x${Math.round(ovalFullH)}, shift_left=${Math.round(shiftLeft)}`);
 
     const fillRatio = await analyzeOvalFill(uprightBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
-
-    const isMarked = fillRatio > markedThreshold;
-    const isUnmarked = fillRatio < unmarkedThreshold;
 
     candidateResults.push({
       candidate_id: candidate.candidate_id,
       name: candidate.name,
       fill_ratio: Math.round(fillRatio * 10000) / 10000,
-      is_marked: isMarked,
-      is_uncertain: !isMarked && !isUnmarked,
     });
   }
 
-  // 6. Determine vote
-  const markedCandidates = candidateResults.filter(c => c.is_marked);
-  const uncertainCandidates = candidateResults.filter(c => c.is_uncertain);
+  // 7. Adaptive vote detection — look for the outlier, not absolute thresholds
+  //    A filled oval will have a MUCH higher fill than all other ovals on the same ballot.
+  const sorted = [...candidateResults].sort((a, b) => b.fill_ratio - a.fill_ratio);
+  const highest = sorted[0];
+  const secondHighest = sorted.length > 1 ? sorted[1] : { fill_ratio: 0 };
+  const lowest = sorted[sorted.length - 1];
+
+  // Calculate the gap between highest and second highest
+  const gap = highest.fill_ratio - secondHighest.fill_ratio;
+  const ratio = secondHighest.fill_ratio > 0 ? highest.fill_ratio / secondHighest.fill_ratio : Infinity;
+
+  console.log(`[OMR] Adaptive analysis: highest=${highest.name}@${highest.fill_ratio}, 2nd=${secondHighest.name}@${secondHighest.fill_ratio}, gap=${gap.toFixed(4)}, ratio=${ratio.toFixed(2)}, lowest=${lowest.fill_ratio}`);
 
   let detectedVote = null;
   let confidence = 0;
   let flagReason = null;
 
-  if (markedCandidates.length === 1) {
-    detectedVote = markedCandidates[0].candidate_id;
-    confidence = markedCandidates[0].fill_ratio;
-  } else if (markedCandidates.length === 0 && uncertainCandidates.length === 0) {
+  // Mark candidates as voted based on adaptive analysis
+  for (const c of candidateResults) {
+    c.is_marked = false;
+    c.is_uncertain = false;
+  }
+
+  if (highest.fill_ratio < 0.05) {
+    // All ovals essentially empty — no mark at all
     flagReason = 'no_mark';
-  } else if (markedCandidates.length > 1) {
-    flagReason = 'overvote';
-  } else {
-    flagReason = 'uncertain';
-    if (uncertainCandidates.length === 1) {
-      confidence = uncertainCandidates[0].fill_ratio;
+    console.log(`[OMR] Decision: NO_MARK — all fills below 0.05`);
+  } else if (ratio >= 2.0 && highest.fill_ratio >= 0.10 && gap >= 0.05) {
+    // Clear winner: highest is at least 2x the second, and meaningfully filled
+    const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
+    winner.is_marked = true;
+    detectedVote = winner.candidate_id;
+    confidence = highest.fill_ratio;
+    console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, ${ratio.toFixed(1)}x next)`);
+  } else if (highest.fill_ratio >= 0.10 && secondHighest.fill_ratio >= 0.10 && ratio < 1.5) {
+    // Two candidates with similar high fills — overvote
+    const top2 = sorted.filter(c => c.fill_ratio >= highest.fill_ratio * 0.6);
+    for (const c of top2) {
+      const match = candidateResults.find(r => r.candidate_id === c.candidate_id);
+      match.is_marked = true;
     }
+    flagReason = 'overvote';
+    console.log(`[OMR] Decision: OVERVOTE — ${top2.map(c => c.name).join(', ')} have similar fills`);
+  } else {
+    // Ambiguous — some signal but not clear enough
+    flagReason = 'uncertain';
+    confidence = highest.fill_ratio;
+    const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
+    winner.is_uncertain = true;
+    console.log(`[OMR] Decision: UNCERTAIN — highest ${highest.name}@${highest.fill_ratio}, ratio=${ratio.toFixed(2)}, gap=${gap.toFixed(4)}`);
   }
 
   return {
