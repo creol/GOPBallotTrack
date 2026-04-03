@@ -36,9 +36,9 @@ function calculateRotation(qrLocation) {
 }
 
 /**
- * Try to decode QR from an image at a specific max dimension.
+ * Try to decode QR from an image with specific preprocessing.
  */
-async function tryDecodeAtSize(imageBuffer, metadata, maxDim) {
+async function tryDecodeWithPreprocess(imageBuffer, metadata, maxDim, preprocess) {
   let processImg = sharp(imageBuffer);
   let scale = 1;
 
@@ -47,8 +47,16 @@ async function tryDecodeAtSize(imageBuffer, metadata, maxDim) {
     processImg = processImg.resize(Math.round(metadata.width * scale), Math.round(metadata.height * scale));
   }
 
-  // Sharpen to help QR detection on scanned images
-  processImg = processImg.sharpen();
+  // Apply preprocessing
+  if (preprocess === 'sharpen') {
+    processImg = processImg.sharpen({ sigma: 2 });
+  } else if (preprocess === 'binarize') {
+    // Convert to greyscale and threshold to pure black/white
+    processImg = processImg.greyscale().threshold(128);
+  } else if (preprocess === 'highcontrast') {
+    // Increase contrast then sharpen
+    processImg = processImg.greyscale().normalize().sharpen({ sigma: 3 });
+  }
 
   const { data: rgbaBuffer, info } = await processImg
     .ensureAlpha()
@@ -61,36 +69,94 @@ async function tryDecodeAtSize(imageBuffer, metadata, maxDim) {
 
 /**
  * Try to find a QR code in an image buffer.
- * Tries multiple scales to handle different scan resolutions.
- * Returns { qrData, rotation, sharpInstance } or null.
+ * Tries multiple scales and preprocessing methods.
+ * Returns { qrData, rotation, width, height, scale } or null.
  */
 async function findQRInImage(imageBuffer) {
   const metadata = await sharp(imageBuffer).metadata();
   console.log(`[OMR] Image dimensions: ${metadata.width}x${metadata.height}, format: ${metadata.format}`);
 
-  // Try multiple scales — high-DPI scans may need different sizes for jsQR
-  const sizes = [null, 3000, 2000, 1500, 1000];
-  for (const maxDim of sizes) {
-    const label = maxDim ? `${maxDim}px` : 'full';
-    try {
-      const result = await tryDecodeAtSize(imageBuffer, metadata, maxDim);
-      if (result) {
-        console.log(`[OMR] QR found at scale ${label}: ${JSON.stringify(result.data)}`);
-        return {
-          qrData: result.data,
-          location: result.location,
-          rotation: calculateRotation(result.location),
-          width: metadata.width,
-          height: metadata.height,
-          scale: result.scale,
-        };
+  // Try combinations of scale + preprocessing
+  const sizes = [null, 2000, 1500, 1000, 800];
+  const preprocessMethods = ['sharpen', 'binarize', 'highcontrast'];
+
+  for (const preprocess of preprocessMethods) {
+    for (const maxDim of sizes) {
+      const label = `${preprocess}@${maxDim ? maxDim + 'px' : 'full'}`;
+      try {
+        const result = await tryDecodeWithPreprocess(imageBuffer, metadata, maxDim, preprocess);
+        if (result && result.data) {
+          // Verify we got real data, not empty string
+          const hasData = typeof result.data === 'object'
+            ? (result.data.sn || result.data.round_id)
+            : (typeof result.data === 'string' && result.data.length > 0);
+          if (hasData) {
+            console.log(`[OMR] QR found with ${label}: ${JSON.stringify(result.data)}`);
+            return {
+              qrData: result.data,
+              location: result.location,
+              rotation: calculateRotation(result.location),
+              width: metadata.width,
+              height: metadata.height,
+              scale: result.scale,
+            };
+          }
+          console.log(`[OMR] QR finder patterns detected at ${label} but data empty/invalid`);
+        }
+      } catch (err) {
+        // Skip errors silently for individual attempts
       }
-      console.log(`[OMR] QR not found at scale ${label}`);
-    } catch (err) {
-      console.log(`[OMR] QR decode error at scale ${label}: ${err.message}`);
     }
   }
 
+  // Last resort: try cropping to just the bottom-right quadrant where QR should be
+  console.log(`[OMR] Trying bottom-right quadrant crop...`);
+  try {
+    const cropW = Math.round(metadata.width / 2);
+    const cropH = Math.round(metadata.height / 2);
+    const croppedBuffer = await sharp(imageBuffer)
+      .extract({ left: cropW, top: cropH, width: cropW, height: cropH })
+      .greyscale()
+      .normalize()
+      .sharpen({ sigma: 2 })
+      .toBuffer();
+
+    const croppedMeta = await sharp(croppedBuffer).metadata();
+    for (const maxDim of [null, 800, 500]) {
+      const result = await tryDecodeWithPreprocess(croppedBuffer, croppedMeta, maxDim, 'binarize');
+      if (result && result.data) {
+        const hasData = typeof result.data === 'object'
+          ? (result.data.sn || result.data.round_id)
+          : (typeof result.data === 'string' && result.data.length > 0);
+        if (hasData) {
+          console.log(`[OMR] QR found in bottom-right crop: ${JSON.stringify(result.data)}`);
+          // Adjust location back to full image coordinates
+          if (result.location) {
+            const adjustX = cropW / (result.scale || 1);
+            const adjustY = cropH / (result.scale || 1);
+            result.location.topLeftCorner.x += adjustX;
+            result.location.topLeftCorner.y += adjustY;
+            result.location.topRightCorner.x += adjustX;
+            result.location.topRightCorner.y += adjustY;
+            result.location.bottomLeftCorner.x += adjustX;
+            result.location.bottomLeftCorner.y += adjustY;
+          }
+          return {
+            qrData: result.data,
+            location: result.location,
+            rotation: calculateRotation(result.location),
+            width: metadata.width,
+            height: metadata.height,
+            scale: result.scale,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.log(`[OMR] Quadrant crop failed: ${err.message}`);
+  }
+
+  console.log(`[OMR] QR not found after all attempts`);
   return null;
 }
 
