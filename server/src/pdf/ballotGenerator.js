@@ -10,6 +10,8 @@ const { DEFAULT_CONFIG } = require('../routes/ballotDesign');
 // Ballot sizes in points (1 inch = 72 points)
 const LETTER_W = 8.5 * 72;
 const LETTER_H = 11 * 72;
+const DPI = 300;
+const PTS_TO_PX = DPI / 72; // 1 pt = 300/72 px at 300 DPI
 
 const SIZES = {
   letter:        { width: 8.5 * 72,  height: 11 * 72,   label: 'Letter (8.5" x 11")',           perPage: 1, cols: 1, rows: 1 },
@@ -17,10 +19,6 @@ const SIZES = {
   quarter_letter:{ width: 4.25 * 72, height: 5.5 * 72,  label: 'Quarter Letter (4.25" x 5.5")', perPage: 4, cols: 2, rows: 2 },
   eighth_letter: { width: 2.75 * 72, height: 4.25 * 72, label: '1/8 Letter (2.75" x 4.25")',    perPage: 8, cols: 2, rows: 4 },
 };
-
-// For eighth_letter multi-up: 2 cols × 4 rows on a letter page
-// Each cell: 4.25" wide × 2.75" tall (ballot rendered landscape)
-// 4.25*2 = 8.5", 2.75*4 = 11"  — perfect fit
 
 /**
  * Fetch all data needed for ballot generation.
@@ -109,10 +107,6 @@ function getScale(sizeKey, cfg) {
 }
 
 /**
- * Render one ballot within a clipping region.
- * ox, oy = origin offset on the page. bw, bh = ballot dimensions.
- */
-/**
  * Find the logo file for an election from the uploads directory.
  */
 function findElectionLogo(electionId) {
@@ -122,6 +116,18 @@ function findElectionLogo(electionId) {
   return files.length > 0 ? path.join(dir, files[0]) : null;
 }
 
+/**
+ * Convert PDFKit points to 300 DPI pixels.
+ */
+function ptToPx(pt) {
+  return Math.round(pt * PTS_TO_PX);
+}
+
+/**
+ * Render one ballot within a region and return OMR zone positions.
+ * ox, oy = origin offset on the page. bw, bh = ballot dimensions.
+ * Returns { qr: {x,y,w,h in pts}, ovals: [{candidateId, cx, cy, rx, ry in pts}] }
+ */
 async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candidates, serialNumber, sizeKey, logoPath, cfg }) {
   const margin = Math.max(bw * 0.06, 14);
   const contentWidth = bw - margin * 2;
@@ -129,6 +135,10 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
 
   // Resolve logo: explicit path > election's uploaded logo
   const resolvedLogo = logoPath || findElectionLogo(election.id);
+
+  // Track positions for ballot-spec
+  const ovalPositions = [];
+  let qrPosition = null;
 
   let y = oy + margin;
   const left = ox + margin;
@@ -180,6 +190,17 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
     drawEmptyOval(doc, ovalX, ovalY, sc.ovalRx, sc.ovalRy);
     doc.fontSize(sc.bodySize);
     doc.text(c.name, left + sc.ovalRx * 2 + 14, y + (sc.lineHeight - sc.bodySize) / 2, { width: contentWidth - sc.ovalRx * 2 - 20 });
+
+    // Track oval position (center + radii, relative to ballot origin)
+    ovalPositions.push({
+      candidateId: c.id,
+      candidateName: c.name,
+      cx: ovalX - ox,
+      cy: ovalY - oy,
+      rx: sc.ovalRx,
+      ry: sc.ovalRy,
+    });
+
     y += sc.lineHeight;
   }
   y += 4;
@@ -232,17 +253,24 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
     y += sc.footerSize + 4;
   }
 
-  // === QR CODE + SN ===
+  // === SINGLE QR CODE (bottom-right) + SN below ===
   if (cfg.qr.show) {
     const qrData = { sn: serialNumber, round_id: round.id, race_id: race.id };
     const qrBuffer = await generateQR(qrData, sc.qrSize);
 
-    const qrX = cfg.qr.position === 'bottom-left' ? left
-      : cfg.qr.position === 'bottom-center' ? ox + (bw - sc.qrSize) / 2
-      : ox + bw - margin - sc.qrSize; // bottom-right
-
+    // Always bottom-right for ADF orientation detection via finder patterns
+    const qrX = ox + bw - margin - sc.qrSize;
     const qrY = oy + bh - margin - sc.qrSize - (sizeKey === 'eighth_letter' ? 8 : 12);
+
     doc.image(qrBuffer, qrX, qrY, { width: sc.qrSize, height: sc.qrSize });
+
+    // Track QR position relative to ballot origin
+    qrPosition = {
+      x: qrX - ox,
+      y: qrY - oy,
+      width: sc.qrSize,
+      height: sc.qrSize,
+    };
 
     if (cfg.sn.show) {
       const snSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
@@ -250,15 +278,57 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
       doc.text(serialNumber, qrX, qrY + sc.qrSize + 2, { width: sc.qrSize, align: 'center' });
     }
   } else if (cfg.sn.show) {
-    // SN without QR — place at bottom center
     const snSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
     doc.fontSize(snSize).font('Courier-Bold');
     doc.text(serialNumber, left, oy + bh - margin - snSize - 4, { width: contentWidth, align: 'center' });
   }
+
+  // No back side — nothing printed on back
+
+  return { qrPosition, ovalPositions };
 }
 
 /**
- * Generate ballot PDF (multi-up on letter pages) and data ZIP.
+ * Build the ballot-spec.json OMR zone map from rendered positions.
+ */
+function buildBallotSpec({ election, race, round, sizeKey, qrPosition, ovalPositions }) {
+  const spec = {
+    election_id: election.id,
+    race_id: race.id,
+    round_id: round.id,
+    ballot_size: sizeKey,
+    dpi: DPI,
+    qr_code: qrPosition ? {
+      corner: 'bottom-right',
+      x: ptToPx(qrPosition.x),
+      y: ptToPx(qrPosition.y),
+      width: ptToPx(qrPosition.width),
+      height: ptToPx(qrPosition.height),
+    } : null,
+    candidates: ovalPositions.map(o => ({
+      candidate_id: o.candidateId,
+      name: o.candidateName,
+      oval: {
+        // Offsets from QR code position for ADF alignment
+        x_offset_from_qr: qrPosition ? ptToPx(o.cx - qrPosition.x) : ptToPx(o.cx),
+        y_offset_from_qr: qrPosition ? ptToPx(o.cy - qrPosition.y) : ptToPx(o.cy),
+        // Absolute position on ballot (from ballot top-left corner)
+        x: ptToPx(o.cx - o.rx),
+        y: ptToPx(o.cy - o.ry),
+        width: ptToPx(o.rx * 2),
+        height: ptToPx(o.ry * 2),
+      },
+    })),
+    omr_thresholds: {
+      marked: 0.15,
+      unmarked: 0.05,
+    },
+  };
+  return spec;
+}
+
+/**
+ * Generate ballot PDF (multi-up on letter pages), ballot-spec.json, and data ZIP.
  */
 async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
   if (!SIZES[sizeKey]) throw new Error(`Invalid size: ${sizeKey}`);
@@ -287,23 +357,15 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
 
   const pdfPath = path.join(outDir, 'ballots.pdf');
   const zipPath = path.join(outDir, 'ballot-data.zip');
+  const specPath = path.join(outDir, 'ballot-spec.json');
 
   const size = SIZES[sizeKey];
   const { perPage, cols, rows } = size;
 
-  // For eighth_letter multi-up: each cell is 4.25" wide × 2.75" tall
-  // The ballot content (2.75w × 4.25h) is rendered rotated into landscape cells.
-  // For simplicity, we use a different cell layout for eighth that swaps w/h.
   const isEighth = sizeKey === 'eighth_letter';
   const cellW = isEighth ? (4.25 * 72) : size.width;
   const cellH = isEighth ? (2.75 * 72) : size.height;
 
-  // For non-eighth: ballot w/h = cell w/h (content fills naturally)
-  // For eighth: we render the ballot content into a portrait area within a landscape cell
-  // Actually let's keep it simple: for eighth, render portrait ballot into a landscape cell
-  // by using the cell dimensions directly. The content auto-scales via getScale().
-
-  // Compute grid offsets to center the grid on the letter page
   const gridW = cols * cellW;
   const gridH = rows * cellH;
   const padX = (LETTER_W - gridW) / 2;
@@ -314,17 +376,19 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
   const pdfStream = fs.createWriteStream(pdfPath);
   doc.pipe(pdfStream);
 
-  // If letter size, one ballot per page at full size (no tiling)
+  // Capture zone positions from first ballot rendered (all ballots have same layout)
+  let specPositions = null;
+
   if (sizeKey === 'letter') {
     for (const serial of serials) {
       doc.addPage({ size: 'LETTER', margin: 0 });
-      await renderBallot(doc, 0, 0, size.width, size.height, {
+      const positions = await renderBallot(doc, 0, 0, size.width, size.height, {
         election, race, round, candidates,
         serialNumber: serial.serial_number, sizeKey, logoPath, cfg,
       });
+      if (!specPositions) specPositions = positions;
     }
   } else {
-    // Multi-up: tile ballots onto letter pages
     let slotIndex = 0;
 
     for (const serial of serials) {
@@ -339,14 +403,14 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
       const ox = padX + col * cellW;
       const oy = padY + row * cellH;
 
-      // For eighth_letter: render into landscape cell, content adapts via scale
       const ballotW = isEighth ? cellW : size.width;
       const ballotH = isEighth ? cellH : size.height;
 
-      await renderBallot(doc, ox, oy, ballotW, ballotH, {
+      const positions = await renderBallot(doc, ox, oy, ballotW, ballotH, {
         election, race, round, candidates,
         serialNumber: serial.serial_number, sizeKey, logoPath, cfg,
       });
+      if (!specPositions) specPositions = positions;
 
       // Draw light cut guide border
       if (perPage > 1) {
@@ -354,7 +418,7 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
         doc.lineWidth(0.25).strokeColor('#ccc');
         doc.rect(ox, oy, ballotW, ballotH).stroke();
         doc.restore();
-        doc.strokeColor('#000'); // reset
+        doc.strokeColor('#000');
       }
 
       slotIndex++;
@@ -367,7 +431,15 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
     pdfStream.on('error', reject);
   });
 
-  // === Generate ZIP (metadata only) ===
+  // === Generate ballot-spec.json ===
+  const ballotSpec = buildBallotSpec({
+    election, race, round, sizeKey,
+    qrPosition: specPositions?.qrPosition || null,
+    ovalPositions: specPositions?.ovalPositions || [],
+  });
+  fs.writeFileSync(specPath, JSON.stringify(ballotSpec, null, 2));
+
+  // === Generate ZIP (metadata + ballot-spec) ===
   const metadata = {
     election: { id: election.id, name: election.name, date: election.date },
     race: { id: race.id, name: race.name },
@@ -375,7 +447,7 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
     ballot_size: SIZES[sizeKey].label,
     ballots_per_page: perPage,
     generated_at: new Date().toISOString(),
-    quantity,
+    quantity: serials.length,
     serial_numbers: serials.map(s => s.serial_number),
   };
 
@@ -386,6 +458,7 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
     archive.on('error', reject);
     archive.pipe(output);
     archive.append(JSON.stringify(metadata, null, 2), { name: 'ballot-data.json' });
+    archive.append(JSON.stringify(ballotSpec, null, 2), { name: 'ballot-spec.json' });
     archive.finalize();
   });
 
@@ -423,8 +496,6 @@ async function generatePreviewPdf({ roundId, sizeKey, serialNumbers, outputPath 
     });
   } else {
     doc.addPage({ size: 'LETTER', margin: 0 });
-    const count = Math.min(serialNumbers.length, perPage);
-    // Fill with available SNs, repeat if needed to show full page layout
     for (let i = 0; i < perPage; i++) {
       const sn = serialNumbers[i % serialNumbers.length] || `PREV${i + 1}`;
       const col = i % cols;
