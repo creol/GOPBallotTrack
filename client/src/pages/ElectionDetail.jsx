@@ -96,10 +96,7 @@ export default function ElectionDetail() {
             <p style={styles.muted}>{new Date(election.date).toLocaleDateString()}</p>
             {election.description && <p>{election.description}</p>}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <Link to={`/admin/elections/${id}/ballot-design`} style={styles.btnPrimary}>Design Ballots</Link>
-            <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
-          </div>
+          <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
         </div>
       )}
 
@@ -317,6 +314,10 @@ function GenerateAllBallots({ electionId }) {
   return (
     <div>
       <h2>Ballot Generation</h2>
+
+      <Link to={`/admin/elections/${electionId}/ballot-design`} style={{ ...styles.btnPrimary, display: 'inline-block', textDecoration: 'none', marginBottom: '0.75rem' }}>
+        Design Ballots
+      </Link>
 
       {/* Generate controls */}
       <p style={styles.muted}>
