@@ -107,12 +107,19 @@ async function findQRInImage(imageBuffer) {
   }
 
   // Last resort: try cropping to just the bottom-right quadrant where QR should be
+  // Skip if image is already small (e.g. already a quadrant crop)
+  if (metadata.width < 800 || metadata.height < 800) {
+    console.log(`[OMR] QR not found after all attempts (image too small for quadrant crop)`);
+    return null;
+  }
   console.log(`[OMR] Trying bottom-right quadrant crop...`);
   try {
-    const cropW = Math.round(metadata.width / 2);
-    const cropH = Math.round(metadata.height / 2);
+    const cropLeft = Math.round(metadata.width / 2);
+    const cropTop = Math.round(metadata.height / 2);
+    const cropW = metadata.width - cropLeft;
+    const cropH = metadata.height - cropTop;
     const croppedBuffer = await sharp(imageBuffer)
-      .extract({ left: cropW, top: cropH, width: cropW, height: cropH })
+      .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
       .greyscale()
       .normalize()
       .sharpen({ sigma: 2 })
@@ -129,8 +136,8 @@ async function findQRInImage(imageBuffer) {
           console.log(`[OMR] QR found in bottom-right crop: ${JSON.stringify(result.data)}`);
           // Adjust location back to full image coordinates
           if (result.location) {
-            const adjustX = cropW / (result.scale || 1);
-            const adjustY = cropH / (result.scale || 1);
+            const adjustX = cropLeft / (result.scale || 1);
+            const adjustY = cropTop / (result.scale || 1);
             result.location.topLeftCorner.x += adjustX;
             result.location.topLeftCorner.y += adjustY;
             result.location.topRightCorner.x += adjustX;
@@ -357,12 +364,14 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
       return { x: ix, y: iy };
     };
   } else {
-    // Single QR fallback — use the old expansion-based anchor method
-    console.log(`[OMR] Single QR mode — using expansion-based anchor`);
-    const s = brQR.scale || 1;
-    const tl = brQR.location.topLeftCorner;
-    const tr = brQR.location.topRightCorner;
-    const bl = brQR.location.bottomLeftCorner;
+    // Single QR fallback — use the full-image QR result (not quadrant-local)
+    // Re-find QR in full image for accurate coordinates
+    console.log(`[OMR] Single QR mode — using full-image QR position`);
+    const fullQR = qrResult; // the original full-image QR detection
+    const s = fullQR.scale || 1;
+    const tl = fullQR.location.topLeftCorner;
+    const tr = fullQR.location.topRightCorner;
+    const bl = fullQR.location.bottomLeftCorner;
 
     const f2fX = Math.abs(tr.x - tl.x) / s;
     const f2fY = Math.abs(bl.y - tl.y) / s;

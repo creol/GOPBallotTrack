@@ -120,7 +120,7 @@ async function processSingleBallot(filePath, scannerId, io) {
   console.log(`[ScanWatcher] QR decode result for ${path.basename(filePath)}: ${qrResult ? JSON.stringify(qrResult.qrData) : 'NOT FOUND'}`);
 
   if (!qrResult || !qrResult.qrData) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — No QR found in ${path.basename(filePath)}`);
+    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — No QR found in ${path.basename(filePath)}\x1b[0m`);
     moveFile(filePath, path.join(SCAN_BASE, 'errors'), `noqr-${Date.now()}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'qr_not_found', scanner_id: scannerId, scanner_name: scannerRow.name });
     return;
@@ -129,7 +129,7 @@ async function processSingleBallot(filePath, scannerId, io) {
   // QR encodes only the serial number as a plain string
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData.trim() : null;
   if (!serialNumber || serialNumber.length < 8) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — QR data invalid: "${qrResult.qrData}"`);
+    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — ${path.basename(filePath)}: QR data invalid "${qrResult.qrData}"\x1b[0m`);
     moveFile(filePath, path.join(SCAN_BASE, 'errors'), `badqr-${Date.now()}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'invalid_qr', scanner_id: scannerId });
     return;
@@ -148,7 +148,7 @@ async function processSingleBallot(filePath, scannerId, io) {
   );
 
   if (!ballotInfo) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — SN not found in database: ${serialNumber}`);
+    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — ${serialNumber}: SN not found in database\x1b[0m`);
     moveFile(filePath, path.join(SCAN_BASE, 'errors'), `invalid-${serialNumber}-${path.basename(filePath)}`);
     if (io) io.emit('scan:error', { reason: 'invalid_sn', serial_number: serialNumber, scanner_id: scannerId });
     return;
@@ -167,7 +167,7 @@ async function processSingleBallot(filePath, scannerId, io) {
   );
 
   if (existingScan) {
-    console.log(`[ScanWatcher] Final outcome: ERROR — Duplicate SN: ${serialNumber} in pass ${pass.pass_number}`);
+    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — ${serialNumber}: Duplicate in pass ${pass.pass_number}\x1b[0m`);
     moveFile(filePath, path.join(SCAN_BASE, 'errors'), `dup-${serialNumber}-${path.basename(filePath)}`);
     if (io) io.emit('scan:duplicate', { serial_number: serialNumber, scanner_id: scannerId });
     return;
@@ -177,7 +177,7 @@ async function processSingleBallot(filePath, scannerId, io) {
   const ballotSpec = loadBallotSpec(electionId, roundId);
 
   if (!ballotSpec) {
-    console.log(`[ScanWatcher] Final outcome: FLAGGED — No ballot-spec.json for round ${roundId}, flagging for manual review`);
+    console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${serialNumber}: No ballot-spec.json for round ${roundId}\x1b[0m`);
     await db.query(
       `INSERT INTO flagged_ballots (round_id, pass_id, ballot_serial_id, scanner_id, flag_reason, image_path)
        VALUES ($1, $2, $3, $4, 'uncertain', $5)`,
@@ -213,7 +213,7 @@ async function processSingleBallot(filePath, scannerId, io) {
        JSON.stringify(omrResult.candidates)]
     );
 
-    console.log(`[ScanWatcher] Final outcome: FLAGGED — ${serialNumber} (${omrResult.flag_reason})`);
+    console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${serialNumber} (${omrResult.flag_reason})\x1b[0m`);
     if (io) io.emit('scan:flagged', {
       serial_number: serialNumber,
       reason: omrResult.flag_reason,
@@ -238,7 +238,8 @@ async function processSingleBallot(filePath, scannerId, io) {
       'SELECT COUNT(*) as count FROM scans WHERE pass_id = $1', [pass.id]
     );
 
-    console.log(`[ScanWatcher] Final outcome: RECORDED — ${serialNumber} -> candidate ${omrResult.detected_vote} (confidence: ${omrResult.confidence}, count: ${count})`);
+    const candidateName = omrResult.candidates.find(c => c.candidate_id === omrResult.detected_vote)?.name || `ID:${omrResult.detected_vote}`;
+    console.log(`\x1b[32m[ScanWatcher] ✓ RECORDED — ${serialNumber} → ${candidateName} (confidence: ${(omrResult.confidence * 100).toFixed(1)}%, count: ${count})\x1b[0m`);
     if (io) io.emit('scan:recorded', {
       serial_number: serialNumber,
       candidate_id: omrResult.detected_vote,
