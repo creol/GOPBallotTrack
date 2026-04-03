@@ -136,6 +136,79 @@ router.post('/elections/:id/generate-all-ballots', async (req, res) => {
   }
 });
 
+// GET /api/admin/elections/:id/ballot-list — List all rounds with ballot/PDF status
+router.get('/elections/:id/ballot-list', async (req, res) => {
+  try {
+    const electionId = parseInt(req.params.id);
+    const { rows: races } = await db.query(
+      'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order', [electionId]
+    );
+
+    const list = [];
+    for (const race of races) {
+      const { rows: rounds } = await db.query(
+        'SELECT * FROM rounds WHERE race_id = $1 ORDER BY round_number', [race.id]
+      );
+      for (const round of rounds) {
+        const { rows: [{ count }] } = await db.query(
+          'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [round.id]
+        );
+        const outDir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(electionId), 'rounds', String(round.id));
+        const pdfExists = fs.existsSync(path.join(outDir, 'ballots.pdf'));
+        list.push({
+          race_name: race.name,
+          round_number: round.round_number,
+          round_id: round.id,
+          paper_color: round.paper_color,
+          serial_count: parseInt(count),
+          pdf_exists: pdfExists,
+          pdf_url: pdfExists ? `/api/admin/rounds/${round.id}/ballot-pdf` : null,
+        });
+      }
+    }
+
+    res.json(list);
+  } catch (err) {
+    console.error('Ballot list error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/admin/elections/:id/ballot-pdfs-zip — Download all ballot PDFs as a single ZIP
+router.get('/elections/:id/ballot-pdfs-zip', async (req, res) => {
+  try {
+    const electionId = parseInt(req.params.id);
+    const { rows: races } = await db.query(
+      'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order', [electionId]
+    );
+
+    const archiver = require('archiver');
+    const archive = archiver('zip', { zlib: { level: 6 } });
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="all-ballots-election-${electionId}.zip"`);
+    archive.pipe(res);
+
+    for (const race of races) {
+      const raceDirName = race.name.toLowerCase().replace(/\s+/g, '-');
+      const { rows: rounds } = await db.query(
+        'SELECT * FROM rounds WHERE race_id = $1 ORDER BY round_number', [race.id]
+      );
+      for (const round of rounds) {
+        const pdfPath = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(electionId), 'rounds', String(round.id), 'ballots.pdf');
+        if (fs.existsSync(pdfPath)) {
+          archive.file(pdfPath, { name: `${raceDirName}/round-${round.round_number}-${round.paper_color || 'ballots'}.pdf` });
+        }
+      }
+    }
+
+    archive.finalize();
+  } catch (err) {
+    console.error('Ballot PDFs ZIP error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Helper: resolve output dir for a round
 async function getOutputDir(roundId) {
   const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);

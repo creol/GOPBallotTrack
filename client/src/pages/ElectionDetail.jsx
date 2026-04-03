@@ -285,57 +285,86 @@ const BALLOT_SIZES = [
 function GenerateAllBallots({ electionId }) {
   const [size, setSize] = useState('letter');
   const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState(null);
+  const [ballotList, setBallotList] = useState([]);
+  const [error, setError] = useState(null);
+
+  const fetchBallotList = async () => {
+    try {
+      const { data } = await api.get(`/admin/elections/${electionId}/ballot-list`);
+      setBallotList(data);
+    } catch {}
+  };
+
+  useEffect(() => { fetchBallotList(); }, [electionId]);
 
   const handleGenerate = async () => {
     setGenerating(true);
-    setResult(null);
+    setError(null);
     try {
-      const { data } = await api.post(`/admin/elections/${electionId}/generate-all-ballots`, { size });
-      setResult(data);
+      await api.post(`/admin/elections/${electionId}/generate-all-ballots`, { size });
+      fetchBallotList();
     } catch (err) {
-      setResult({ error: err.response?.data?.error || 'Failed to generate' });
+      setError(err.response?.data?.error || 'Failed to generate');
     } finally {
       setGenerating(false);
     }
   };
 
+  const hasAnyPdf = ballotList.some(b => b.pdf_exists);
+  const hasAnySerials = ballotList.some(b => b.serial_count > 0);
+  const allHavePdf = ballotList.length > 0 && ballotList.every(b => !b.serial_count || b.pdf_exists);
+
   return (
     <div>
       <h2>Ballot Generation</h2>
+
+      {/* Generate controls */}
       <p style={styles.muted}>
-        Generate printable PDFs for every round across all races. Serial numbers must already exist (set ballot count when creating races).
+        {hasAnySerials
+          ? 'Generate or regenerate printable PDFs for all rounds. Serial numbers are preserved.'
+          : 'Set ballot count when creating races to generate serial numbers first.'}
       </p>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-        <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
-          {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-        <button
-          style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }}
-          onClick={handleGenerate}
-          disabled={generating}
-        >
-          {generating ? 'Generating...' : 'Generate All PDFs'}
-        </button>
-      </div>
-      {result && !result.error && (
-        <div style={{ marginTop: '0.75rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '0.75rem' }}>
-          <strong>{result.message}</strong>
-          <div style={{ marginTop: '0.5rem' }}>
-            {result.results?.map((r, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid #dcfce7' }}>
-                <span style={{ flex: 1, fontSize: '0.9rem', color: r.status === 'generated' ? '#166534' : '#dc2626' }}>
-                  {r.race} — Round {r.round}{r.status === 'generated' ? ` (${r.serial_count} ballots)` : `: ${r.error}`}
-                </span>
-                {r.status === 'generated' && (
-                  <a href={r.pdf_url} style={styles.btnDownload} download>Download PDF</a>
-                )}
-              </div>
-            ))}
-          </div>
+      {hasAnySerials && (
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+          <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
+            {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+          <button
+            style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }}
+            onClick={handleGenerate}
+            disabled={generating}
+          >
+            {generating ? 'Generating...' : hasAnyPdf ? 'Regenerate All PDFs' : 'Generate All PDFs'}
+          </button>
+          {hasAnyPdf && (
+            <a href={`/api/admin/elections/${electionId}/ballot-pdfs-zip`} style={styles.btnDownload} download>
+              Download All PDFs (ZIP)
+            </a>
+          )}
         </div>
       )}
-      {result?.error && <p style={{ color: '#dc2626', marginTop: '0.5rem' }}>{result.error}</p>}
+
+      {error && <p style={{ color: '#dc2626', marginTop: '0.5rem' }}>{error}</p>}
+
+      {/* Ballot list — always shown when ballots exist */}
+      {ballotList.length > 0 && (
+        <div style={{ marginTop: '1rem' }}>
+          {ballotList.map((b, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0', borderBottom: '1px solid #eee' }}>
+              <span style={{ flex: 1 }}>
+                <strong>{b.race_name}</strong> — Round {b.round_number}
+                <span style={styles.muted}> ({b.paper_color})</span>
+                <span style={styles.muted}> — {b.serial_count} ballots</span>
+              </span>
+              {b.pdf_exists ? (
+                <a href={b.pdf_url} style={styles.btnDownload} download>Download PDF</a>
+              ) : (
+                <span style={{ color: '#9ca3af', fontSize: '0.82rem' }}>No PDF yet</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
