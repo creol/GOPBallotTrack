@@ -246,13 +246,18 @@ function GenerateAllBallots({ electionId }) {
       {result && !result.error && (
         <div style={{ marginTop: '0.75rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '0.75rem' }}>
           <strong>{result.message}</strong>
-          <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.25rem' }}>
+          <div style={{ marginTop: '0.5rem' }}>
             {result.results?.map((r, i) => (
-              <li key={i} style={{ color: r.status === 'generated' ? '#166534' : '#dc2626', fontSize: '0.9rem' }}>
-                {r.race} Round {r.round}: {r.status === 'generated' ? `${r.serial_count} ballots` : r.error}
-              </li>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid #dcfce7' }}>
+                <span style={{ flex: 1, fontSize: '0.9rem', color: r.status === 'generated' ? '#166534' : '#dc2626' }}>
+                  {r.race} — Round {r.round}{r.status === 'generated' ? ` (${r.serial_count} ballots)` : `: ${r.error}`}
+                </span>
+                {r.status === 'generated' && (
+                  <a href={r.pdf_url} style={styles.btnDownload} download>Download PDF</a>
+                )}
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
       )}
       {result?.error && <p style={{ color: '#dc2626', marginTop: '0.5rem' }}>{result.error}</p>}

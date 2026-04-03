@@ -112,13 +112,16 @@ router.post('/elections/:id/generate-all-ballots', async (req, res) => {
           results.push({
             race: race.name,
             round: round.round_number,
+            round_id: round.id,
             serial_count: result.serials.length,
             status: 'generated',
+            pdf_url: `/api/admin/rounds/${round.id}/ballot-pdf`,
           });
         } catch (err) {
           results.push({
             race: race.name,
             round: round.round_number,
+            round_id: round.id,
             status: 'error',
             error: err.message,
           });
