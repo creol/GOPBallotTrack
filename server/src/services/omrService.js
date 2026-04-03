@@ -240,13 +240,73 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   // QR encodes only the serial number as a plain string
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData : null;
 
-  // 2. Rotate to upright
-  const rotation = qrResult.rotation;
+  // 2. Determine orientation and rotate to upright
+  // The QR should be at bottom-right when upright. Check where it is now.
+  const imgMeta = await sharp(imageBuffer).metadata();
+  const qrCenterX = (qrResult.location.topLeftCorner.x + qrResult.location.topRightCorner.x) / 2 / (qrResult.scale || 1);
+  const qrCenterY = (qrResult.location.topLeftCorner.y + qrResult.location.bottomLeftCorner.y) / 2 / (qrResult.scale || 1);
+  const qrInRightHalf = qrCenterX > imgMeta.width / 2;
+  const qrInBottomHalf = qrCenterY > imgMeta.height / 2;
+
+  // Determine rotation needed to put QR at bottom-right
+  let rotation = 0;
+  if (qrInRightHalf && qrInBottomHalf) rotation = 0;       // QR already bottom-right
+  else if (!qrInRightHalf && qrInBottomHalf) rotation = 90;  // QR bottom-left → rotate 90 CW
+  else if (!qrInRightHalf && !qrInBottomHalf) rotation = 180; // QR top-left → rotate 180
+  else if (qrInRightHalf && !qrInBottomHalf) rotation = 270; // QR top-right → rotate 270 CW
+
+  console.log(`[OMR] QR position: center=(${Math.round(qrCenterX)},${Math.round(qrCenterY)}) in ${imgMeta.width}x${imgMeta.height}, right=${qrInRightHalf}, bottom=${qrInBottomHalf}, rotation=${rotation}°`);
+
   const uprightBuffer = await rotateToUpright(imageBuffer, rotation);
 
   // 3. Re-find QR in upright image to get accurate pixel position
   const uprightQR = await findQRInImage(uprightBuffer);
   const uprightMeta = await sharp(uprightBuffer).metadata();
+
+  // Verify QR is now in bottom-right after rotation. If not, try flipping horizontally
+  // (face-down scans produce mirrored images)
+  let finalBuffer = uprightBuffer;
+  let wasMirrored = false;
+  if (uprightQR && uprightQR.location) {
+    const uqrCx = (uprightQR.location.topLeftCorner.x + uprightQR.location.topRightCorner.x) / 2 / (uprightQR.scale || 1);
+    const uqrCy = (uprightQR.location.topLeftCorner.y + uprightQR.location.bottomLeftCorner.y) / 2 / (uprightQR.scale || 1);
+    const inRight = uqrCx > uprightMeta.width / 2;
+    const inBottom = uqrCy > uprightMeta.height / 2;
+    console.log(`[OMR] After rotation: QR at (${Math.round(uqrCx)},${Math.round(uqrCy)}) in ${uprightMeta.width}x${uprightMeta.height}, right=${inRight}, bottom=${inBottom}`);
+
+    if (!inRight && inBottom) {
+      // QR is bottom-LEFT — image is horizontally mirrored (face-down scan)
+      console.log(`[OMR] Image appears mirrored (face-down scan) — flipping horizontally`);
+      finalBuffer = await sharp(uprightBuffer).flop().toBuffer();
+      wasMirrored = true;
+    } else if (!inRight || !inBottom) {
+      // QR not in bottom-right after rotation — try additional corrections
+      console.log(`[OMR] WARNING: QR not in bottom-right after rotation. right=${inRight}, bottom=${inBottom}`);
+      // Try horizontal flip as last resort
+      const flippedBuf = await sharp(uprightBuffer).flop().toBuffer();
+      const flippedQR = await findQRInImage(flippedBuf);
+      if (flippedQR) {
+        const fCx = (flippedQR.location.topLeftCorner.x + flippedQR.location.topRightCorner.x) / 2 / (flippedQR.scale || 1);
+        const fMeta = await sharp(flippedBuf).metadata();
+        if (fCx > fMeta.width / 2) {
+          console.log(`[OMR] Horizontal flip fixed QR position — using flipped image`);
+          finalBuffer = flippedBuf;
+          wasMirrored = true;
+        }
+      }
+    }
+  }
+
+  // Re-find QR in the final corrected image
+  if (wasMirrored) {
+    const correctedQR = await findQRInImage(finalBuffer);
+    if (correctedQR) {
+      // Replace uprightQR with corrected version
+      Object.assign(uprightQR, correctedQR);
+    }
+    const correctedMeta = await sharp(finalBuffer).metadata();
+    Object.assign(uprightMeta, correctedMeta);
+  }
 
   // 4. Calculate scale factor: spec is in 300 DPI pixels, need to map to actual image pixels
   // Use the QR code size as the reference: compare spec QR size to detected QR size in image
@@ -325,7 +385,7 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
 
     console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), crop=pos(${Math.round(cropX)},${Math.round(cropY)}) size=${Math.round(ovalW)}x${Math.round(ovalH)}, full=${Math.round(ovalFullW)}x${Math.round(ovalFullH)}, shift_left=${Math.round(shiftLeft)}`);
 
-    const fillRatio = await analyzeOvalFill(uprightBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
+    const fillRatio = await analyzeOvalFill(finalBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
 
     candidateResults.push({
       candidate_id: candidate.candidate_id,
@@ -399,6 +459,7 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   return {
     serial_number: serialNumber,
     rotation_applied: rotation,
+    mirrored: wasMirrored,
     candidates: candidateResults,
     detected_vote: detectedVote,
     confidence,
