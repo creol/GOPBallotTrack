@@ -240,152 +240,186 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   // QR encodes only the serial number as a plain string
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData : null;
 
-  // 2. Determine orientation and rotate to upright
-  // The QR should be at bottom-right when upright. Check where it is now.
+  // 2. Find BOTH QR codes in the image for two-point affine alignment
+  // The ballot has QR at top-left and bottom-right. We use both as anchor points
+  // to precisely map spec coordinates to image coordinates, correcting for
+  // rotation, scale, skew, and mirroring in one step.
+
+  // jsQR only returns one QR at a time. We need to find both.
+  // Strategy: find the first QR, mask it out, find the second.
   const imgMeta = await sharp(imageBuffer).metadata();
-  const qrCenterX = (qrResult.location.topLeftCorner.x + qrResult.location.topRightCorner.x) / 2 / (qrResult.scale || 1);
-  const qrCenterY = (qrResult.location.topLeftCorner.y + qrResult.location.bottomLeftCorner.y) / 2 / (qrResult.scale || 1);
-  const qrInRightHalf = qrCenterX > imgMeta.width / 2;
-  const qrInBottomHalf = qrCenterY > imgMeta.height / 2;
+  const allQRs = [];
 
-  // Determine rotation needed to put QR at bottom-right
-  let rotation = 0;
-  if (qrInRightHalf && qrInBottomHalf) rotation = 0;       // QR already bottom-right
-  else if (!qrInRightHalf && qrInBottomHalf) rotation = 90;  // QR bottom-left → rotate 90 CW
-  else if (!qrInRightHalf && !qrInBottomHalf) rotation = 180; // QR top-left → rotate 180
-  else if (qrInRightHalf && !qrInBottomHalf) rotation = 270; // QR top-right → rotate 270 CW
+  // First QR already found
+  const qr1Scale = qrResult.scale || 1;
+  const qr1Cx = (qrResult.location.topLeftCorner.x + qrResult.location.topRightCorner.x) / 2 / qr1Scale;
+  const qr1Cy = (qrResult.location.topLeftCorner.y + qrResult.location.bottomLeftCorner.y) / 2 / qr1Scale;
+  allQRs.push({ cx: qr1Cx, cy: qr1Cy, location: qrResult.location, scale: qr1Scale, data: qrResult.qrData });
 
-  console.log(`[OMR] QR position: center=(${Math.round(qrCenterX)},${Math.round(qrCenterY)}) in ${imgMeta.width}x${imgMeta.height}, right=${qrInRightHalf}, bottom=${qrInBottomHalf}, rotation=${rotation}°`);
+  // Try to find second QR by masking the first one's area
+  try {
+    const maskSize = 300; // pixels to white out around first QR
+    const maskX = Math.max(0, Math.round(qr1Cx - maskSize / 2));
+    const maskY = Math.max(0, Math.round(qr1Cy - maskSize / 2));
+    const maskW = Math.min(maskSize, imgMeta.width - maskX);
+    const maskH = Math.min(maskSize, imgMeta.height - maskY);
 
-  const uprightBuffer = await rotateToUpright(imageBuffer, rotation);
+    // Create a white rectangle overlay to mask the first QR
+    const whitePatch = await sharp({
+      create: { width: maskW, height: maskH, channels: 3, background: '#ffffff' }
+    }).jpeg().toBuffer();
 
-  // 3. Re-find QR in upright image to get accurate pixel position
-  const uprightQR = await findQRInImage(uprightBuffer);
-  const uprightMeta = await sharp(uprightBuffer).metadata();
+    const maskedBuffer = await sharp(imageBuffer)
+      .composite([{ input: whitePatch, left: maskX, top: maskY }])
+      .toBuffer();
 
-  // Verify QR is now in bottom-right after rotation. If not, try flipping horizontally
-  // (face-down scans produce mirrored images)
-  let finalBuffer = uprightBuffer;
+    const qr2Result = await findQRInImage(maskedBuffer);
+    if (qr2Result && qr2Result.qrData) {
+      const qr2Scale = qr2Result.scale || 1;
+      const qr2Cx = (qr2Result.location.topLeftCorner.x + qr2Result.location.topRightCorner.x) / 2 / qr2Scale;
+      const qr2Cy = (qr2Result.location.topLeftCorner.y + qr2Result.location.bottomLeftCorner.y) / 2 / qr2Scale;
+      allQRs.push({ cx: qr2Cx, cy: qr2Cy, location: qr2Result.location, scale: qr2Scale, data: qr2Result.qrData });
+      console.log(`[OMR] Found 2 QR codes: QR1=(${Math.round(qr1Cx)},${Math.round(qr1Cy)}), QR2=(${Math.round(qr2Cx)},${Math.round(qr2Cy)})`);
+    } else {
+      console.log(`[OMR] Only 1 QR code found — falling back to single-anchor mode`);
+    }
+  } catch (err) {
+    console.log(`[OMR] Second QR search failed: ${err.message} — using single anchor`);
+  }
+
+  // 3. Identify which QR is top-left and which is bottom-right
+  // The bottom-right QR is the one closer to the bottom-right corner of the image
+  let brQR, tlQR;
+  if (allQRs.length >= 2) {
+    // The one with larger (cx + cy) is closer to bottom-right
+    const sorted = [...allQRs].sort((a, b) => (b.cx + b.cy) - (a.cx + a.cy));
+    brQR = sorted[0]; // bottom-right (larger cx+cy)
+    tlQR = sorted[1]; // top-left (smaller cx+cy)
+    console.log(`[OMR] BR QR at (${Math.round(brQR.cx)},${Math.round(brQR.cy)}), TL QR at (${Math.round(tlQR.cx)},${Math.round(tlQR.cy)})`);
+  } else {
+    brQR = allQRs[0];
+    tlQR = null;
+  }
+
+  // 4. Compute affine transform from spec coordinates to image coordinates
+  // Using two anchor points: TL QR center and BR QR center
+  // spec positions → image positions
+  const specBR = ballotSpec.qr_code;
+  const specTL = ballotSpec.qr_code_top_left;
+
+  let mapSpecToImage;
+  let finalBuffer = imageBuffer; // no rotation needed with affine
   let wasMirrored = false;
-  if (uprightQR && uprightQR.location) {
-    const uqrCx = (uprightQR.location.topLeftCorner.x + uprightQR.location.topRightCorner.x) / 2 / (uprightQR.scale || 1);
-    const uqrCy = (uprightQR.location.topLeftCorner.y + uprightQR.location.bottomLeftCorner.y) / 2 / (uprightQR.scale || 1);
-    const inRight = uqrCx > uprightMeta.width / 2;
-    const inBottom = uqrCy > uprightMeta.height / 2;
-    console.log(`[OMR] After rotation: QR at (${Math.round(uqrCx)},${Math.round(uqrCy)}) in ${uprightMeta.width}x${uprightMeta.height}, right=${inRight}, bottom=${inBottom}`);
+  const rotation = 0;
 
-    if (!inRight && inBottom) {
-      // QR is bottom-LEFT — image is horizontally mirrored (face-down scan)
-      console.log(`[OMR] Image appears mirrored (face-down scan) — flipping horizontally`);
-      finalBuffer = await sharp(uprightBuffer).flop().toBuffer();
-      wasMirrored = true;
-    } else if (!inRight || !inBottom) {
-      // QR not in bottom-right after rotation — try additional corrections
-      console.log(`[OMR] WARNING: QR not in bottom-right after rotation. right=${inRight}, bottom=${inBottom}`);
-      // Try horizontal flip as last resort
-      const flippedBuf = await sharp(uprightBuffer).flop().toBuffer();
-      const flippedQR = await findQRInImage(flippedBuf);
-      if (flippedQR) {
-        const fCx = (flippedQR.location.topLeftCorner.x + flippedQR.location.topRightCorner.x) / 2 / (flippedQR.scale || 1);
-        const fMeta = await sharp(flippedBuf).metadata();
-        if (fCx > fMeta.width / 2) {
-          console.log(`[OMR] Horizontal flip fixed QR position — using flipped image`);
-          finalBuffer = flippedBuf;
-          wasMirrored = true;
-        }
-      }
-    }
+  if (tlQR && specTL && specBR) {
+    // Two-point affine: we have both QR codes
+    // Spec anchor points (center of each QR bounding box)
+    const specBRcx = specBR.x + specBR.width / 2;
+    const specBRcy = specBR.y + specBR.height / 2;
+    const specTLcx = specTL.x + specTL.width / 2;
+    const specTLcy = specTL.y + specTL.height / 2;
+
+    // Image anchor points (center of each detected QR)
+    const imgBRcx = brQR.cx;
+    const imgBRcy = brQR.cy;
+    const imgTLcx = tlQR.cx;
+    const imgTLcy = tlQR.cy;
+
+    // Compute scale and rotation from the two anchor pairs
+    const specDx = specBRcx - specTLcx;
+    const specDy = specBRcy - specTLcy;
+    const imgDx = imgBRcx - imgTLcx;
+    const imgDy = imgBRcy - imgTLcy;
+
+    const specDist = Math.sqrt(specDx * specDx + specDy * specDy);
+    const imgDist = Math.sqrt(imgDx * imgDx + imgDy * imgDy);
+    const scale = imgDist / specDist;
+
+    const specAngle = Math.atan2(specDy, specDx);
+    const imgAngle = Math.atan2(imgDy, imgDx);
+    const angleDiff = imgAngle - specAngle;
+
+    console.log(`[OMR] Affine: scale=${scale.toFixed(4)}, rotation=${(angleDiff * 180 / Math.PI).toFixed(2)}°, specDist=${Math.round(specDist)}, imgDist=${Math.round(imgDist)}`);
+
+    // Affine mapping function: spec point → image point
+    mapSpecToImage = (sx, sy) => {
+      // Translate to TL origin, rotate+scale, translate to image TL
+      const dx = sx - specTLcx;
+      const dy = sy - specTLcy;
+      const cos = Math.cos(angleDiff);
+      const sin = Math.sin(angleDiff);
+      const ix = imgTLcx + scale * (dx * cos - dy * sin);
+      const iy = imgTLcy + scale * (dx * sin + dy * cos);
+      return { x: ix, y: iy };
+    };
+  } else {
+    // Single QR fallback — use the old expansion-based anchor method
+    console.log(`[OMR] Single QR mode — using expansion-based anchor`);
+    const s = brQR.scale || 1;
+    const tl = brQR.location.topLeftCorner;
+    const tr = brQR.location.topRightCorner;
+    const bl = brQR.location.bottomLeftCorner;
+
+    const f2fX = Math.abs(tr.x - tl.x) / s;
+    const f2fY = Math.abs(bl.y - tl.y) / s;
+    const expansion = 1.44;
+    const mX = (f2fX * expansion - f2fX) / 2;
+    const mY = (f2fY * expansion - f2fY) / 2;
+    const anchorX = (tl.x / s) - mX;
+    const anchorY = (tl.y / s) - mY;
+
+    const specQRWidth = specBR.width;
+    const detectedQRWidth = f2fX * expansion;
+    const scale = detectedQRWidth / specQRWidth;
+
+    console.log(`[OMR] Single anchor at (${Math.round(anchorX)},${Math.round(anchorY)}), scale=${scale.toFixed(3)}`);
+
+    mapSpecToImage = (sx, sy) => {
+      return {
+        x: anchorX + (sx - specBR.x) * scale,
+        y: anchorY + (sy - specBR.y) * scale,
+      };
+    };
   }
 
-  // Re-find QR in the final corrected image
-  if (wasMirrored) {
-    const correctedQR = await findQRInImage(finalBuffer);
-    if (correctedQR) {
-      // Replace uprightQR with corrected version
-      Object.assign(uprightQR, correctedQR);
-    }
-    const correctedMeta = await sharp(finalBuffer).metadata();
-    Object.assign(uprightMeta, correctedMeta);
-  }
-
-  // 4. Calculate scale factor: spec is in 300 DPI pixels, need to map to actual image pixels
-  // Use the QR code size as the reference: compare spec QR size to detected QR size in image
-  let scaleFromSpec = 1;
-  if (uprightQR && uprightQR.location && ballotSpec.qr_code) {
-    // Detected QR size in image pixels (accounting for any resize during detection)
-    const detectedScale = uprightQR.scale || 1;
-    const qrTopLeft = uprightQR.location.topLeftCorner;
-    const qrTopRight = uprightQR.location.topRightCorner;
-    const qrBottomLeft = uprightQR.location.bottomLeftCorner;
-    const detectedQRWidth = Math.sqrt(
-      Math.pow((qrTopRight.x - qrTopLeft.x) / detectedScale, 2) +
-      Math.pow((qrTopRight.y - qrTopLeft.y) / detectedScale, 2)
-    );
-    const specQRWidth = ballotSpec.qr_code.width; // in 300 DPI pixels
-    if (specQRWidth > 0 && detectedQRWidth > 0) {
-      scaleFromSpec = detectedQRWidth / specQRWidth;
-    }
-    console.log(`[OMR] QR size — spec: ${specQRWidth}px @300dpi, detected: ${Math.round(detectedQRWidth)}px in image, scale: ${scaleFromSpec.toFixed(3)}`);
-  }
-
-  // 5. Get QR anchor position in the upright image
-  // The ballot-spec offsets are relative to the QR bounding box top-left.
-  // jsQR's corners are centers of finder patterns, not the QR edge.
-  // We compute the bounding box by expanding outward from the finder centers
-  // by half a finder pattern (~3.5 modules out of ~21-25 total).
-  let qrAnchorX = 0, qrAnchorY = 0;
-  if (uprightQR && uprightQR.location && ballotSpec.qr_code) {
-    const s = uprightQR.scale || 1;
-    const tl = uprightQR.location.topLeftCorner;
-    const tr = uprightQR.location.topRightCorner;
-    const bl = uprightQR.location.bottomLeftCorner;
-
-    // QR width from finder to finder (topLeft center to topRight center)
-    const finderToFinderX = Math.abs(tr.x - tl.x) / s;
-    const finderToFinderY = Math.abs(bl.y - tl.y) / s;
-
-    // The finder-to-finder distance spans from module ~3.5 to module ~(N-3.5)
-    // where N is total modules. So the full QR width = finderToFinder * N / (N - 7).
-    // For a typical 21-module QR: factor = 21/14 = 1.5
-    // For a 25-module QR: factor = 25/18 = 1.39
-    // Use 1.44 as a middle ground, then shift back by the difference/2.
-    const expansionFactor = 1.44;
-    const fullQRWidth = finderToFinderX * expansionFactor;
-    const fullQRHeight = finderToFinderY * expansionFactor;
-    const marginX = (fullQRWidth - finderToFinderX) / 2;
-    const marginY = (fullQRHeight - finderToFinderY) / 2;
-
-    // Anchor = top-left of the QR bounding box
-    qrAnchorX = (tl.x / s) - marginX;
-    qrAnchorY = (tl.y / s) - marginY;
-
-    console.log(`[OMR] QR finder TL=(${Math.round(tl.x/s)},${Math.round(tl.y/s)}), f2f=${Math.round(finderToFinderX)}x${Math.round(finderToFinderY)}, margin=${Math.round(marginX)}x${Math.round(marginY)}`);
-    console.log(`[OMR] QR anchor (bbox top-left) in image: (${Math.round(qrAnchorX)}, ${Math.round(qrAnchorY)}) in ${uprightMeta.width}x${uprightMeta.height} image`);
-  }
-
-  // 6. Analyze each candidate oval using QR-relative offsets
-  // 6. Analyze each candidate oval — tighter crop, shifted left to avoid name text
+  // 5. Map oval positions using the affine transform and analyze fills
+  const uprightMeta = imgMeta; // no rotation applied — affine handles everything
   const candidateResults = [];
   for (const candidate of ballotSpec.candidates) {
-    const ovalCenterX = qrAnchorX + (candidate.oval.x_offset_from_qr * scaleFromSpec);
-    const ovalCenterY = qrAnchorY + (candidate.oval.y_offset_from_qr * scaleFromSpec);
-    const ovalFullW = candidate.oval.width * scaleFromSpec;
-    const ovalFullH = candidate.oval.height * scaleFromSpec;
+    // Map the oval center from spec coordinates to image coordinates
+    const ovalSpecCx = candidate.oval.x + candidate.oval.width / 2;
+    const ovalSpecCy = candidate.oval.y + candidate.oval.height / 2;
+    const mapped = mapSpecToImage(ovalSpecCx, ovalSpecCy);
 
-    // Shrink to inner 55% to exclude outline stroke and adjacent text
+    // Scale the oval dimensions
+    const specDiag = specBR && specTL ? Math.sqrt(
+      Math.pow(specBR.x + specBR.width/2 - specTL.x - specTL.width/2, 2) +
+      Math.pow(specBR.y + specBR.height/2 - specTL.y - specTL.height/2, 2)
+    ) : 1;
+    const imgDiag = tlQR && brQR ? Math.sqrt(
+      Math.pow(brQR.cx - tlQR.cx, 2) + Math.pow(brQR.cy - tlQR.cy, 2)
+    ) : 1;
+    const ovalScale = (tlQR && specTL) ? (imgDiag / specDiag) : ((brQR.scale || 1) > 0 ? 1 : 1);
+
+    // For single-QR mode, use the scale from the mapping function
+    const ovalFullW = candidate.oval.width * (tlQR ? ovalScale : ((mapSpecToImage(1, 0).x - mapSpecToImage(0, 0).x)));
+    const ovalFullH = candidate.oval.height * (tlQR ? ovalScale : ((mapSpecToImage(0, 1).y - mapSpecToImage(0, 0).y)));
+
+    // Shrink to inner 55% width, 60% height
     const shrinkW = 0.55;
     const shrinkH = 0.60;
-    const ovalW = ovalFullW * shrinkW;
-    const ovalH = ovalFullH * shrinkH;
+    const ovalW = Math.abs(ovalFullW) * shrinkW;
+    const ovalH = Math.abs(ovalFullH) * shrinkH;
 
-    // Shift crop 15% of width to the LEFT to avoid candidate name text on the right
-    const shiftLeft = ovalFullW * 0.15;
-    const cropX = ovalCenterX - shiftLeft - ovalW / 2;
-    const cropY = ovalCenterY - ovalH / 2;
+    // Shift crop 15% left to avoid candidate name text
+    const shiftLeft = Math.abs(ovalFullW) * 0.15;
+    const cropX = mapped.x - shiftLeft - ovalW / 2;
+    const cropY = mapped.y - ovalH / 2;
 
-    console.log(`[OMR] Oval "${candidate.name}": center=(${Math.round(ovalCenterX)},${Math.round(ovalCenterY)}), crop=pos(${Math.round(cropX)},${Math.round(cropY)}) size=${Math.round(ovalW)}x${Math.round(ovalH)}, full=${Math.round(ovalFullW)}x${Math.round(ovalFullH)}, shift_left=${Math.round(shiftLeft)}`);
+    console.log(`[OMR] Oval "${candidate.name}": spec=(${ovalSpecCx},${ovalSpecCy}) -> img=(${Math.round(mapped.x)},${Math.round(mapped.y)}), crop=pos(${Math.round(cropX)},${Math.round(cropY)}) size=${Math.round(ovalW)}x${Math.round(ovalH)}`);
 
-    const fillRatio = await analyzeOvalFill(finalBuffer, cropX, cropY, ovalW, ovalH, uprightMeta.width, uprightMeta.height);
+    const fillRatio = await analyzeOvalFill(imageBuffer, cropX, cropY, ovalW, ovalH, imgMeta.width, imgMeta.height);
 
     candidateResults.push({
       candidate_id: candidate.candidate_id,
