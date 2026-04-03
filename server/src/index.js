@@ -21,6 +21,7 @@ const publicRouter = require('./routes/public');
 const exportsRouter = require('./routes/exports');
 const ballotDesignRouter = require('./routes/ballotDesign');
 const scannersRouter = require('./routes/scanners');
+const { startWatchers } = require('./middleware/scanWatcher');
 
 const app = express();
 const server = http.createServer(app);
@@ -32,6 +33,7 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 app.use('/uploads', express.static(path.join(__dirname, '..', '..', 'uploads')));
+app.use('/data/scans', express.static(path.join(__dirname, '..', '..', 'data', 'scans')));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -95,6 +97,7 @@ async function start() {
     await seed();
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`BallotTrack server listening on port ${PORT}`);
+      startWatchers(io);
     });
   } catch (err) {
     console.error('Failed to start server:', err);
