@@ -269,15 +269,38 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
   }
 
   // 5. Get QR anchor position in the upright image
-  // The ballot-spec offsets are relative to the QR's TOP-LEFT corner,
-  // so the anchor must be the top-left corner of the QR, not the center.
+  // The ballot-spec offsets are relative to the QR bounding box top-left.
+  // jsQR's corners are centers of finder patterns, not the QR edge.
+  // We compute the bounding box by expanding outward from the finder centers
+  // by half a finder pattern (~3.5 modules out of ~21-25 total).
   let qrAnchorX = 0, qrAnchorY = 0;
-  if (uprightQR && uprightQR.location) {
+  if (uprightQR && uprightQR.location && ballotSpec.qr_code) {
     const s = uprightQR.scale || 1;
     const tl = uprightQR.location.topLeftCorner;
-    qrAnchorX = tl.x / s;
-    qrAnchorY = tl.y / s;
-    console.log(`[OMR] QR anchor (top-left) in image: (${Math.round(qrAnchorX)}, ${Math.round(qrAnchorY)}) in ${uprightMeta.width}x${uprightMeta.height} image`);
+    const tr = uprightQR.location.topRightCorner;
+    const bl = uprightQR.location.bottomLeftCorner;
+
+    // QR width from finder to finder (topLeft center to topRight center)
+    const finderToFinderX = Math.abs(tr.x - tl.x) / s;
+    const finderToFinderY = Math.abs(bl.y - tl.y) / s;
+
+    // The finder-to-finder distance spans from module ~3.5 to module ~(N-3.5)
+    // where N is total modules. So the full QR width = finderToFinder * N / (N - 7).
+    // For a typical 21-module QR: factor = 21/14 = 1.5
+    // For a 25-module QR: factor = 25/18 = 1.39
+    // Use 1.44 as a middle ground, then shift back by the difference/2.
+    const expansionFactor = 1.44;
+    const fullQRWidth = finderToFinderX * expansionFactor;
+    const fullQRHeight = finderToFinderY * expansionFactor;
+    const marginX = (fullQRWidth - finderToFinderX) / 2;
+    const marginY = (fullQRHeight - finderToFinderY) / 2;
+
+    // Anchor = top-left of the QR bounding box
+    qrAnchorX = (tl.x / s) - marginX;
+    qrAnchorY = (tl.y / s) - marginY;
+
+    console.log(`[OMR] QR finder TL=(${Math.round(tl.x/s)},${Math.round(tl.y/s)}), f2f=${Math.round(finderToFinderX)}x${Math.round(finderToFinderY)}, margin=${Math.round(marginX)}x${Math.round(marginY)}`);
+    console.log(`[OMR] QR anchor (bbox top-left) in image: (${Math.round(qrAnchorX)}, ${Math.round(qrAnchorY)}) in ${uprightMeta.width}x${uprightMeta.height} image`);
   }
 
   // 6. Analyze each candidate oval using QR-relative offsets
