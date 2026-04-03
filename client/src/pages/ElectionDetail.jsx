@@ -240,15 +240,17 @@ function ScannersSection({ electionId }) {
       </div>
 
       {showForm && (
-        <form onSubmit={handleAdd} style={styles.form}>
-          <input style={styles.input} placeholder="Scanner Name (e.g. ScanSnap1)" value={name}
-            onChange={e => setName(e.target.value)} required />
-          <button style={styles.btnPrimary} type="submit">Add</button>
-        </form>
-        <p style={styles.muted}>
-          The watch folder will be auto-created at: <code>data/scans/{'{name}'}/incoming/</code>
-          — configure your scanner software to save files there.
-        </p>
+        <>
+          <form onSubmit={handleAdd} style={styles.form}>
+            <input style={styles.input} placeholder="Scanner Name (e.g. ScanSnap1)" value={name}
+              onChange={e => setName(e.target.value)} required />
+            <button style={styles.btnPrimary} type="submit">Add</button>
+          </form>
+          <p style={styles.muted}>
+            The watch folder will be auto-created at: <code>data/scans/{'{name}'}/incoming/</code>
+            — configure your scanner software to save files there.
+          </p>
+        </>
       )}
 
       {scanners.length === 0 && <p style={styles.muted}>No scanners registered.</p>}
