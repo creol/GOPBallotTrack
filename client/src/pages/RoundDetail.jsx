@@ -99,44 +99,80 @@ export default function RoundDetail() {
         </span>
       </div>
 
-      {/* Action Links */}
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-        <Link to={`/scan/${roundId}`} style={styles.btnLink}>Open Scanner</Link>
-        {['scanning', 'pending'].includes(round.status) && (
+      {/* Workflow Steps */}
+      <div style={styles.workflowSection}>
+        <WorkflowStep
+          number={1}
+          title="Scan Ballots"
+          description="Feed ballots through the ADF scanner or use the phone scanner"
+          done={round.passes?.some(p => p.status === 'complete')}
+          active={['pending', 'scanning'].includes(round.status)}
+        >
+          <Link to={`/scan/${roundId}`} style={styles.btnLink}>Open Scanner</Link>
+          <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={{ ...styles.btnSmall, textDecoration: 'none' }} target="_blank">Calibration PDF</a>
+        </WorkflowStep>
+
+        {flaggedCount > 0 && (
+          <WorkflowStep
+            number={2}
+            title={`Review Flagged Ballots (${flaggedCount})`}
+            description="Ballots that couldn't be read automatically need manual review"
+            done={false}
+            active={true}
+          >
+            <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/review`}
+              style={{ ...styles.btnLink, background: '#dc2626' }}>
+              Review Flagged ({flaggedCount})
+            </Link>
+          </WorkflowStep>
+        )}
+
+        <WorkflowStep
+          number={flaggedCount > 0 ? 3 : 2}
+          title="Confirm Results"
+          description="Compare pass counts and confirm the results are accurate"
+          done={['confirmed', 'pending_release', 'released'].includes(round.status)}
+          active={['scanning', 'pending'].includes(round.status)}
+        >
           <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/confirm`} style={styles.btnLinkGreen}>
             Confirm Round
           </Link>
-        )}
-        {['confirmed', 'pending_release', 'released'].includes(round.status) && (
+        </WorkflowStep>
+
+        <WorkflowStep
+          number={flaggedCount > 0 ? 4 : 3}
+          title="Preview & Release"
+          description="Preview what the public will see, then release the results"
+          done={round.status === 'released'}
+          active={['confirmed', 'pending_release'].includes(round.status)}
+        >
           <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/chair`} style={styles.btnLinkPurple}>
-            Chair Decision
+            Preview & Release
           </Link>
-        )}
+        </WorkflowStep>
+
         {['confirmed', 'pending_release', 'released'].includes(round.status) && (
-          <a href={`/api/admin/rounds/${roundId}/results-pdf`} style={styles.btnLinkGreen} download>
-            Download Results PDF
-          </a>
+          <WorkflowStep
+            number={flaggedCount > 0 ? 5 : 4}
+            title="Download Results"
+            description="Download the official results PDF"
+            done={false}
+            active={true}
+          >
+            <a href={`/api/admin/rounds/${roundId}/results-pdf`} style={styles.btnLinkGreen} download>
+              Download Results PDF
+            </a>
+          </WorkflowStep>
         )}
-        <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={styles.btnLink} target="_blank">
-          Calibration PDF
-        </a>
-        {flaggedCount > 0 && (
-          <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/review`}
-            style={{ ...styles.btnLink, background: '#dc2626', position: 'relative' }}>
-            Review Flagged ({flaggedCount})
-          </Link>
-        )}
+      </div>
+
+      {/* Additional Links */}
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <Link to={`/admin/rounds/${roundId}/boxes`} style={styles.btnLink}>Ballot Box Breakdown</Link>
       </div>
 
       {/* Scanner → Box Assignment */}
       <ScannerBoxAssignment electionId={electionId} roundId={roundId} />
-
-      {/* Ballot Box Breakdown link */}
-      <div style={{ marginTop: '0.75rem' }}>
-        <Link to={`/admin/rounds/${roundId}/boxes`} style={styles.btnLink}>
-          Ballot Box Breakdown
-        </Link>
-      </div>
 
       {/* Passes summary */}
       {round.passes && round.passes.length > 0 && (
@@ -290,6 +326,32 @@ export default function RoundDetail() {
   );
 }
 
+function WorkflowStep({ number, title, description, done, active, children }) {
+  return (
+    <div style={{
+      display: 'flex', gap: '0.75rem', padding: '0.75rem', marginBottom: '0.5rem',
+      borderRadius: 8, border: '1px solid',
+      borderColor: done ? '#86efac' : active ? '#93c5fd' : '#e5e7eb',
+      background: done ? '#f0fdf4' : active ? '#eff6ff' : '#f9fafb',
+      opacity: done ? 0.7 : 1,
+    }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '0.8rem', fontWeight: 700, flexShrink: 0,
+        background: done ? '#16a34a' : active ? '#2563eb' : '#d1d5db',
+        color: '#fff',
+      }}>
+        {done ? '✓' : number}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.15rem' }}>{title}</div>
+        <div style={{ color: '#666', fontSize: '0.82rem', marginBottom: '0.5rem' }}>{description}</div>
+        {!done && <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>{children}</div>}
+      </div>
+    </div>
+  );
+}
+
 function ScannerBoxAssignment({ electionId, roundId }) {
   const [scanners, setScanners] = useState([]);
   const [boxes, setBoxes] = useState([]);
@@ -334,6 +396,7 @@ function ScannerBoxAssignment({ electionId, roundId }) {
 
 const styles = {
   container: { maxWidth: 900, margin: '0 auto', padding: '1rem', fontFamily: 'system-ui, sans-serif' },
+  workflowSection: { marginBottom: '1.5rem' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' },
   backLink: { color: '#2563eb', textDecoration: 'none', display: 'inline-block', marginBottom: '1rem' },
   section: { marginTop: '2rem' },

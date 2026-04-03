@@ -51,6 +51,7 @@ function getSession(req) {
 
 /**
  * Middleware: require admin or chair role.
+ * Admin has full access to everything including judge and chair functions.
  */
 function requireAdmin(req, res, next) {
   const session = getSession(req);
@@ -62,11 +63,12 @@ function requireAdmin(req, res, next) {
 }
 
 /**
- * Middleware: require judge or chair role.
+ * Middleware: require judge, admin, or chair role.
+ * Admin can do everything a judge can do.
  */
 function requireJudge(req, res, next) {
   const session = getSession(req);
-  if (!session || !['judge', 'chair'].includes(session.role)) {
+  if (!session || !['judge', 'admin', 'chair'].includes(session.role)) {
     return res.status(401).json({ error: 'Judge authentication required' });
   }
   req.session = session;
@@ -74,11 +76,12 @@ function requireJudge(req, res, next) {
 }
 
 /**
- * Middleware: require chair role only.
+ * Middleware: require chair or admin role.
+ * Admin can do everything a chair can do.
  */
 function requireChair(req, res, next) {
   const session = getSession(req);
-  if (!session || session.role !== 'chair') {
+  if (!session || !['admin', 'chair'].includes(session.role)) {
     return res.status(401).json({ error: 'Chair authentication required' });
   }
   req.session = session;

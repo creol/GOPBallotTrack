@@ -95,7 +95,7 @@ export default function App() {
           <ProtectedRoute auth={auth}><Confirmation /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/chair" element={
-          <ProtectedRoute auth={auth} requiredRoles={['chair']}><ChairDecision /></ProtectedRoute>
+          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><ChairDecision /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/review" element={
           <ProtectedRoute auth={auth}><FlaggedReview /></ProtectedRoute>
