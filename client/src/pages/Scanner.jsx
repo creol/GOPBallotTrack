@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
+import { io } from 'socket.io-client';
 import api from '../api/client';
 
 export default function Scanner() {
@@ -33,15 +34,26 @@ export default function Scanner() {
     setBallotBoxes(roundData.ballot_boxes || []);
 
     const { data: passData } = await api.get(`/rounds/${roundId}/passes`);
-    setPasses(Array.isArray(passData) ? passData : []);
-    const active = (Array.isArray(passData) ? passData : []).find(p => p.status === 'active');
+    const passList = Array.isArray(passData) ? passData : [];
+    setPasses(passList);
+    const active = passList.find(p => p.status === 'active');
     if (active) {
       setActivePass(active);
       setScanCount(parseInt(active.scan_count) || 0);
+    } else {
+      setActivePass(null);
     }
   }, [roundId]);
 
-  useEffect(() => { fetchRoundData(); }, [fetchRoundData]);
+  useEffect(() => {
+    fetchRoundData();
+    // Auto-refresh when ADF scanner records ballots
+    const socket = io();
+    socket.on('scan:recorded', () => fetchRoundData());
+    socket.on('scan:flagged', () => fetchRoundData());
+    socket.on('pass:complete', () => fetchRoundData());
+    return () => socket.disconnect();
+  }, [fetchRoundData]);
 
   // Start QR camera
   const startScanner = async () => {
