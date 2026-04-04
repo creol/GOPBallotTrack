@@ -143,7 +143,14 @@ export default function Scanner() {
           <h2 style={{ margin: 0 }}>{round.race?.name || 'Race'} — Round {round.round_number}</h2>
           <span style={styles.muted}>Paper: {round.paper_color}</span>
         </div>
-        <Link to={`/scan/${roundId}/spoiled`} style={styles.spoiledLink}>Report Spoiled</Link>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {round.race?.election_id && (
+            <Link to={`/admin/elections/${round.race.election_id}/races/${round.race_id}/rounds/${roundId}`} style={styles.backLink}>
+              Back to Round
+            </Link>
+          )}
+          <Link to={`/scan/${roundId}/spoiled`} style={styles.spoiledLink}>Report Spoiled</Link>
+        </div>
       </div>
 
       {/* Pass Controls */}
@@ -257,6 +264,7 @@ export default function Scanner() {
 const styles = {
   container: { maxWidth: 500, margin: '0 auto', padding: '0.75rem', fontFamily: 'system-ui, sans-serif' },
   topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' },
+  backLink: { color: '#2563eb', fontSize: '0.85rem', textDecoration: 'none' },
   spoiledLink: { color: '#dc2626', fontSize: '0.85rem' },
   passBar: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#f3f4f6', borderRadius: 8, marginBottom: '0.75rem' },
   passLabel: { fontWeight: 700, color: '#16a34a' },
