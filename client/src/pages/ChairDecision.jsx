@@ -154,14 +154,20 @@ export default function ChairDecision() {
           {showPreview && (
             <div style={styles.previewPanel}>
               <h3 style={{ marginTop: 0 }}>Public View Preview</h3>
-              <p style={styles.muted}>{data.election.name} — {data.race.name} — Round {data.round.round_number}</p>
-              {data.results.map(r => (
-                <div key={r.candidate_id} style={styles.previewRow}>
-                  <span style={{ flex: 1, fontWeight: 600 }}>{r.candidate_name}</span>
-                  <span>{r.vote_count} votes ({Number(r.percentage).toFixed(5)}%)</span>
-                </div>
-              ))}
-              <p style={styles.muted}>{data.serials.length} ballots counted</p>
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>{data.election.name} — {data.race.name} — Round {data.round.round_number}</p>
+              {data.results.map(r => {
+                const isElim = eliminated.has(r.candidate_id);
+                return (
+                  <div key={r.candidate_id} style={{ ...styles.previewRow, opacity: isElim ? 0.5 : 1 }}>
+                    <span style={{ flex: 1, fontWeight: 600, textDecoration: isElim ? 'line-through' : 'none' }}>
+                      {r.candidate_name}
+                      {isElim && <span style={{ color: '#f87171', fontSize: '0.75rem', marginLeft: '0.5rem' }}>ELIMINATED</span>}
+                    </span>
+                    <span>{r.vote_count} votes ({Number(r.percentage).toFixed(5)}%)</span>
+                  </div>
+                );
+              })}
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>{data.serials.length} ballots counted</p>
             </div>
           )}
 
@@ -178,28 +184,97 @@ export default function ChairDecision() {
         </div>
       )}
 
-      {/* Next Steps — show after release or for deciding next round */}
+      {/* Race Decision */}
       <div style={styles.section}>
-        <h2>Next Steps</h2>
-        {data.has_winner ? (
+        <h2>Race Decision</h2>
+
+        {data.has_winner && (
           <div style={styles.winnerBanner}>
             <strong>{data.winner.candidate_name}</strong> has met the {data.threshold_type.replace('_', ' ')} threshold.
-            {released ? ' The race is complete.' : ' Release the results above to finalize.'}
-          </div>
-        ) : (
-          <div>
-            <p style={styles.muted}>
-              No candidate has met the threshold. Eliminate losing candidates above, then advance to the next round.
-              {eliminated.size > 0 && ` (${eliminated.size} eliminated so far)`}
-            </p>
-            <button style={styles.btnPrimary} onClick={handleCreateNextRound}>
-              Advance to Next Round
-            </button>
           </div>
         )}
+
+        {!data.has_winner && eliminated.size > 0 && (
+          <p style={styles.muted}>{eliminated.size} candidate(s) eliminated so far.</p>
+        )}
+
+        <div style={styles.decisionGrid}>
+          {/* Declare Winner */}
+          <DecisionCard
+            title="Declare Winner"
+            description="Select the winning candidate to close this race"
+            color="#16a34a"
+          >
+            <select style={styles.input} id="winner-select" defaultValue="">
+              <option value="" disabled>Select winner...</option>
+              {data.results.filter(r => !eliminated.has(r.candidate_id)).map(r => (
+                <option key={r.candidate_id} value={r.candidate_id}>{r.candidate_name}</option>
+              ))}
+            </select>
+            <button style={styles.btnSuccess} onClick={async () => {
+              const sel = document.getElementById('winner-select');
+              if (!sel.value) return alert('Select a candidate');
+              if (!confirm(`Declare ${sel.options[sel.selectedIndex].text} as the winner?`)) return;
+              await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'winner', candidate_id: parseInt(sel.value) });
+              alert('Winner declared. Race is complete.');
+              fetchData();
+            }}>Declare Winner</button>
+          </DecisionCard>
+
+          {/* Advance to Next Round */}
+          <DecisionCard
+            title="Advance to Next Round"
+            description="No winner yet — continue with another round of voting"
+            color="#2563eb"
+          >
+            <button style={styles.btnPrimary} onClick={async () => {
+              await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'advances_next_round' });
+              handleCreateNextRound();
+            }}>Create Next Round</button>
+          </DecisionCard>
+
+          {/* Advances to Primary */}
+          <DecisionCard
+            title="Advances to Primary"
+            description="Top candidates advance to a primary election"
+            color="#7c3aed"
+          >
+            <button style={{ ...styles.btnPrimary, background: '#7c3aed' }} onClick={async () => {
+              const notes = prompt('Notes (which candidates advance, primary details):');
+              await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'advances_primary', notes });
+              alert('Race marked as advancing to primary.');
+              fetchData();
+            }}>Mark as Advancing to Primary</button>
+          </DecisionCard>
+
+          {/* Close Race */}
+          <DecisionCard
+            title="Close Race"
+            description="End this race without a winner. Cancels any future rounds."
+            color="#dc2626"
+          >
+            <button style={styles.btnDangerLarge} onClick={async () => {
+              const notes = prompt('Reason for closing (optional):');
+              if (!confirm('Close this race? All pending rounds will be cancelled.')) return;
+              await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'closed', notes });
+              alert('Race closed.');
+              fetchData();
+            }}>Close Race</button>
+          </DecisionCard>
+        </div>
       </div>
 
       {error && <p style={styles.errorMsg}>{error}</p>}
+    </div>
+  );
+}
+
+function DecisionCard({ title, description, color, children }) {
+  return (
+    <div style={{ border: `2px solid ${color}20`, borderLeft: `4px solid ${color}`, borderRadius: 8, padding: '1rem', background: '#fff' }}>
+      <h3 style={{ margin: '0 0 0.25rem', color, fontSize: '1rem' }}>{title}</h3>
+      <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 0.75rem' }}>{description}</p>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>{children}</div>
     </div>
   );
 }
@@ -225,6 +300,9 @@ const styles = {
   btnRelease: { padding: '0.6rem 1.2rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '1rem', fontWeight: 600 },
   btnPrimary: { padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
   btnDanger: { padding: '0.25rem 0.5rem', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },
+  btnDangerLarge: { padding: '0.5rem 1rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
+  btnSuccess: { padding: '0.5rem 1rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
+  decisionGrid: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
   errorMsg: { color: '#dc2626', marginTop: '0.75rem', fontWeight: 600 },
   muted: { color: '#666', fontSize: '0.9rem' },
 };

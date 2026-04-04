@@ -39,12 +39,38 @@ router.get('/:electionId', async (req, res) => {
 
       race.rounds = rounds;
 
+      // Get eliminated candidates
+      const { rows: withdrawnCandidates } = await db.query(
+        "SELECT id, name, withdrawn_at FROM candidates WHERE race_id = $1 AND status = 'withdrawn' ORDER BY withdrawn_at",
+        [race.id]
+      );
+      race.eliminated = withdrawnCandidates;
+
+      // Get race outcome
+      if (race.outcome) {
+        const outcomeCandidate = race.outcome_candidate_id
+          ? (await db.query('SELECT name FROM candidates WHERE id = $1', [race.outcome_candidate_id])).rows[0]
+          : null;
+        race.outcome_details = {
+          outcome: race.outcome,
+          candidate_name: outcomeCandidate?.name || null,
+          notes: race.outcome_notes,
+        };
+      }
+
       // Determine race status label
       const { rows: allRounds } = await db.query(
         'SELECT status FROM rounds WHERE race_id = $1 ORDER BY round_number DESC LIMIT 1',
         [race.id]
       );
-      if (race.status === 'complete') {
+      if (race.outcome === 'winner') {
+        const winnerName = race.outcome_details?.candidate_name || 'TBD';
+        race.status_label = `Winner: ${winnerName}`;
+      } else if (race.outcome === 'advances_primary') {
+        race.status_label = 'Advances to Primary';
+      } else if (race.outcome === 'closed') {
+        race.status_label = 'Race Closed';
+      } else if (race.status === 'complete') {
         race.status_label = 'Race Complete';
       } else if (allRounds.length > 0) {
         const latest = allRounds[0];

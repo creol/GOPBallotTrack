@@ -186,4 +186,53 @@ router.put('/candidates/:id/withdraw', async (req, res) => {
   }
 });
 
+// PUT /api/admin/races/:id/outcome — Set race outcome
+router.put('/races/:id/outcome', async (req, res) => {
+  try {
+    const { outcome, candidate_id, notes } = req.body;
+    if (!outcome || !['winner', 'advances_next_round', 'advances_primary', 'closed'].includes(outcome)) {
+      return res.status(400).json({ error: 'outcome must be winner, advances_next_round, advances_primary, or closed' });
+    }
+
+    const { rows: [race] } = await db.query(
+      `UPDATE races SET
+        outcome = $1, outcome_candidate_id = $2, outcome_notes = $3,
+        outcome_at = NOW(), status = 'complete'
+       WHERE id = $4 RETURNING *`,
+      [outcome, candidate_id || null, notes || null, req.params.id]
+    );
+    if (!race) return res.status(404).json({ error: 'Race not found' });
+
+    // Close any pending rounds for this race
+    if (outcome === 'closed') {
+      await db.query(
+        "UPDATE rounds SET status = 'closed' WHERE race_id = $1 AND status IN ('pending', 'scanning')",
+        [req.params.id]
+      );
+    }
+
+    res.json(race);
+  } catch (err) {
+    console.error('Set race outcome error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE /api/admin/races/:id/outcome — Clear race outcome (reopen)
+router.delete('/races/:id/outcome', async (req, res) => {
+  try {
+    const { rows: [race] } = await db.query(
+      `UPDATE races SET outcome = NULL, outcome_candidate_id = NULL, outcome_notes = NULL,
+        outcome_at = NULL, status = 'active'
+       WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!race) return res.status(404).json({ error: 'Race not found' });
+    res.json(race);
+  } catch (err) {
+    console.error('Clear race outcome error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
