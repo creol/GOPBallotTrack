@@ -174,18 +174,8 @@ export default function RoundDetail() {
       {/* Scanner → Box Assignment */}
       <ScannerBoxAssignment electionId={electionId} roundId={roundId} />
 
-      {/* Passes summary */}
-      {round.passes && round.passes.length > 0 && (
-        <div style={styles.section}>
-          <h2>Passes</h2>
-          {round.passes.map(p => (
-            <div key={p.id} style={styles.passRow}>
-              <span>Pass {p.pass_number}</span>
-              <span style={styles.muted}>{p.status}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Pass Management */}
+      <PassManager roundId={roundId} onUpdate={fetchRound} />
 
       {/* Results summary */}
       {round.results && round.results.length > 0 && (
@@ -322,6 +312,103 @@ export default function RoundDetail() {
 
         {error && <p style={styles.errorMsg}>{error}</p>}
       </div>
+    </div>
+  );
+}
+
+function PassManager({ roundId, onUpdate }) {
+  const [passes, setPasses] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchPasses = async () => {
+    try {
+      const { data } = await api.get(`/rounds/${roundId}/passes`);
+      setPasses(Array.isArray(data) ? data : []);
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchPasses();
+    const interval = setInterval(fetchPasses, 3000); // poll every 3s for ADF updates
+    return () => clearInterval(interval);
+  }, [roundId]);
+
+  const handleComplete = async (passId, passNumber) => {
+    if (!confirm(`Complete Pass ${passNumber}? This cannot be undone.`)) return;
+    setLoading(true);
+    try {
+      await api.put(`/passes/${passId}/complete`);
+      fetchPasses();
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      alert('Failed to complete pass: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    try {
+      await api.post(`/rounds/${roundId}/passes`);
+      fetchPasses();
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      alert('Failed to create pass: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const activePasses = passes.filter(p => p.status === 'active');
+  const completedPasses = passes.filter(p => p.status === 'complete');
+
+  return (
+    <div style={styles.section}>
+      <h2>Passes</h2>
+
+      {passes.length === 0 && (
+        <p style={styles.muted}>No passes yet. Scans from the ADF scanner will auto-create a pass.</p>
+      )}
+
+      {activePasses.map(p => (
+        <div key={p.id} style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem',
+          border: '2px solid #3b82f6', borderRadius: 8, background: '#eff6ff', marginBottom: '0.5rem',
+        }}>
+          <span style={{ fontWeight: 700 }}>Pass {p.pass_number}</span>
+          <span style={{
+            background: '#dbeafe', color: '#1e40af', padding: '2px 10px', borderRadius: 12,
+            fontWeight: 600, fontSize: '0.85rem',
+          }}>{p.scan_count || 0} scans</span>
+          <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.85rem' }}>Active</span>
+          <button
+            style={{
+              marginLeft: 'auto', padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff',
+              border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
+              opacity: loading ? 0.6 : 1,
+            }}
+            onClick={() => handleComplete(p.id, p.pass_number)}
+            disabled={loading}
+          >
+            {loading ? 'Completing...' : 'Complete Pass'}
+          </button>
+        </div>
+      ))}
+
+      {completedPasses.map(p => (
+        <div key={p.id} style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem',
+          borderBottom: '1px solid #eee',
+        }}>
+          <span style={{ fontWeight: 600 }}>Pass {p.pass_number}</span>
+          <span style={styles.muted}>{p.scan_count || 0} scans</span>
+          <span style={{ color: '#16a34a', fontSize: '0.82rem' }}>✓ Complete</span>
+        </div>
+      ))}
+
+      {activePasses.length === 0 && (
+        <button style={{ ...styles.btnPrimary, marginTop: '0.5rem' }} onClick={handleCreate}>
+          Start Pass {passes.length + 1}
+        </button>
+      )}
     </div>
   );
 }
