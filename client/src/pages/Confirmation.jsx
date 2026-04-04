@@ -167,7 +167,7 @@ export default function Confirmation() {
           {/* Normal Confirm */}
           {!data.hasMismatch && !showOverride && (
             <div style={styles.confirmBox}>
-              <h3 style={{ marginBottom: '0.5rem' }}>Election Judge: Do you confirm these results?</h3>
+              <h3 style={{ marginBottom: '0.5rem' }}>Do you confirm these results?</h3>
               <input
                 style={styles.input}
                 placeholder="Your name"

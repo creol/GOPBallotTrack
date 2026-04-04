@@ -6,10 +6,10 @@ export default function JudgeLanding({ onLogout }) {
   return (
     <div style={styles.wrapper}>
       <div style={styles.card}>
-        <h1 style={styles.title}>Election Judge</h1>
+        <h1 style={styles.title}>Election Event Judge</h1>
         <p style={styles.description}>
-          As an Election Judge, you confirm round results and handle mismatch overrides.
-          You do not have access to the Admin dashboard — election setup is managed by the Admin or Chair.
+          As an Election Event Judge, you confirm round results and handle mismatch overrides.
+          You do not have access to the Admin dashboard — election event setup is managed by the Admin or Chair.
         </p>
 
         <div style={styles.section}>

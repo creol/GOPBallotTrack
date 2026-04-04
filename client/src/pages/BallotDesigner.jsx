@@ -106,7 +106,7 @@ export default function BallotDesigner() {
 
   return (
     <div style={s.container}>
-      <Link to={`/admin/elections/${electionId}`} style={s.backLink}>&larr; Back to Election</Link>
+      <Link to={`/admin/elections/${electionId}`} style={s.backLink}>&larr; Back to Election Event</Link>
       <div style={s.header}>
         <h1>Ballot Designer</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -125,7 +125,7 @@ export default function BallotDesigner() {
           <Section title="Header">
             <Toggle label="Show header" value={config.header.show} onChange={v => updateField('header', 'show', v)} />
             {config.header.show && <>
-              <NumberField label="Election name font size" value={config.header.electionNameSize} onChange={v => updateField('header', 'electionNameSize', v)} />
+              <NumberField label="Election event name font size" value={config.header.electionNameSize} onChange={v => updateField('header', 'electionNameSize', v)} />
               <NumberField label="Race name font size" value={config.header.raceNameSize} onChange={v => updateField('header', 'raceNameSize', v)} />
               <NumberField label="Round info font size" value={config.header.roundInfoSize} onChange={v => updateField('header', 'roundInfoSize', v)} />
             </>}

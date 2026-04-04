@@ -99,6 +99,26 @@ export default function RoundDetail() {
         </span>
       </div>
 
+      {/* Results summary — shown at top when available */}
+      {round.results && round.results.length > 0 && (
+        <div style={styles.resultsPanel}>
+          <h2 style={styles.resultsPanelTitle}>Results</h2>
+          {round.results.map(r => {
+            const pct = Number(r.percentage);
+            return (
+              <div key={r.id} style={styles.tvResultRow}>
+                <span style={styles.tvCandidateName}>{r.candidate_name}</span>
+                <div style={styles.tvBarContainer}>
+                  <div style={{ ...styles.tvBar, width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span style={styles.tvVoteCount}>{r.vote_count}</span>
+                <span style={styles.tvPct}>{pct.toFixed(5)}%</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Workflow Steps */}
       <div style={styles.workflowSection}>
         <WorkflowStep
@@ -171,24 +191,8 @@ export default function RoundDetail() {
         <Link to={`/admin/rounds/${roundId}/boxes`} style={styles.btnLink}>Ballot Box Breakdown</Link>
       </div>
 
-      {/* Scanner → Box Assignment */}
-      <ScannerBoxAssignment electionId={electionId} roundId={roundId} />
-
       {/* Pass Management */}
       <PassManager roundId={roundId} onUpdate={fetchRound} />
-
-      {/* Results summary */}
-      {round.results && round.results.length > 0 && (
-        <div style={styles.section}>
-          <h2>Results</h2>
-          {round.results.map(r => (
-            <div key={r.id} style={styles.resultRow}>
-              <span style={{ fontWeight: 600 }}>{r.candidate_name}</span>
-              <span>{r.vote_count} votes ({Number(r.percentage).toFixed(5)}%)</span>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Ballots Section */}
       <div style={styles.section}>
@@ -439,48 +443,6 @@ function WorkflowStep({ number, title, description, done, active, children }) {
   );
 }
 
-function ScannerBoxAssignment({ electionId, roundId }) {
-  const [scanners, setScanners] = useState([]);
-  const [boxes, setBoxes] = useState([]);
-
-  const fetchData = async () => {
-    try {
-      const [scRes, bxRes] = await Promise.all([
-        api.get(`/admin/elections/${electionId}/scanners`),
-        api.get(`/admin/elections/${electionId}/ballot-boxes`),
-      ]);
-      setScanners(scRes.data);
-      setBoxes(bxRes.data);
-    } catch {}
-  };
-
-  useEffect(() => { fetchData(); }, [electionId]);
-
-  const handleAssign = async (scannerId, boxId) => {
-    await api.put(`/admin/scanners/${scannerId}/assign-box`, { box_id: boxId || null });
-    fetchData();
-  };
-
-  if (scanners.length === 0) return null;
-
-  return (
-    <div style={styles.section}>
-      <h2>Scanner → Box Assignment</h2>
-      {scanners.map(sc => (
-        <div key={sc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid #eee' }}>
-          <span style={{ fontWeight: 600, width: 120 }}>{sc.name}</span>
-          <span style={styles.muted}>→</span>
-          <select style={styles.input} value={sc.current_box_id || ''}
-            onChange={e => handleAssign(sc.id, e.target.value ? parseInt(e.target.value) : null)}>
-            <option value="">No box assigned</option>
-            {boxes.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 const styles = {
   container: { maxWidth: 900, margin: '0 auto', padding: '1rem', fontFamily: 'system-ui, sans-serif' },
   workflowSection: { marginBottom: '1.5rem' },
@@ -488,7 +450,14 @@ const styles = {
   backLink: { color: '#2563eb', textDecoration: 'none', display: 'inline-block', marginBottom: '1rem' },
   section: { marginTop: '2rem' },
   passRow: { display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #eee' },
-  resultRow: { display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #eee' },
+  resultsPanel: { background: '#1e293b', borderRadius: 12, padding: '1.5rem', marginBottom: '1.5rem', border: '1px solid #334155' },
+  resultsPanelTitle: { margin: '0 0 1rem', fontSize: '1.25rem', color: '#fff' },
+  tvResultRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0' },
+  tvCandidateName: { width: 140, fontSize: '1rem', fontWeight: 600, color: '#e2e8f0' },
+  tvBarContainer: { flex: 1, height: 20, background: '#334155', borderRadius: 10, overflow: 'hidden' },
+  tvBar: { height: '100%', background: 'linear-gradient(90deg, #3b82f6, #60a5fa)', borderRadius: 10, transition: 'width 0.8s ease' },
+  tvVoteCount: { width: 40, textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', color: '#fff' },
+  tvPct: { width: 80, textAlign: 'right', color: '#94a3b8', fontSize: '0.85rem' },
   genForm: { display: 'flex', flexDirection: 'column', gap: '0.75rem', maxWidth: 400 },
   formGroup: { display: 'flex', flexDirection: 'column', gap: '0.25rem' },
   label: { fontWeight: 600, fontSize: '0.85rem' },

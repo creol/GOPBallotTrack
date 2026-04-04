@@ -205,6 +205,11 @@ export default function Scanner() {
         </div>
       )}
 
+      {/* Scanner → Box Assignment */}
+      {round.race?.election_id && (
+        <ScannerBoxAssignment electionId={round.race.election_id} />
+      )}
+
       {/* Feedback */}
       {feedback && (
         <div style={{ ...styles.feedback, background: feedback.type === 'success' ? '#dcfce7' : '#fee2e2', color: feedback.type === 'success' ? '#166534' : '#dc2626' }} onClick={clearFeedback}>
@@ -278,6 +283,59 @@ export default function Scanner() {
           </div>
 
           <button style={styles.btnCancel} onClick={() => setScannedSN(null)}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScannerBoxAssignment({ electionId }) {
+  const [scanners, setScanners] = useState([]);
+  const [boxes, setBoxes] = useState([]);
+  const [expanded, setExpanded] = useState(false);
+
+  const fetchData = async () => {
+    try {
+      const [scRes, bxRes] = await Promise.all([
+        api.get(`/admin/elections/${electionId}/scanners`),
+        api.get(`/admin/elections/${electionId}/ballot-boxes`),
+      ]);
+      setScanners(scRes.data);
+      setBoxes(bxRes.data);
+    } catch {}
+  };
+
+  useEffect(() => { fetchData(); }, [electionId]);
+
+  const handleAssign = async (scannerId, boxId) => {
+    await api.put(`/admin/scanners/${scannerId}/assign-box`, { box_id: boxId || null });
+    fetchData();
+  };
+
+  if (scanners.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: '0.75rem' }}>
+      <button
+        style={{ ...styles.btnSmall, width: '100%', textAlign: 'left', fontWeight: 600 }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? '▾' : '▸'} Scanner → Box Assignment
+      </button>
+      {expanded && (
+        <div style={{ padding: '0.5rem', background: '#f9fafb', borderRadius: '0 0 6px 6px', border: '1px solid #e5e7eb', borderTop: 'none' }}>
+          {scanners.map(sc => (
+            <div key={sc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem', minWidth: 80 }}>{sc.name}</span>
+              <span style={styles.muted}>→</span>
+              <select style={{ ...styles.input, flex: 1, padding: '0.35rem', fontSize: '0.85rem' }}
+                value={sc.current_box_id || ''}
+                onChange={e => handleAssign(sc.id, e.target.value ? parseInt(e.target.value) : null)}>
+                <option value="">No box</option>
+                {boxes.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+          ))}
         </div>
       )}
     </div>

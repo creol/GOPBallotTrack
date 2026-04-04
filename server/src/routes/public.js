@@ -11,7 +11,7 @@ router.get('/:electionId', async (req, res) => {
     const { rows: [election] } = await db.query(
       'SELECT * FROM elections WHERE id = $1', [req.params.electionId]
     );
-    if (!election) return res.status(404).json({ error: 'Election not found' });
+    if (!election) return res.status(404).json({ error: 'Election event not found' });
 
     const { rows: races } = await db.query(
       'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order',

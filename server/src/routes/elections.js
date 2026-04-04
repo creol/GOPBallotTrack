@@ -41,7 +41,7 @@ router.get('/:id', async (req, res) => {
     const { rows: [election] } = await db.query(
       'SELECT * FROM elections WHERE id = $1', [req.params.id]
     );
-    if (!election) return res.status(404).json({ error: 'Election not found' });
+    if (!election) return res.status(404).json({ error: 'Election event not found' });
 
     const { rows: races } = await db.query(
       'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order', [election.id]
@@ -66,7 +66,7 @@ router.put('/:id', async (req, res) => {
        WHERE id = $4 RETURNING *`,
       [name, date, description, req.params.id]
     );
-    if (!election) return res.status(404).json({ error: 'Election not found' });
+    if (!election) return res.status(404).json({ error: 'Election event not found' });
     res.json(election);
   } catch (err) {
     console.error('Update election error:', err);
@@ -82,7 +82,7 @@ router.put('/:id/archive', async (req, res) => {
        WHERE id = $1 RETURNING *`,
       [req.params.id]
     );
-    if (!election) return res.status(404).json({ error: 'Election not found' });
+    if (!election) return res.status(404).json({ error: 'Election event not found' });
     res.json(election);
   } catch (err) {
     console.error('Archive election error:', err);
@@ -96,14 +96,14 @@ router.delete('/:id', async (req, res) => {
     const { rows: [election] } = await db.query(
       'SELECT * FROM elections WHERE id = $1', [req.params.id]
     );
-    if (!election) return res.status(404).json({ error: 'Election not found' });
+    if (!election) return res.status(404).json({ error: 'Election event not found' });
 
     // Soft delete
     await db.query(
       `UPDATE elections SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
       [req.params.id]
     );
-    res.json({ message: 'Election deleted' });
+    res.json({ message: 'Election event deleted' });
   } catch (err) {
     console.error('Delete election error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -119,7 +119,7 @@ router.put('/:id/tv-qr', async (req, res) => {
        WHERE id = $3 RETURNING *`,
       [!!enabled, url || null, req.params.id]
     );
-    if (!election) return res.status(404).json({ error: 'Election not found' });
+    if (!election) return res.status(404).json({ error: 'Election event not found' });
     res.json(election);
   } catch (err) {
     console.error('Update TV QR error:', err);

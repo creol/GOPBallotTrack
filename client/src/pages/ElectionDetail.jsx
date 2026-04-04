@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 
 const NAV_ITEMS = [
@@ -17,15 +17,29 @@ export default function ElectionDetail() {
   const [ballotBoxes, setBallotBoxes] = useState([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', date: '', description: '' });
-  const [raceForm, setRaceForm] = useState({ name: '', threshold_type: 'majority', threshold_value: '', ballot_count: '', max_rounds: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '' });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
   const [activeSection, setActiveSection] = useState('races');
+  const [raceRounds, setRaceRounds] = useState({});
+  const navigate = useNavigate();
 
   const fetchElection = async () => {
     const { data } = await api.get(`/admin/elections/${id}`);
     setElection(data);
     setForm({ name: data.name, date: data.date?.split('T')[0], description: data.description || '' });
+
+    // Fetch rounds for each race
+    if (data.races?.length) {
+      const roundsByRace = {};
+      await Promise.all(data.races.map(async (race) => {
+        try {
+          const { data: rounds } = await api.get(`/admin/races/${race.id}/rounds`);
+          roundsByRace[race.id] = rounds;
+        } catch { roundsByRace[race.id] = []; }
+      }));
+      setRaceRounds(roundsByRace);
+    }
   };
 
   const fetchBoxes = async () => {
@@ -44,16 +58,14 @@ export default function ElectionDetail() {
 
   const handleAddRace = async (e) => {
     e.preventDefault();
-    await api.post(`/admin/elections/${id}/races`, {
+    const { data: newRace } = await api.post(`/admin/elections/${id}/races`, {
       name: raceForm.name,
-      threshold_type: raceForm.threshold_type,
-      threshold_value: raceForm.threshold_value || null,
       ballot_count: raceForm.ballot_count ? parseInt(raceForm.ballot_count) : null,
       max_rounds: raceForm.max_rounds ? parseInt(raceForm.max_rounds) : null,
     });
-    setRaceForm({ name: '', threshold_type: 'majority', threshold_value: '', ballot_count: '', max_rounds: '' });
+    setRaceForm({ name: '', ballot_count: '', max_rounds: '' });
     setShowRaceForm(false);
-    fetchElection();
+    navigate(`/admin/elections/${id}/races/${newRace.id}`);
   };
 
   const handleAddBoxes = async (e) => {
@@ -76,10 +88,11 @@ export default function ElectionDetail() {
   if (!election) return <div style={styles.container}><p>Loading...</p></div>;
 
   const statusColor = { pending: '#f59e0b', active: '#10b981', complete: '#6366f1' };
+  const roundStatusColor = { pending: '#f59e0b', scanning: '#3b82f6', confirmed: '#10b981', pending_release: '#8b5cf6', released: '#6366f1' };
 
   return (
     <div style={styles.container}>
-      <Link to="/admin" style={styles.backLink}>&larr; All Elections</Link>
+      <Link to="/admin" style={styles.backLink}>&larr; All Election Events</Link>
 
       {/* Election Info — always visible */}
       {editing ? (
@@ -144,31 +157,39 @@ export default function ElectionDetail() {
                 <form onSubmit={handleAddRace} style={styles.form}>
                   <input style={styles.input} placeholder="Race Name" value={raceForm.name}
                     onChange={e => setRaceForm({ ...raceForm, name: e.target.value })} required />
-                  <select style={styles.input} value={raceForm.threshold_type}
-                    onChange={e => setRaceForm({ ...raceForm, threshold_type: e.target.value })}>
-                    <option value="majority">Majority</option>
-                    <option value="two_thirds">Two-Thirds</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                  {raceForm.threshold_type === 'custom' && (
-                    <input style={styles.input} type="number" step="0.00001" placeholder="Threshold %"
-                      value={raceForm.threshold_value} onChange={e => setRaceForm({ ...raceForm, threshold_value: e.target.value })} />
-                  )}
                   <input style={{ ...styles.input, width: 130 }} type="number" min="1" placeholder="# of Ballots"
                     value={raceForm.ballot_count} onChange={e => setRaceForm({ ...raceForm, ballot_count: e.target.value })} required />
                   <input style={{ ...styles.input, width: 130 }} type="number" min="1" placeholder="Max Rounds"
                     value={raceForm.max_rounds} onChange={e => setRaceForm({ ...raceForm, max_rounds: e.target.value })} required />
-                  <button style={styles.btnPrimary} type="submit">Add Race</button>
+                  <button style={styles.btnPrimary} type="submit">Add Candidates →</button>
                 </form>
               )}
 
               {(!election.races || election.races.length === 0) && <p style={styles.muted}>No races yet.</p>}
               {election.races?.map(race => (
-                <Link key={race.id} to={`/admin/elections/${id}/races/${race.id}`} style={styles.raceCard}>
-                  <span style={styles.raceName}>{race.name}</span>
-                  <span style={{ ...styles.statusBadge, background: statusColor[race.status] || '#999' }}>{race.status}</span>
-                  <span style={styles.muted}>{race.threshold_type}</span>
-                </Link>
+                <div key={race.id} style={{ marginBottom: '1rem' }}>
+                  <Link to={`/admin/elections/${id}/races/${race.id}`} style={styles.raceCard}>
+                    <span style={styles.raceName}>{race.name}</span>
+                    <span style={{ ...styles.statusBadge, background: statusColor[race.status] || '#999' }}>{race.status}</span>
+                  </Link>
+                  {raceRounds[race.id]?.length > 0 && (
+                    <div style={styles.roundsList}>
+                      {raceRounds[race.id].map(round => (
+                        <Link
+                          key={round.id}
+                          to={`/admin/elections/${id}/races/${race.id}/rounds/${round.id}`}
+                          style={styles.roundRow}
+                        >
+                          <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Round {round.round_number}</span>
+                          <span style={{ color: '#888', fontSize: '0.8rem' }}>{round.paper_color}</span>
+                          <span style={{ ...styles.roundStatusBadge, background: roundStatusColor[round.status] || '#999' }}>
+                            {round.status}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -292,14 +313,14 @@ function DashboardsSection({ electionId }) {
     },
     {
       title: 'Public Dashboard (TV)',
-      description: 'Full-screen election-night display for large screens. Dark theme, auto-updates via WebSocket when results are released.',
+      description: 'Full-screen results display for large screens. Dark theme, auto-updates via WebSocket when results are released.',
       url: tvUrl,
       icon: '📺',
       color: '#7c3aed',
     },
     {
       title: 'Admin Dashboard',
-      description: 'Election management — races, ballots, scanning, confirmation, and exports.',
+      description: 'Election event management — races, ballots, scanning, confirmation, and exports.',
       url: adminUrl,
       icon: '⚙️',
       color: '#16a34a',
@@ -531,7 +552,7 @@ function ExportSection({ electionId }) {
             onClick={startFullExport}
             disabled={fullStatus === 'processing'}
           >
-            {fullStatus === 'processing' ? 'Exporting...' : 'Export Full Election Data'}
+            {fullStatus === 'processing' ? 'Exporting...' : 'Export Full Election Event Data'}
           </button>
         )}
       </div>
@@ -589,6 +610,15 @@ const styles = {
   },
   raceName: { fontWeight: 600, flex: 1 },
   statusBadge: { color: '#fff', padding: '2px 10px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 600 },
+  roundsList: {
+    marginLeft: '1.25rem', borderLeft: '2px solid #e5e7eb', paddingLeft: '0.75rem', marginTop: '0.25rem',
+  },
+  roundRow: {
+    display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0.75rem',
+    textDecoration: 'none', color: 'inherit', borderRadius: 4,
+    transition: 'background 0.1s',
+  },
+  roundStatusBadge: { color: '#fff', padding: '1px 8px', borderRadius: 10, fontSize: '0.7rem', fontWeight: 600 },
   boxRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0', borderBottom: '1px solid #eee' },
   btnPrimary: { padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
   btnSmall: { padding: '0.25rem 0.5rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },

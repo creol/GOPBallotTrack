@@ -40,7 +40,7 @@ export default function Login({ onLogin }) {
             <label style={styles.label}>Role</label>
             <select style={styles.input} value={role} onChange={e => setRole(e.target.value)}>
               <option value="admin">Admin</option>
-              <option value="judge">Election Judge</option>
+              <option value="judge">Election Event Judge</option>
               <option value="chair">Chair</option>
             </select>
           </div>

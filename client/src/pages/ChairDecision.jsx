@@ -83,12 +83,7 @@ export default function ChairDecision() {
       {/* Results Table */}
       <div style={styles.section}>
         <h2>Results</h2>
-        <p style={styles.muted}>
-          Threshold: {data.threshold_type === 'custom'
-            ? `${data.threshold_value}%`
-            : data.threshold_type.replace('_', ' ')} ({data.threshold_value.toFixed(2)}%)
-          &nbsp;|&nbsp; Total votes: {data.total_votes}
-        </p>
+        <p style={styles.muted}>Total votes: {data.total_votes}</p>
 
         <table style={styles.table}>
           <thead>
@@ -102,18 +97,16 @@ export default function ChairDecision() {
           <tbody>
             {data.results.map(r => {
               const pct = Number(r.percentage);
-              const isWinner = pct > data.threshold_value;
               const isEliminated = eliminated.has(r.candidate_id);
               return (
                 <tr key={r.candidate_id} style={{
-                  background: isWinner ? '#f0fdf4' : isEliminated ? '#fef2f2' : '',
+                  background: isEliminated ? '#fef2f2' : '',
                   opacity: isEliminated ? 0.6 : 1,
                 }}>
                   <td style={styles.td}>
                     <strong style={isEliminated ? { textDecoration: 'line-through' } : {}}>
                       {r.candidate_name}
                     </strong>
-                    {isWinner && <span style={styles.winnerBadge}>Winner</span>}
                     {isEliminated && <span style={styles.eliminatedBadge}>Eliminated</span>}
                   </td>
                   <td style={styles.td}>{r.vote_count}</td>
@@ -126,7 +119,7 @@ export default function ChairDecision() {
                     </div>
                   </td>
                   <td style={styles.td}>
-                    {!released && !isWinner && !isEliminated && (
+                    {!released && !isEliminated && (
                       <button style={styles.btnDanger} onClick={() => handleWithdraw(r.candidate_id, r.candidate_name)}>
                         Eliminate
                       </button>
@@ -188,13 +181,7 @@ export default function ChairDecision() {
       <div style={styles.section}>
         <h2>Race Decision</h2>
 
-        {data.has_winner && (
-          <div style={styles.winnerBanner}>
-            <strong>{data.winner.candidate_name}</strong> has met the {data.threshold_type.replace('_', ' ')} threshold.
-          </div>
-        )}
-
-        {!data.has_winner && eliminated.size > 0 && (
+        {eliminated.size > 0 && (
           <p style={styles.muted}>{eliminated.size} candidate(s) eliminated so far.</p>
         )}
 

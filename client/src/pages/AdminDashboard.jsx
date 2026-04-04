@@ -31,7 +31,7 @@ export default function AdminDashboard({ onLogout, auth }) {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this election?')) return;
+    if (!confirm('Are you sure you want to delete this election event?')) return;
     await api.delete(`/admin/elections/${id}`);
     fetchElections();
   };
@@ -48,7 +48,7 @@ export default function AdminDashboard({ onLogout, auth }) {
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {auth?.role && <span style={styles.badge}>{auth.role}</span>}
           <button style={styles.btnPrimary} onClick={() => setShowForm(!showForm)}>
-            {showForm ? 'Cancel' : 'Create Election'}
+            {showForm ? 'Cancel' : 'Create Election Event'}
           </button>
           {onLogout && <button style={styles.btnSmall} onClick={onLogout}>Logout</button>}
         </div>
@@ -58,7 +58,7 @@ export default function AdminDashboard({ onLogout, auth }) {
         <form onSubmit={handleCreate} style={styles.form}>
           <input
             style={styles.input}
-            placeholder="Election Name"
+            placeholder="Election Event Name"
             value={form.name}
             onChange={e => setForm({ ...form, name: e.target.value })}
             required
@@ -80,8 +80,8 @@ export default function AdminDashboard({ onLogout, auth }) {
         </form>
       )}
 
-      <h2>Active Elections</h2>
-      {active.length === 0 && <p style={styles.muted}>No active elections.</p>}
+      <h2>Active Election Events</h2>
+      {active.length === 0 && <p style={styles.muted}>No active election events.</p>}
       <div style={styles.grid}>
         {active.map(el => (
           <div key={el.id} style={styles.card}>
