@@ -26,22 +26,32 @@ export default function Scanner() {
   const html5QrRef = useRef(null);
 
   const fetchRoundData = useCallback(async () => {
-    // Use non-admin endpoints for scanner data (tally operators have no auth)
-    const { data: roundData } = await api.get(`/rounds/${roundId}/detail`);
-    setRound(roundData);
+    try {
+      // Use non-admin endpoints for scanner data (tally operators have no auth)
+      const { data: roundData } = await api.get(`/rounds/${roundId}/detail`);
+      setRound(roundData);
+      setCandidates((roundData.candidates || []).filter(c => c.status === 'active'));
+      setBallotBoxes(roundData.ballot_boxes || []);
+    } catch (err) {
+      console.error('Failed to fetch round data:', err);
+    }
 
-    setCandidates((roundData.candidates || []).filter(c => c.status === 'active'));
-    setBallotBoxes(roundData.ballot_boxes || []);
-
-    const { data: passData } = await api.get(`/rounds/${roundId}/passes`);
-    const passList = Array.isArray(passData) ? passData : [];
-    setPasses(passList);
-    const active = passList.find(p => p.status === 'active');
-    if (active) {
-      setActivePass(active);
-      setScanCount(parseInt(active.scan_count) || 0);
-    } else {
-      setActivePass(null);
+    try {
+      const { data: passData } = await api.get(`/rounds/${roundId}/passes`);
+      const passList = Array.isArray(passData) ? passData : [];
+      setPasses(passList);
+      const active = passList.find(p => p.status === 'active');
+      if (active) {
+        setActivePass(active);
+        setScanCount(parseInt(active.scan_count) || 0);
+      } else {
+        setActivePass(null);
+        // If no active pass but there are passes, show the latest scan count
+        const latest = passList[passList.length - 1];
+        if (latest) setScanCount(parseInt(latest.scan_count) || 0);
+      }
+    } catch (err) {
+      console.error('Failed to fetch passes:', err);
     }
   }, [roundId]);
 
@@ -181,6 +191,7 @@ export default function Scanner() {
             </button>
           </>
         )}
+        <button style={styles.btnSmall} onClick={fetchRoundData} title="Refresh">↻</button>
       </div>
 
       {/* Completed passes summary */}
