@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { key: 'boxes', label: 'Ballot Boxes' },
   { key: 'scanners', label: 'Scanners' },
   { key: 'export', label: 'Export' },
+  { key: 'dashboards', label: 'Dashboards' },
 ];
 
 export default function ElectionDetail() {
@@ -195,6 +196,8 @@ export default function ElectionDetail() {
           {activeSection === 'scanners' && <ScannersSection electionId={id} />}
 
           {activeSection === 'export' && <ExportSection electionId={id} />}
+
+          {activeSection === 'dashboards' && <DashboardsSection electionId={id} />}
         </div>
       </div>
     </div>
@@ -270,6 +273,91 @@ function ScannersSection({ electionId }) {
           <button style={styles.btnDanger} onClick={() => handleDelete(s.id)}>Delete</button>
         </div>
       ))}
+    </div>
+  );
+}
+
+function DashboardsSection({ electionId }) {
+  const publicUrl = `${window.location.origin}/public/${electionId}`;
+  const tvUrl = `${publicUrl}?mode=tv`;
+  const adminUrl = `${window.location.origin}/admin/elections/${electionId}`;
+
+  const dashboards = [
+    {
+      title: 'Public Dashboard (Mobile)',
+      description: 'Touch-friendly view for attendees on phones. Shows race results, ballot SN search, and ballot image viewer.',
+      url: publicUrl,
+      icon: '📱',
+      color: '#2563eb',
+    },
+    {
+      title: 'Public Dashboard (TV)',
+      description: 'Full-screen election-night display for large screens. Dark theme, auto-updates via WebSocket when results are released.',
+      url: tvUrl,
+      icon: '📺',
+      color: '#7c3aed',
+    },
+    {
+      title: 'Admin Dashboard',
+      description: 'Election management — races, ballots, scanning, confirmation, and exports.',
+      url: adminUrl,
+      icon: '⚙️',
+      color: '#16a34a',
+    },
+  ];
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => alert('URL copied!')).catch(() => {});
+  };
+
+  return (
+    <div>
+      <h2>Dashboards</h2>
+      <p style={styles.muted}>Share these links with attendees and operators. All links work on the local network.</p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+        {dashboards.map(d => (
+          <div key={d.title} style={{
+            border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
+            borderLeft: `4px solid ${d.color}`, background: '#fff',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <span style={{ fontSize: '2rem' }}>{d.icon}</span>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>{d.title}</h3>
+                <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 0.5rem' }}>{d.description}</p>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <code style={{
+                    background: '#f3f4f6', padding: '0.3rem 0.5rem', borderRadius: 4,
+                    fontSize: '0.78rem', color: '#374151', wordBreak: 'break-all', flex: 1,
+                  }}>{d.url}</code>
+                  <button style={styles.btnSmall} onClick={() => copyToClipboard(d.url)}>Copy</button>
+                  <a href={d.url} target="_blank" rel="noopener noreferrer"
+                    style={{ ...styles.btnPrimary, textDecoration: 'none', fontSize: '0.82rem', padding: '0.3rem 0.7rem' }}>
+                    Open
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            {/* Thumbnail preview */}
+            <div style={{
+              marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 6,
+              overflow: 'hidden', height: 180, position: 'relative',
+            }}>
+              <iframe
+                src={d.url}
+                title={d.title}
+                style={{
+                  width: '200%', height: '200%', border: 'none',
+                  transform: 'scale(0.5)', transformOrigin: 'top left',
+                  pointerEvents: 'none',
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
