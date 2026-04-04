@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 
 export default function ChairDecision() {
   const { id: electionId, raceId, roundId } = useParams();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [chairName, setChairName] = useState('');
   const [showPreview, setShowPreview] = useState(false);
@@ -11,12 +12,16 @@ export default function ChairDecision() {
   const [released, setReleased] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [eliminated, setEliminated] = useState(new Set());
 
   const fetchData = async () => {
     try {
       const { data: decision } = await api.get(`/rounds/${roundId}/chair-decision`);
       setData(decision);
       if (decision.round.status === 'released') setReleased(true);
+      // Track which candidates are already withdrawn
+      const { data: cands } = await api.get(`/admin/races/${raceId}/candidates`);
+      setEliminated(new Set(cands.filter(c => c.status === 'withdrawn').map(c => c.id)));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load data');
     }
@@ -39,21 +44,22 @@ export default function ChairDecision() {
   };
 
   const handleWithdraw = async (candidateId, candidateName) => {
-    if (!confirm(`Eliminate ${candidateName} from this race?`)) return;
+    if (!confirm(`Eliminate ${candidateName}? They will not appear as a candidate in the next round.`)) return;
     try {
       await api.put(`/admin/candidates/${candidateId}/withdraw`);
-      fetchData();
+      setEliminated(prev => new Set([...prev, candidateId]));
+      setError(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to withdraw candidate');
+      setError(err.response?.data?.error || 'Failed to eliminate candidate');
     }
   };
 
   const handleCreateNextRound = async () => {
-    const color = prompt('Paper color for next round:');
+    const color = prompt('Paper color for the next round:');
     if (!color) return;
     try {
-      await api.post(`/admin/races/${raceId}/rounds`, { paper_color: color });
-      alert('Next round created. Navigate to it from the race detail page.');
+      const { data: newRound } = await api.post(`/admin/races/${raceId}/rounds`, { paper_color: color });
+      navigate(`/admin/elections/${electionId}/races/${raceId}/rounds/${newRound.id}`);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create round');
     }
@@ -67,7 +73,7 @@ export default function ChairDecision() {
         &larr; Back to Round
       </Link>
 
-      <h1>Chair Decision — Round {data.round.round_number}</h1>
+      <h1>Results — Round {data.round.round_number}</h1>
       <p style={styles.muted}>{data.race.name} — {data.election.name}</p>
 
       {released && (
@@ -97,11 +103,18 @@ export default function ChairDecision() {
             {data.results.map(r => {
               const pct = Number(r.percentage);
               const isWinner = pct > data.threshold_value;
+              const isEliminated = eliminated.has(r.candidate_id);
               return (
-                <tr key={r.candidate_id} style={isWinner ? { background: '#f0fdf4' } : {}}>
+                <tr key={r.candidate_id} style={{
+                  background: isWinner ? '#f0fdf4' : isEliminated ? '#fef2f2' : '',
+                  opacity: isEliminated ? 0.6 : 1,
+                }}>
                   <td style={styles.td}>
-                    <strong>{r.candidate_name}</strong>
+                    <strong style={isEliminated ? { textDecoration: 'line-through' } : {}}>
+                      {r.candidate_name}
+                    </strong>
                     {isWinner && <span style={styles.winnerBadge}>Winner</span>}
+                    {isEliminated && <span style={styles.eliminatedBadge}>Eliminated</span>}
                   </td>
                   <td style={styles.td}>{r.vote_count}</td>
                   <td style={styles.td}>
@@ -113,7 +126,7 @@ export default function ChairDecision() {
                     </div>
                   </td>
                   <td style={styles.td}>
-                    {!released && !isWinner && (
+                    {!released && !isWinner && !isEliminated && (
                       <button style={styles.btnDanger} onClick={() => handleWithdraw(r.candidate_id, r.candidate_name)}>
                         Eliminate
                       </button>
@@ -126,10 +139,10 @@ export default function ChairDecision() {
         </table>
       </div>
 
-      {/* Preview & Release */}
+      {/* Release Section */}
       {!released && (
         <div style={styles.section}>
-          <h2>Release to Public</h2>
+          <h2>Release Results</h2>
 
           <button
             style={styles.btnPreview}
@@ -154,17 +167,10 @@ export default function ChairDecision() {
 
           {hasPreviewedOnce && (
             <div style={styles.releaseBox}>
-              <input
-                style={styles.input}
-                placeholder="Chair name"
-                value={chairName}
-                onChange={e => setChairName(e.target.value)}
-              />
-              <button
-                style={{ ...styles.btnRelease, opacity: submitting ? 0.6 : 1 }}
-                onClick={handleRelease}
-                disabled={submitting}
-              >
+              <input style={styles.input} placeholder="Your name" value={chairName}
+                onChange={e => setChairName(e.target.value)} />
+              <button style={{ ...styles.btnRelease, opacity: submitting ? 0.6 : 1 }}
+                onClick={handleRelease} disabled={submitting}>
                 {submitting ? 'Releasing...' : 'Release to Public'}
               </button>
             </div>
@@ -172,24 +178,26 @@ export default function ChairDecision() {
         </div>
       )}
 
-      {/* Decision Buttons */}
-      {!released && (
-        <div style={styles.section}>
-          <h2>Next Steps</h2>
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {data.has_winner ? (
-              <div style={styles.winnerBanner}>
-                <strong>{data.winner.candidate_name}</strong> has met the {data.threshold_type.replace('_', ' ')} threshold.
-              </div>
-            ) : (
-              <>
-                <button style={styles.btnPrimary} onClick={handleCreateNextRound}>Advance to Next Round</button>
-                <p style={styles.muted}>Use "Eliminate" buttons in the results table to remove candidates before the next round.</p>
-              </>
-            )}
+      {/* Next Steps — show after release or for deciding next round */}
+      <div style={styles.section}>
+        <h2>Next Steps</h2>
+        {data.has_winner ? (
+          <div style={styles.winnerBanner}>
+            <strong>{data.winner.candidate_name}</strong> has met the {data.threshold_type.replace('_', ' ')} threshold.
+            {released ? ' The race is complete.' : ' Release the results above to finalize.'}
           </div>
-        </div>
-      )}
+        ) : (
+          <div>
+            <p style={styles.muted}>
+              No candidate has met the threshold. Eliminate losing candidates above, then advance to the next round.
+              {eliminated.size > 0 && ` (${eliminated.size} eliminated so far)`}
+            </p>
+            <button style={styles.btnPrimary} onClick={handleCreateNextRound}>
+              Advance to Next Round
+            </button>
+          </div>
+        )}
+      </div>
 
       {error && <p style={styles.errorMsg}>{error}</p>}
     </div>
@@ -206,6 +214,7 @@ const styles = {
   barBg: { flex: 1, height: 12, background: '#e5e7eb', borderRadius: 6, overflow: 'hidden', maxWidth: 200 },
   barFill: { height: '100%', background: '#3b82f6', borderRadius: 6 },
   winnerBadge: { marginLeft: '0.5rem', background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem', fontWeight: 700 },
+  eliminatedBadge: { marginLeft: '0.5rem', background: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: 4, fontSize: '0.75rem', fontWeight: 700 },
   winnerBanner: { background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '1rem', width: '100%' },
   releasedBanner: { background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: 8, padding: '0.75rem', fontWeight: 600, color: '#1e40af', marginBottom: '1rem' },
   previewPanel: { background: '#1e293b', color: '#f1f5f9', borderRadius: 8, padding: '1rem', marginTop: '0.75rem' },
