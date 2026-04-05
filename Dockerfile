@@ -2,6 +2,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install poppler-utils for PDF to image conversion (test ballot generation)
+RUN apk add --no-cache poppler-utils
+
 # Install server dependencies
 COPY server/package.json server/package-lock.json* server/
 RUN cd server && npm install

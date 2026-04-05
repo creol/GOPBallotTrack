@@ -13,11 +13,29 @@ export default function BallotDesigner() {
   const [generatingPreview, setGeneratingPreview] = useState(false);
   const [logoUrl, setLogoUrl] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [rounds, setRounds] = useState([]);
+  const [testRoundId, setTestRoundId] = useState('');
+  const [testCount, setTestCount] = useState(10);
+  const [testBadPct, setTestBadPct] = useState(10);
+  const [generatingTest, setGeneratingTest] = useState(false);
 
   useEffect(() => {
-    api.get(`/admin/elections/${electionId}`).then(({ data }) => setElection(data));
+    api.get(`/admin/elections/${electionId}`).then(({ data }) => {
+      setElection(data);
+      // Fetch rounds for test ballot generation
+      const allRounds = [];
+      if (data.races) {
+        Promise.all(data.races.map(race =>
+          api.get(`/admin/races/${race.id}/rounds`).then(({ data: rds }) =>
+            rds.forEach(r => allRounds.push({ ...r, race_name: race.name }))
+          ).catch(() => {})
+        )).then(() => {
+          setRounds(allRounds);
+          if (allRounds.length > 0) setTestRoundId(String(allRounds[0].id));
+        });
+      }
+    });
     api.get(`/admin/elections/${electionId}/ballot-design`).then(({ data }) => setConfig(data.config));
-    // Check if logo already exists
     fetch(`/api/admin/elections/${electionId}/ballot-design/logo`, { method: 'HEAD' })
       .then(r => { if (r.ok) setLogoUrl(`/api/admin/elections/${electionId}/ballot-design/logo`); })
       .catch(() => {});
@@ -218,6 +236,43 @@ export default function BallotDesigner() {
           {/* Serial Number */}
           <Section title="Serial Number">
             <Toggle label="Show serial number text" value={config.sn.show} onChange={v => updateField('sn', 'show', v)} />
+          </Section>
+
+          {/* Test Ballot Generation */}
+          <Section title="Generate Test Ballots">
+            <p style={{ color: '#666', fontSize: '0.8rem', margin: '0 0 0.5rem' }}>
+              Create random filled ballot images for scanner/OMR testing. Requires ballot PDF to be generated first.
+            </p>
+            <SelectField label="Round" value={testRoundId} options={
+              rounds.map(r => ({ value: String(r.id), label: `${r.race_name} — Round ${r.round_number}` }))
+            } onChange={v => setTestRoundId(v)} />
+            <NumberField label="Number of ballots" value={testCount} onChange={v => setTestCount(v)} />
+            <NumberField label="Bad fill % (light/partial marks)" value={testBadPct} onChange={v => setTestBadPct(v)} />
+            <button
+              style={{ ...s.btnPrimary, background: '#7c3aed', marginTop: '0.5rem', opacity: generatingTest ? 0.6 : 1 }}
+              disabled={generatingTest || !testRoundId}
+              onClick={async () => {
+                setGeneratingTest(true);
+                try {
+                  const { data } = await api.post(`/admin/rounds/${testRoundId}/generate-test-ballots`, {
+                    count: testCount, bad_fill_percentage: testBadPct,
+                  });
+                  alert(`Generated ${data.total} test ballots (${data.bad_fills} bad fills)\n\nOutput: ${data.output_dir}`);
+                } catch (err) {
+                  alert('Failed: ' + (err.response?.data?.error || err.message));
+                } finally {
+                  setGeneratingTest(false);
+                }
+              }}
+            >
+              {generatingTest ? 'Generating...' : 'Generate Test Ballots'}
+            </button>
+            {testRoundId && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <a href={`/api/admin/rounds/${testRoundId}/test-ballot-preview`} target="_blank"
+                  style={{ color: '#2563eb', fontSize: '0.82rem' }}>Preview test ballot</a>
+              </div>
+            )}
           </Section>
         </div>
 

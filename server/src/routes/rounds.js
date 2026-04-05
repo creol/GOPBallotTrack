@@ -65,9 +65,12 @@ router.get('/rounds/:id', async (req, res) => {
       [round.id]
     );
 
-    // Get race info for context
+    // Get race and election info for context
     const { rows: [race] } = await db.query(
       'SELECT * FROM races WHERE id = $1', [round.race_id]
+    );
+    const { rows: [election] } = await db.query(
+      'SELECT id, name FROM elections WHERE id = $1', [race.election_id]
     );
 
     // Get ballot serial count
@@ -75,7 +78,7 @@ router.get('/rounds/:id', async (req, res) => {
       'SELECT COUNT(*) as count FROM ballot_serials WHERE round_id = $1', [round.id]
     );
 
-    res.json({ ...round, passes, results, race, serial_count: parseInt(serialCount) });
+    res.json({ ...round, passes, results, race: { ...race, election }, serial_count: parseInt(serialCount) });
   } catch (err) {
     console.error('Get round error:', err);
     res.status(500).json({ error: 'Internal server error' });

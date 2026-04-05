@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 
 export default function Login({ onLogin }) {
-  const [role, setRole] = useState('admin');
+  const [name, setName] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [changePinMode, setChangePinMode] = useState(false);
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -14,20 +17,68 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.post('/auth/login', { role, pin });
-      onLogin(data.role, data.token);
-      // Judge doesn't have admin access — send to role-appropriate page
-      if (data.role === 'judge') {
-        navigate('/judge');
-      } else {
-        navigate('/admin');
+      const { data } = await api.post('/auth/login', { name, pin });
+      if (data.must_change_pin) {
+        // Force PIN change before proceeding
+        onLogin(data.role, data.token, data.user_id, data.name);
+        setChangePinMode(true);
+        setLoading(false);
+        return;
       }
+      onLogin(data.role, data.token, data.user_id, data.name);
+      navigate('/admin');
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleChangePin = async (e) => {
+    e.preventDefault();
+    if (newPin.length < 4) { setError('PIN must be at least 4 characters'); return; }
+    if (newPin !== confirmPin) { setError('PINs do not match'); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      await api.post('/auth/change-pin', { new_pin: newPin });
+      navigate('/admin');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to change PIN');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (changePinMode) {
+    return (
+      <div style={styles.wrapper}>
+        <div style={styles.card}>
+          <h1 style={styles.title}>Change PIN</h1>
+          <p style={styles.subtitle}>You must set a new PIN before continuing.</p>
+
+          <form onSubmit={handleChangePin} style={styles.form}>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>New PIN</label>
+              <input style={styles.input} type="password" placeholder="New PIN (min 4 characters)"
+                value={newPin} onChange={e => setNewPin(e.target.value)} required autoFocus minLength={4} />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Confirm PIN</label>
+              <input style={styles.input} type="password" placeholder="Confirm PIN"
+                value={confirmPin} onChange={e => setConfirmPin(e.target.value)} required minLength={4} />
+            </div>
+
+            {error && <p style={styles.error}>{error}</p>}
+
+            <button style={{ ...styles.btn, opacity: loading ? 0.6 : 1 }} type="submit" disabled={loading}>
+              {loading ? 'Saving...' : 'Set PIN & Continue'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.wrapper}>
@@ -37,12 +88,15 @@ export default function Login({ onLogin }) {
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.formGroup}>
-            <label style={styles.label}>Role</label>
-            <select style={styles.input} value={role} onChange={e => setRole(e.target.value)}>
-              <option value="admin">Admin</option>
-              <option value="judge">Election Event Judge</option>
-              <option value="chair">Chair</option>
-            </select>
+            <label style={styles.label}>Name</label>
+            <input
+              style={styles.input}
+              placeholder="Your name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+              autoFocus
+            />
           </div>
 
           <div style={styles.formGroup}>
@@ -54,7 +108,6 @@ export default function Login({ onLogin }) {
               value={pin}
               onChange={e => setPin(e.target.value)}
               required
-              autoFocus
             />
           </div>
 
@@ -70,7 +123,7 @@ export default function Login({ onLogin }) {
         </form>
 
         <p style={styles.hint}>
-          Tally operators and public viewers do not need to sign in.
+          Public viewers do not need to sign in.
         </p>
       </div>
     </div>

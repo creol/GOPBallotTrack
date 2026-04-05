@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import api from '../api/client';
+import { formatRaceSchedule } from '../utils/dateFormat';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -85,6 +86,11 @@ function TVMode({ election }) {
               <h2 style={tv.raceName}>{race.name}</h2>
               <span style={tv.statusLabel}>{race.status_label}</span>
             </div>
+            {(race.race_date || race.race_time || race.location) && (
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>
+                {formatRaceSchedule(race.race_date, race.race_time, race.location)}
+              </p>
+            )}
 
             {race.rounds.length === 0 && (
               <p style={tv.muted}>No results released yet</p>
@@ -157,6 +163,11 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
             <div style={mob.raceHeader} onClick={() => setExpandedRace(isExpanded ? null : race.id)}>
               <div>
                 <h2 style={mob.raceName}>{race.name}</h2>
+                {(race.race_date || race.race_time || race.location) && (
+                  <span style={{ color: '#666', fontSize: '0.75rem', display: 'block', marginBottom: '0.15rem' }}>
+                    {formatRaceSchedule(race.race_date, race.race_time, race.location)}
+                  </span>
+                )}
                 <span style={mob.statusLabel}>{race.status_label}</span>
               </div>
               <span style={mob.chevron}>{isExpanded ? '▼' : '▶'}</span>

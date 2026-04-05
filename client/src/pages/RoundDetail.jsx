@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
 
 const BALLOT_SIZES = [
   { value: 'letter', label: 'Letter (8.5" x 11") — 1 per page' },
@@ -21,6 +22,10 @@ export default function RoundDetail() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [error, setError] = useState(null);
   const [flaggedCount, setFlaggedCount] = useState(0);
+  const [testGenCount, setTestGenCount] = useState(10);
+  const [testBadPct, setTestBadPct] = useState(10);
+  const [generatingTest, setGeneratingTest] = useState(false);
+  const [showTestGen, setShowTestGen] = useState(false);
 
   const fetchRound = async () => {
     const { data } = await api.get(`/admin/rounds/${roundId}`);
@@ -84,10 +89,12 @@ export default function RoundDetail() {
   const hasPdf = ballotStatus?.pdf_exists;
 
   return (
-    <div style={styles.container}>
-      <Link to={`/admin/elections/${electionId}/races/${raceId}`} style={styles.backLink}>
-        &larr; Back to {round.race?.name || 'Race'}
-      </Link>
+    <ElectionLayout breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: round.race?.election?.name || 'Election', to: `/admin/elections/${electionId}` },
+      { label: round.race?.name || 'Race', to: `/admin/elections/${electionId}/races/${raceId}` },
+      { label: `Round ${round.round_number}` },
+    ]}>
 
       <div style={styles.header}>
         <div>
@@ -130,6 +137,45 @@ export default function RoundDetail() {
         >
           <Link to={`/scan/${roundId}`} style={styles.btnLink}>Open Scanner</Link>
           <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={{ ...styles.btnSmall, textDecoration: 'none' }} target="_blank">Calibration PDF</a>
+          <button style={styles.btnSmall} onClick={() => setShowTestGen(!showTestGen)}>
+            {showTestGen ? 'Hide Test Tools' : 'Generate Test Ballots'}
+          </button>
+          {showTestGen && (
+            <div style={{ width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.75rem', marginTop: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>Count:</label>
+                <input type="number" min="1" max="500" value={testGenCount} onChange={e => setTestGenCount(parseInt(e.target.value) || 10)}
+                  style={{ width: 60, padding: '0.3rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.85rem' }} />
+                <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>Bad fill %:</label>
+                <input type="number" min="0" max="100" value={testBadPct} onChange={e => setTestBadPct(parseInt(e.target.value) || 0)}
+                  style={{ width: 50, padding: '0.3rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.85rem' }} />
+                <button
+                  style={{ ...styles.btnSmall, background: '#7c3aed', color: '#fff', opacity: generatingTest ? 0.6 : 1 }}
+                  disabled={generatingTest}
+                  onClick={async () => {
+                    setGeneratingTest(true);
+                    try {
+                      const { data } = await api.post(`/admin/rounds/${roundId}/generate-test-ballots`, {
+                        count: testGenCount, bad_fill_percentage: testBadPct,
+                      });
+                      alert(`Generated ${data.total} test ballots (${data.bad_fills} bad fills) in:\n${data.output_dir}`);
+                    } catch (err) {
+                      alert('Failed: ' + (err.response?.data?.error || err.message));
+                    } finally {
+                      setGeneratingTest(false);
+                    }
+                  }}
+                >
+                  {generatingTest ? 'Generating...' : 'Generate'}
+                </button>
+              </div>
+              <p style={{ color: '#666', fontSize: '0.75rem', margin: '0.5rem 0 0' }}>
+                Creates filled ballot images from the real PDF for scanner testing. Bad fills simulate partial/light marks.
+              </p>
+              <a href={`/api/admin/rounds/${roundId}/test-ballot-preview`} target="_blank"
+                style={{ color: '#2563eb', fontSize: '0.8rem' }}>Preview test ballot</a>
+            </div>
+          )}
         </WorkflowStep>
 
         {flaggedCount > 0 && (
@@ -321,7 +367,7 @@ export default function RoundDetail() {
 
         {error && <p style={styles.errorMsg}>{error}</p>}
       </div>
-    </div>
+    </ElectionLayout>
   );
 }
 

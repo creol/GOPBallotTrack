@@ -651,4 +651,37 @@ async function generateCalibrationPdf({ roundId, outputPath }) {
   });
 }
 
-module.exports = { generateBallots, generatePreviewPdf, generateCalibrationPdf, SIZES };
+/**
+ * Render a single ballot to a PDF file for a specific serial number.
+ * Returns the path to the generated PDF.
+ */
+async function renderSingleBallotPdf({ roundId, serialNumber, outputPath, sizeKey: overrideSizeKey }) {
+  const data = await fetchBallotData(roundId);
+  const { round, race, election, candidates } = data;
+  const cfg = await loadDesignConfig(election.id, roundId);
+
+  const sizeKey = overrideSizeKey || cfg.lastBallotSize || 'quarter_letter';
+  const size = SIZES[sizeKey];
+  if (!size) throw new Error(`Invalid size: ${sizeKey}`);
+
+  const PDFDocument = require('pdfkit');
+  const fs = require('fs');
+
+  const doc = new PDFDocument({ size: [size.width, size.height], margin: 0 });
+  const stream = fs.createWriteStream(outputPath);
+  doc.pipe(stream);
+
+  await renderBallot(doc, 0, 0, size.width, size.height, {
+    election, race, round, candidates, serialNumber, sizeKey, logoPath: null, cfg,
+  });
+
+  doc.end();
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+
+  return outputPath;
+}
+
+module.exports = { generateBallots, generatePreviewPdf, generateCalibrationPdf, renderSingleBallotPdf, SIZES };

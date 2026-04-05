@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
 
 export default function Confirmation() {
   const { id: electionId, raceId, roundId } = useParams();
@@ -65,10 +66,12 @@ export default function Confirmation() {
   const notEnoughPasses = data.passes.length < 2;
 
   return (
-    <div style={styles.container}>
-      <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}`} style={styles.backLink}>
-        &larr; Back to Round
-      </Link>
+    <ElectionLayout breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: data.race?.name || 'Race', to: `/admin/elections/${electionId}/races/${raceId}` },
+      { label: `Round ${data.round.round_number}`, to: `/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}` },
+      { label: 'Confirm' },
+    ]}>
 
       <h1>Confirm Round {data.round.round_number}</h1>
       <p style={styles.muted}>{data.race.name} — Paper: {data.round.paper_color}</p>
@@ -199,7 +202,7 @@ export default function Confirmation() {
       )}
 
       {error && <p style={styles.errorMsg}>{error}</p>}
-    </div>
+    </ElectionLayout>
   );
 }
 

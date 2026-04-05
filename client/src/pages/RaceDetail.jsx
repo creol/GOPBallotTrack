@@ -1,37 +1,47 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
+import { toInputDate, formatDate, formatTime12 } from '../utils/dateFormat';
 
 const NAV_ITEMS = [
-  { key: 'candidates', label: 'Candidates' },
   { key: 'rounds', label: 'Rounds' },
+  { key: 'candidates', label: 'Candidates' },
 ];
 
 export default function RaceDetail() {
   const { id: electionId, raceId } = useParams();
+  const [electionName, setElectionName] = useState('');
   const [race, setRace] = useState(null);
   const [candidates, setCandidates] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [candidateName, setCandidateName] = useState('');
   const [paperColor, setPaperColor] = useState('');
   const [editing, setEditing] = useState(false);
-  const [raceForm, setRaceForm] = useState({ name: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', race_date: '', race_time: '', location: '' });
   const [editingCandidate, setEditingCandidate] = useState(null);
   const [editCandidateName, setEditCandidateName] = useState('');
   const [showRegenWarning, setShowRegenWarning] = useState(false);
   const [withdrawTarget, setWithdrawTarget] = useState(null);
   const [withdrawPin, setWithdrawPin] = useState('');
   const [withdrawError, setWithdrawError] = useState(null);
-  const [activeSection, setActiveSection] = useState('candidates');
+  const [searchParams] = useSearchParams();
+  const [activeSection, setActiveSection] = useState(searchParams.get('tab') || 'rounds');
   const dragItem = useRef(null);
   const dragOver = useRef(null);
 
   const fetchAll = async () => {
     const { data: election } = await api.get(`/admin/elections/${electionId}`);
+    setElectionName(election.name || '');
     const found = election.races?.find(r => r.id === parseInt(raceId));
     if (found) {
       setRace(found);
-      setRaceForm({ name: found.name });
+      setRaceForm({
+        name: found.name,
+        race_date: toInputDate(found.race_date),
+        race_time: found.race_time || '',
+        location: found.location || '',
+      });
     }
 
     try {
@@ -95,6 +105,9 @@ export default function RaceDetail() {
     e.preventDefault();
     await api.put(`/admin/races/${raceId}`, {
       name: raceForm.name,
+      race_date: raceForm.race_date || null,
+      race_time: raceForm.race_time || null,
+      location: raceForm.location || null,
     });
     setEditing(false);
     fetchAll();
@@ -122,14 +135,23 @@ export default function RaceDetail() {
   const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
 
   return (
-    <div style={styles.container}>
-      <Link to={`/admin/elections/${electionId}`} style={styles.backLink}>&larr; Back to Election Event</Link>
-
+    <ElectionLayout breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: electionName || 'Election', to: `/admin/elections/${electionId}` },
+      { label: race.name },
+    ]}>
       {editing ? (
-        <form onSubmit={handleUpdateRace} style={styles.form}>
-          <input style={styles.input} value={raceForm.name} onChange={e => setRaceForm({ ...raceForm, name: e.target.value })} required />
-          <button style={styles.btnPrimary} type="submit">Save</button>
-          <button style={styles.btnSmall} type="button" onClick={() => setEditing(false)}>Cancel</button>
+        <form onSubmit={handleUpdateRace} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: 400 }}>
+          <input style={styles.input} placeholder="Race Name" value={raceForm.name} onChange={e => setRaceForm({ ...raceForm, name: e.target.value })} required />
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input style={{ ...styles.input, flex: 1 }} type="date" value={raceForm.race_date} onChange={e => setRaceForm({ ...raceForm, race_date: e.target.value })} />
+            <input style={{ ...styles.input, flex: 1 }} type="time" value={raceForm.race_time} onChange={e => setRaceForm({ ...raceForm, race_time: e.target.value })} />
+          </div>
+          <input style={styles.input} placeholder="Location (optional)" value={raceForm.location} onChange={e => setRaceForm({ ...raceForm, location: e.target.value })} />
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button style={styles.btnPrimary} type="submit">Save</button>
+            <button style={styles.btnSmall} type="button" onClick={() => setEditing(false)}>Cancel</button>
+          </div>
         </form>
       ) : (
         <div style={styles.header}>
@@ -140,41 +162,36 @@ export default function RaceDetail() {
               {race.ballot_count && race.max_rounds && <> &nbsp;|&nbsp; </>}
               {race.max_rounds && <>{race.max_rounds} max rounds</>}
             </p>
+            {(race.race_date || race.race_time || race.location) && (
+              <p style={styles.muted}>
+                {race.race_date && formatDate(race.race_date)}
+                {race.race_time && <> at {formatTime12(race.race_time)}</>}
+                {race.location && <> — {race.location}</>}
+              </p>
+            )}
           </div>
           <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
         </div>
       )}
 
-      {/* Sidebar + Content Layout */}
-      <div style={styles.layout} data-race-layout>
-        {/* Sidebar — desktop */}
-        <nav style={styles.sidebar} data-race-sidebar>
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.key}
-              style={activeSection === item.key ? styles.navItemActive : styles.navItem}
-              onClick={() => setActiveSection(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
+      {/* Tab switching for Rounds/Candidates */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+        {NAV_ITEMS.map(item => (
+          <button
+            key={item.key}
+            style={{
+              padding: '0.4rem 0.75rem', border: 'none', borderBottom: activeSection === item.key ? '2px solid #2563eb' : '2px solid transparent',
+              background: 'none', cursor: 'pointer', fontSize: '0.9rem', fontWeight: activeSection === item.key ? 600 : 400,
+              color: activeSection === item.key ? '#2563eb' : '#6b7280',
+            }}
+            onClick={() => setActiveSection(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
 
-        {/* Mobile tab bar */}
-        <nav style={styles.mobileNav} data-race-mobilenav>
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.key}
-              style={activeSection === item.key ? styles.mobileTabActive : styles.mobileTab}
-              onClick={() => setActiveSection(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Content area */}
-        <div style={styles.content}>
+      <div>
           {activeSection === 'candidates' && (
             <div>
               <h2>Candidates</h2>
@@ -278,7 +295,6 @@ export default function RaceDetail() {
               </form>
             </div>
           )}
-        </div>
       </div>
 
       {/* Withdraw Confirmation Modal */}
@@ -311,7 +327,7 @@ export default function RaceDetail() {
           </div>
         </div>
       )}
-    </div>
+    </ElectionLayout>
   );
 }
 

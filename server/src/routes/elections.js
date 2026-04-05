@@ -98,12 +98,17 @@ router.delete('/:id', async (req, res) => {
     );
     if (!election) return res.status(404).json({ error: 'Election event not found' });
 
-    // Soft delete
-    await db.query(
-      `UPDATE elections SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
-      [req.params.id]
-    );
-    res.json({ message: 'Election event deleted' });
+    // Hard delete if ?hard=true, otherwise soft delete
+    if (req.query.hard === 'true') {
+      await db.query('DELETE FROM elections WHERE id = $1', [req.params.id]);
+      res.json({ message: 'Election event permanently deleted' });
+    } else {
+      await db.query(
+        `UPDATE elections SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
+        [req.params.id]
+      );
+      res.json({ message: 'Election event deleted' });
+    }
   } catch (err) {
     console.error('Delete election error:', err);
     res.status(500).json({ error: 'Internal server error' });

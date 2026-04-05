@@ -9,7 +9,37 @@ function makeSN() {
   return sn;
 }
 
+function hashPin(pin) {
+  return crypto.createHash('sha256').update(String(pin)).digest('hex');
+}
+
 async function seed() {
+  // Seed default super_admin if no admin users exist
+  const { rows: existingAdmins } = await db.query('SELECT id FROM admin_users LIMIT 1');
+  if (existingAdmins.length === 0) {
+    await db.query(
+      `INSERT INTO admin_users (name, role, pin_hash, must_change_pin)
+       VALUES ('Admin', 'super_admin', $1, true)`,
+      [hashPin('1234')]
+    );
+    console.log('Created default super_admin user: Admin (PIN: 1234, must change on first login)');
+  }
+
+  // Seed 10 global scanners if none exist
+  const { rows: existingScanners } = await db.query('SELECT id FROM scanners LIMIT 1');
+  if (existingScanners.length === 0) {
+    for (let i = 1; i <= 10; i++) {
+      const name = `Scanner ${i}`;
+      const slug = `scanner${i}`;
+      const watchPath = `/app/data/scans/${slug}/incoming`;
+      await db.query(
+        `INSERT INTO scanners (name, watch_folder_path) VALUES ($1, $2)`,
+        [name, watchPath]
+      );
+    }
+    console.log('Created 10 global scanners (Scanner 1–10)');
+  }
+
   // Check if sample election already exists
   const { rows } = await db.query(
     "SELECT id FROM elections WHERE is_sample = true LIMIT 1"
@@ -143,7 +173,7 @@ async function seed() {
   // Confirmation record
   await db.query(
     `INSERT INTO round_confirmations (round_id, confirmed_by_role, confirmed_by_name, is_override, override_notes)
-     VALUES ($1, 'judge', 'Judge Smith', false, null)`,
+     VALUES ($1, 'super_admin', 'Admin', false, null)`,
     [round1.id]
   );
 

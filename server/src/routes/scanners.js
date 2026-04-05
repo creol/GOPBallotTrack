@@ -32,13 +32,21 @@ router.post('/elections/:electionId/scanners', async (req, res) => {
   }
 });
 
-// GET /api/admin/elections/:electionId/scanners — List all scanners for election
+// GET /api/admin/scanners-global — List all global scanners
+router.get('/scanners-global', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM scanners ORDER BY name');
+    res.json(rows);
+  } catch (err) {
+    console.error('List global scanners error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/admin/elections/:electionId/scanners — List all scanners (returns global scanners)
 router.get('/elections/:electionId/scanners', async (req, res) => {
   try {
-    const { rows } = await db.query(
-      'SELECT * FROM scanners WHERE election_id = $1 ORDER BY created_at',
-      [req.params.electionId]
-    );
+    const { rows } = await db.query('SELECT * FROM scanners ORDER BY name');
     res.json(rows);
   } catch (err) {
     console.error('List scanners error:', err);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
 
 const FLAG_COLORS = {
   no_mark: { bg: '#fef3c7', color: '#92400e', label: 'No Mark' },
@@ -68,10 +69,12 @@ export default function BallotReviewQueue() {
   const resolved = reviews.filter(r => r.outcome);
 
   return (
-    <div style={s.container}>
-      <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}`} style={s.backLink}>
-        &larr; Back to Round
-      </Link>
+    <ElectionLayout breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: 'Race', to: `/admin/elections/${electionId}/races/${raceId}` },
+      { label: 'Round', to: `/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}` },
+      { label: 'Ballot Review' },
+    ]}>
 
       <h1>Ballot Review Queue ({unresolved.length} pending)</h1>
 
@@ -115,7 +118,7 @@ export default function BallotReviewQueue() {
           ))}
         </div>
       )}
-    </div>
+    </ElectionLayout>
   );
 }
 

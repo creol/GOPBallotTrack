@@ -46,11 +46,16 @@ ballottrack/
 - **Confirmation**: A human question asked of the admin — NOT an automated software decision.
 
 ## Roles
-- **Admin**: Manages elections, ballot generation, QR toggle on TV display, backups/exports
-- **Election Judge**: Confirms rounds, overrides mismatches (notes required), final say on disputes. Cannot release results.
-- **Chair**: All Judge permissions + sole authority to preview and release each round's results to the public
-- **Tally Operator**: Scans ballots, manual SN entry for spoiled ballots
+- **Super Admin**: Full access to everything — all races, all elections, user management, Control Center
+- **Race Admin**: Full access within assigned races only — manage candidates, scanning, ballot review, round management
 - **Public Viewer**: View-only dashboard (TV or mobile), SN search, click SN to see ballot image. No login.
+
+## Auth System
+- Database-driven admin_users table with hashed PINs
+- Login by name + PIN (no role dropdown)
+- First login forces PIN change (must_change_pin flag)
+- Super Admin can create users, assign race_admins to races, reset PINs
+- Default super_admin on first run: name "Admin", PIN "1234" (must change)
 
 ## Key Rules
 - Confirmation is always a human question for the Election Judge, not software logic

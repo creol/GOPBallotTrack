@@ -1,10 +1,5 @@
 const crypto = require('crypto');
-
-const PINS = {
-  admin: process.env.ADMIN_PIN || '1234',
-  judge: process.env.JUDGE_PIN || '5678',
-  chair: process.env.CHAIR_PIN || '9012',
-};
+const db = require('../db');
 
 // Simple token store (in-memory — fine for single-server LAN deployment)
 const sessions = new Map();
@@ -13,83 +8,52 @@ function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function hashPin(pin) {
+  return crypto.createHash('sha256').update(String(pin)).digest('hex');
+}
+
 /**
- * Login: validate role + PIN, return a session token.
+ * Login: validate name + PIN against admin_users table, return a session token.
  */
-function login(role, pin) {
-  if (!PINS[role]) return null;
-  if (PINS[role] !== pin) return null;
+async function login(name, pin) {
+  const { rows: [user] } = await db.query(
+    'SELECT * FROM admin_users WHERE name = $1',
+    [name]
+  );
+  if (!user) return null;
+  if (user.pin_hash !== hashPin(pin)) return null;
 
   const token = generateToken();
-  sessions.set(token, { role, created: Date.now() });
-  return token;
+  sessions.set(token, {
+    user_id: user.id,
+    name: user.name,
+    role: user.role,
+    must_change_pin: user.must_change_pin,
+    created: Date.now(),
+  });
+  return { token, user };
 }
 
 /**
  * Get session from request (Authorization: Bearer <token> or cookie).
  */
 function getSession(req) {
-  // Check Authorization header
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     return sessions.get(token) || null;
   }
 
-  // Check cookie
-  const cookies = req.headers.cookie;
-  if (cookies) {
-    const match = cookies.split(';').map(c => c.trim()).find(c => c.startsWith('bt_token='));
-    if (match) {
-      const token = match.split('=')[1];
-      return sessions.get(token) || null;
-    }
+  const cookieToken = req.cookies?.bt_token;
+  if (cookieToken) {
+    return sessions.get(cookieToken) || null;
   }
 
   return null;
 }
 
 /**
- * Middleware: require admin or chair role.
- * Admin has full access to everything including judge and chair functions.
- */
-function requireAdmin(req, res, next) {
-  const session = getSession(req);
-  if (!session || !['admin', 'chair'].includes(session.role)) {
-    return res.status(401).json({ error: 'Admin authentication required' });
-  }
-  req.session = session;
-  next();
-}
-
-/**
- * Middleware: require judge, admin, or chair role.
- * Admin can do everything a judge can do.
- */
-function requireJudge(req, res, next) {
-  const session = getSession(req);
-  if (!session || !['judge', 'admin', 'chair'].includes(session.role)) {
-    return res.status(401).json({ error: 'Judge authentication required' });
-  }
-  req.session = session;
-  next();
-}
-
-/**
- * Middleware: require chair or admin role.
- * Admin can do everything a chair can do.
- */
-function requireChair(req, res, next) {
-  const session = getSession(req);
-  if (!session || !['admin', 'chair'].includes(session.role)) {
-    return res.status(401).json({ error: 'Chair authentication required' });
-  }
-  req.session = session;
-  next();
-}
-
-/**
- * Middleware: require any authenticated role (admin, judge, or chair).
+ * Middleware: require any authenticated user.
  */
 function requireAuth(req, res, next) {
   const session = getSession(req);
@@ -100,4 +64,58 @@ function requireAuth(req, res, next) {
   next();
 }
 
-module.exports = { login, getSession, requireAuth, requireAdmin, requireJudge, requireChair, sessions };
+/**
+ * Middleware: require super_admin role.
+ */
+function requireSuperAdmin(req, res, next) {
+  const session = getSession(req);
+  if (!session || session.role !== 'super_admin') {
+    return res.status(401).json({ error: 'Super Admin authentication required' });
+  }
+  req.session = session;
+  next();
+}
+
+/**
+ * Middleware: require super_admin OR race_admin assigned to this race.
+ * Extracts raceId from req.params (raceId or id depending on route).
+ */
+function requireRaceAccess(req, res, next) {
+  const session = getSession(req);
+  if (!session) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  req.session = session;
+
+  // Super admin has access to everything
+  if (session.role === 'super_admin') return next();
+
+  // Race admin — check assignment (async)
+  const raceId = req.params.raceId || req.params.id;
+  if (!raceId) return next(); // no race context, allow (other middleware may restrict)
+
+  db.query(
+    'SELECT id FROM race_admin_assignments WHERE admin_user_id = $1 AND race_id = $2',
+    [session.user_id, parseInt(raceId)]
+  ).then(({ rows }) => {
+    if (rows.length === 0) {
+      return res.status(403).json({ error: 'You do not have access to this race' });
+    }
+    next();
+  }).catch(() => {
+    res.status(500).json({ error: 'Internal server error' });
+  });
+}
+
+/**
+ * Verify a PIN for the current user (used for destructive actions).
+ */
+async function verifyPin(userId, pin) {
+  const { rows: [user] } = await db.query(
+    'SELECT pin_hash FROM admin_users WHERE id = $1', [userId]
+  );
+  if (!user) return false;
+  return user.pin_hash === hashPin(pin);
+}
+
+module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireRaceAccess, sessions };

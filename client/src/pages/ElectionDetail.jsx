@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
+import { formatDate, toInputDate } from '../utils/dateFormat';
 
 const NAV_ITEMS = [
   { key: 'races', label: 'Races' },
@@ -20,14 +22,15 @@ export default function ElectionDetail() {
   const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '' });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
-  const [activeSection, setActiveSection] = useState('races');
   const [raceRounds, setRaceRounds] = useState({});
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const activeSection = searchParams.get('section') || 'races';
 
   const fetchElection = async () => {
     const { data } = await api.get(`/admin/elections/${id}`);
     setElection(data);
-    setForm({ name: data.name, date: data.date?.split('T')[0], description: data.description || '' });
+    setForm({ name: data.name, date: toInputDate(data.date), description: data.description || '' });
 
     // Fetch rounds for each race
     if (data.races?.length) {
@@ -91,9 +94,10 @@ export default function ElectionDetail() {
   const roundStatusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
 
   return (
-    <div style={styles.container}>
-      <Link to="/admin" style={styles.backLink}>&larr; All Election Events</Link>
-
+    <ElectionLayout breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: election.name },
+    ]}>
       {/* Election Info — always visible */}
       {editing ? (
         <form onSubmit={handleUpdate} style={styles.form}>
@@ -107,43 +111,13 @@ export default function ElectionDetail() {
         <div style={styles.header}>
           <div>
             <h1>{election.name}</h1>
-            <p style={styles.muted}>{new Date(election.date).toLocaleDateString()}</p>
+            <p style={styles.muted}>{formatDate(election.date)}</p>
             {election.description && <p>{election.description}</p>}
           </div>
           <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
         </div>
       )}
 
-      {/* Sidebar + Content Layout */}
-      <div style={styles.layout} data-layout>
-        {/* Sidebar — desktop */}
-        <nav style={styles.sidebar} data-sidebar>
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.key}
-              style={activeSection === item.key ? styles.navItemActive : styles.navItem}
-              onClick={() => setActiveSection(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Mobile tab bar */}
-        <nav style={styles.mobileNav} data-mobilenav>
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.key}
-              style={activeSection === item.key ? styles.mobileTabActive : styles.mobileTab}
-              onClick={() => setActiveSection(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Content area */}
-        <div style={styles.content}>
           {activeSection === 'races' && (
             <div>
               <div style={styles.sectionHeader}>
@@ -219,9 +193,7 @@ export default function ElectionDetail() {
           {activeSection === 'export' && <ExportSection electionId={id} />}
 
           {activeSection === 'dashboards' && <DashboardsSection electionId={id} />}
-        </div>
-      </div>
-    </div>
+    </ElectionLayout>
   );
 }
 
@@ -555,6 +527,10 @@ function ExportSection({ electionId }) {
             {fullStatus === 'processing' ? 'Exporting...' : 'Export Full Election Event Data'}
           </button>
         )}
+
+        <a href={`/api/admin/elections/${electionId}/export-json`} style={styles.btnDownload} download>
+          Export as JSON (reimportable)
+        </a>
       </div>
       {(imageStatus === 'error' || fullStatus === 'error') && (
         <p style={{ color: '#dc2626', marginTop: '0.5rem' }}>Export failed. Please try again.</p>

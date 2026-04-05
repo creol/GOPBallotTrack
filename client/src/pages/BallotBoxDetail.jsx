@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
 
 export default function BallotBoxDetail() {
   const { roundId } = useParams();
@@ -31,10 +32,12 @@ export default function BallotBoxDetail() {
   const passes = data.passes || [];
 
   return (
-    <div style={s.container}>
-      <Link to={`/admin/elections/${round.race?.election_id}/races/${round.race_id}/rounds/${roundId}`} style={s.backLink}>
-        &larr; Back to Round
-      </Link>
+    <ElectionLayout electionId={round.race?.election_id} breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: round.race?.name || 'Race', to: `/admin/elections/${round.race?.election_id}/races/${round.race_id}` },
+      { label: `Round ${round.round_number}`, to: `/admin/elections/${round.race?.election_id}/races/${round.race_id}/rounds/${roundId}` },
+      { label: 'Ballot Box Breakdown' },
+    ]}>
 
       <h1>Ballot Box Breakdown</h1>
       <p style={s.muted}>{round.race?.name} — Round {round.round_number} — {round.status}</p>
@@ -115,7 +118,7 @@ export default function BallotBoxDetail() {
           </div>
         );
       })}
-    </div>
+    </ElectionLayout>
   );
 }
 

@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import api from './api/client';
 import Login from './pages/Login';
-import JudgeLanding from './pages/JudgeLanding';
 import AdminDashboard from './pages/AdminDashboard';
 import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
@@ -16,85 +15,79 @@ import ChairDecision from './pages/ChairDecision';
 import PublicDashboard from './pages/PublicDashboard';
 import PublicRoundDetail from './pages/PublicRoundDetail';
 import PublicBallotViewer from './pages/PublicBallotViewer';
+import UserManagement from './pages/UserManagement';
+import ControlCenter from './pages/ControlCenter';
 
 function ProtectedRoute({ children, auth, requiredRoles }) {
-  if (!auth.checked) return null; // still loading
+  if (!auth.checked) return null;
   if (!auth.role) return <Navigate to="/login" replace />;
   if (requiredRoles && !requiredRoles.includes(auth.role)) {
-    return <Navigate to="/judge" replace />;
+    return <Navigate to="/admin" replace />;
   }
   return children;
 }
 
 export default function App() {
-  const [auth, setAuth] = useState({ role: null, token: null, checked: false });
+  const [auth, setAuth] = useState({ role: null, token: null, user_id: null, name: null, checked: false });
 
   useEffect(() => {
-    // Check if already logged in (cookie-based)
     api.get('/auth/me')
       .then(({ data }) => {
         if (data.authenticated) {
-          setAuth({ role: data.role, token: null, checked: true });
+          setAuth({ role: data.role, token: null, user_id: data.user_id, name: data.name, checked: true });
         } else {
-          setAuth({ role: null, token: null, checked: true });
+          setAuth({ role: null, token: null, user_id: null, name: null, checked: true });
         }
       })
-      .catch(() => setAuth({ role: null, token: null, checked: true }));
+      .catch(() => setAuth({ role: null, token: null, user_id: null, name: null, checked: true }));
   }, []);
 
-  const handleLogin = (role, token) => {
+  const handleLogin = (role, token, user_id, name) => {
     if (token) {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     }
-    setAuth({ role, token, checked: true });
+    setAuth({ role, token, user_id, name, checked: true });
   };
 
   const handleLogout = async () => {
     try { await api.post('/auth/logout'); } catch {}
     delete api.defaults.headers.common['Authorization'];
-    setAuth({ role: null, token: null, checked: true });
+    setAuth({ role: null, token: null, user_id: null, name: null, checked: true });
   };
 
   const loginRedirect = auth.role
-    ? (auth.role === 'judge' ? <Navigate to="/judge" replace /> : <Navigate to="/admin" replace />)
+    ? <Navigate to="/admin" replace />
     : <Login onLogin={handleLogin} />;
 
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={
-          auth.role === 'judge' ? <Navigate to="/judge" replace /> : <Navigate to="/admin" replace />
-        } />
+        <Route path="/" element={<Navigate to="/admin" replace />} />
         <Route path="/login" element={loginRedirect} />
 
-        {/* Judge landing — authenticated judges only */}
-        <Route path="/judge" element={
-          <ProtectedRoute auth={auth}><JudgeLanding onLogout={handleLogout} /></ProtectedRoute>
-        } />
-
-        {/* Admin routes — admin and chair only */}
+        {/* Admin routes — any authenticated user */}
         <Route path="/admin" element={
-          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}>
+          <ProtectedRoute auth={auth}>
             <AdminDashboard onLogout={handleLogout} auth={auth} />
           </ProtectedRoute>
         } />
         <Route path="/admin/elections/:id" element={
-          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><ElectionDetail /></ProtectedRoute>
+          <ProtectedRoute auth={auth}><ElectionDetail /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId" element={
-          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><RaceDetail /></ProtectedRoute>
+          <ProtectedRoute auth={auth}><RaceDetail /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/ballot-design" element={
-          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><BallotDesigner /></ProtectedRoute>
+          <ProtectedRoute auth={auth}><BallotDesigner /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId" element={
-          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><RoundDetail /></ProtectedRoute>
+          <ProtectedRoute auth={auth}><RoundDetail /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/confirm" element={
           <ProtectedRoute auth={auth}><Confirmation /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/chair" element={
-          <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><ChairDecision /></ProtectedRoute>
+          <ProtectedRoute auth={auth}><ChairDecision /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/review" element={
           <ProtectedRoute auth={auth}><BallotReviewQueue /></ProtectedRoute>
@@ -103,7 +96,21 @@ export default function App() {
           <ProtectedRoute auth={auth}><BallotBoxDetail /></ProtectedRoute>
         } />
 
-        {/* Scanner routes — no auth (tally operators) */}
+        {/* User management — super_admin only */}
+        <Route path="/admin/users" element={
+          <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
+            <UserManagement />
+          </ProtectedRoute>
+        } />
+
+        {/* Control Center — super_admin only */}
+        <Route path="/admin/control-center" element={
+          <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
+            <ControlCenter />
+          </ProtectedRoute>
+        } />
+
+        {/* Scanner routes — no auth */}
         <Route path="/scan/:roundId" element={<Scanner />} />
 
         {/* Public routes — no auth */}

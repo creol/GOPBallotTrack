@@ -1,19 +1,35 @@
 const { Router } = require('express');
-const { login, getSession, sessions } = require('../middleware/auth');
+const db = require('../db');
+const { login, getSession, hashPin, sessions } = require('../middleware/auth');
 
 const router = Router();
 
-// POST /api/auth/login — Login with role + PIN
-router.post('/login', (req, res) => {
-  const { role, pin } = req.body;
-  if (!role || !pin) {
-    return res.status(400).json({ error: 'role and pin are required' });
+// POST /api/auth/login — Login with name + PIN
+router.post('/login', async (req, res) => {
+  const { name, pin, role } = req.body;
+
+  // Support legacy role+pin login for backward compatibility (e.g., PIN verification dialogs)
+  if (role && pin && !name) {
+    // Legacy: verify admin PIN — look up any super_admin
+    const { rows } = await db.query(
+      "SELECT * FROM admin_users WHERE role = 'super_admin' LIMIT 1"
+    );
+    if (rows.length > 0 && rows[0].pin_hash === hashPin(pin)) {
+      return res.json({ role: rows[0].role, token: null, verified: true });
+    }
+    return res.status(401).json({ error: 'Invalid PIN' });
   }
 
-  const token = login(role, pin);
-  if (!token) {
-    return res.status(401).json({ error: 'Invalid role or PIN' });
+  if (!name || !pin) {
+    return res.status(400).json({ error: 'name and pin are required' });
   }
+
+  const result = await login(name, pin);
+  if (!result) {
+    return res.status(401).json({ error: 'Invalid name or PIN' });
+  }
+
+  const { token, user } = result;
 
   // Set cookie (httpOnly, 24h expiry)
   res.cookie('bt_token', token, {
@@ -22,7 +38,46 @@ router.post('/login', (req, res) => {
     sameSite: 'lax',
   });
 
-  res.json({ token, role });
+  res.json({
+    token,
+    role: user.role,
+    user_id: user.id,
+    name: user.name,
+    must_change_pin: user.must_change_pin,
+  });
+});
+
+// POST /api/auth/change-pin — Change own PIN
+router.post('/change-pin', async (req, res) => {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+
+  const { current_pin, new_pin } = req.body;
+  if (!new_pin || new_pin.length < 4) {
+    return res.status(400).json({ error: 'New PIN must be at least 4 characters' });
+  }
+
+  const { rows: [user] } = await db.query(
+    'SELECT * FROM admin_users WHERE id = $1', [session.user_id]
+  );
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  // If must_change_pin, don't require current PIN
+  if (!user.must_change_pin) {
+    if (!current_pin || user.pin_hash !== hashPin(current_pin)) {
+      return res.status(401).json({ error: 'Current PIN is incorrect' });
+    }
+  }
+
+  await db.query(
+    'UPDATE admin_users SET pin_hash = $1, must_change_pin = false WHERE id = $2',
+    [hashPin(new_pin), session.user_id]
+  );
+
+  // Update session
+  session.must_change_pin = false;
+
+  res.json({ message: 'PIN changed successfully' });
 });
 
 // POST /api/auth/logout
@@ -31,11 +86,8 @@ router.post('/logout', (req, res) => {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     sessions.delete(authHeader.slice(7));
   }
-  const cookies = req.headers.cookie;
-  if (cookies) {
-    const match = cookies.split(';').map(c => c.trim()).find(c => c.startsWith('bt_token='));
-    if (match) sessions.delete(match.split('=')[1]);
-  }
+  const cookieToken = req.cookies?.bt_token;
+  if (cookieToken) sessions.delete(cookieToken);
   res.clearCookie('bt_token');
   res.json({ message: 'Logged out' });
 });
@@ -44,7 +96,13 @@ router.post('/logout', (req, res) => {
 router.get('/me', (req, res) => {
   const session = getSession(req);
   if (!session) return res.json({ authenticated: false });
-  res.json({ authenticated: true, role: session.role });
+  res.json({
+    authenticated: true,
+    role: session.role,
+    user_id: session.user_id,
+    name: session.name,
+    must_change_pin: session.must_change_pin,
+  });
 });
 
 module.exports = router;

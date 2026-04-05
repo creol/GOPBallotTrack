@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import ElectionLayout from '../components/ElectionLayout';
 
 const CANDIDATE_OUTCOMES = [
   { value: '', label: '— No decision —' },
@@ -139,10 +140,13 @@ export default function ChairDecision() {
   const hasDecisions = Object.keys(decisions).length > 0;
 
   return (
-    <div style={styles.container}>
-      <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}`} style={styles.backLink}>
-        &larr; Back to Round
-      </Link>
+    <ElectionLayout breadcrumbs={[
+      { label: 'Election Events', to: '/admin' },
+      { label: data.election?.name || 'Election', to: `/admin/elections/${electionId}` },
+      { label: data.race?.name || 'Race', to: `/admin/elections/${electionId}/races/${raceId}` },
+      { label: `Round ${data.round?.round_number}`, to: `/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}` },
+      { label: 'Results' },
+    ]}>
 
       <h1>Results — Round {data.round.round_number}</h1>
       <p style={styles.muted}>{data.race.name} — {data.election.name}</p>
@@ -340,7 +344,7 @@ export default function ChairDecision() {
       </div>
 
       {error && <p style={styles.errorMsg}>{error}</p>}
-    </div>
+    </ElectionLayout>
   );
 }
 

@@ -7,7 +7,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const { runMigrations } = require('./migrate');
 const { seed } = require('./seed');
-const { requireAuth, requireAdmin, requireJudge, requireChair } = require('./middleware/auth');
+const { requireAuth, requireSuperAdmin, requireRaceAccess } = require('./middleware/auth');
 const authRouter = require('./routes/auth');
 const electionsRouter = require('./routes/elections');
 const racesRouter = require('./routes/races');
@@ -21,6 +21,9 @@ const publicRouter = require('./routes/public');
 const exportsRouter = require('./routes/exports');
 const ballotDesignRouter = require('./routes/ballotDesign');
 const scannersRouter = require('./routes/scanners');
+const adminUsersRouter = require('./routes/adminUsers');
+const controlCenterRouter = require('./routes/controlCenter');
+const testToolsRouter = require('./routes/testTools');
 const reviewedBallotsRouter = require('./routes/reviewedBallots');
 const { startWatchers } = require('./middleware/scanWatcher');
 
@@ -47,15 +50,24 @@ app.set('io', io);
 // Auth routes (no middleware)
 app.use('/api/auth', authRouter);
 
-// Admin API routes (requireAdmin — admin or chair only)
-app.use('/api/admin/elections', requireAdmin, electionsRouter);
-app.use('/api/admin', requireAdmin, racesRouter);
-app.use('/api/admin', requireAdmin, roundsRouter);
-app.use('/api/admin', requireAdmin, ballotBoxesRouter);
-app.use('/api/admin', requireAdmin, ballotsRouter);
-app.use('/api/admin', requireAdmin, exportsRouter);
-app.use('/api/admin', requireAdmin, ballotDesignRouter);
-app.use('/api/admin', requireAdmin, scannersRouter);
+// Admin API routes (requireAuth — any authenticated admin user)
+app.use('/api/admin/elections', requireAuth, electionsRouter);
+app.use('/api/admin', requireAuth, racesRouter);
+app.use('/api/admin', requireAuth, roundsRouter);
+app.use('/api/admin', requireAuth, ballotBoxesRouter);
+app.use('/api/admin', requireAuth, ballotsRouter);
+app.use('/api/admin', requireAuth, exportsRouter);
+app.use('/api/admin', requireAuth, ballotDesignRouter);
+app.use('/api/admin', requireAuth, scannersRouter);
+
+// User management (super_admin only)
+app.use('/api/admin', requireSuperAdmin, adminUsersRouter);
+
+// Control Center (super_admin only)
+app.use('/api/admin/control-center', requireSuperAdmin, controlCenterRouter);
+
+// Test tools and import/export (any authenticated user)
+app.use('/api/admin', requireAuth, testToolsRouter);
 
 // Scanning & pass routes (no PIN — tally operators access directly)
 app.use('/api', passesRouter);
@@ -64,8 +76,8 @@ app.use('/api', scansRouter);
 // Reviewed ballots — admin routes + public mobile photo upload (token-gated)
 app.use('/api', reviewedBallotsRouter);
 
-// Confirmation routes (requireJudge for confirm, requireChair for release)
-app.use('/api', confirmationRouter);
+// Confirmation routes (any authenticated user)
+app.use('/api', requireAuth, confirmationRouter);
 
 // Public API routes (no auth)
 app.use('/api/public', publicRouter);
