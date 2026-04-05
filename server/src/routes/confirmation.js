@@ -7,7 +7,31 @@ const {
   getChairDecision,
 } = require('../services/confirmationService');
 
+const db = require('../db');
+
 const router = Router();
+
+// GET /api/passes/:id/ballots — List all scanned ballots in a pass with details
+router.get('/passes/:id/ballots', async (req, res) => {
+  try {
+    const passId = parseInt(req.params.id);
+    const { rows } = await db.query(
+      `SELECT s.id as scan_id, s.ballot_serial_id, s.candidate_id, s.image_path,
+              s.omr_confidence, s.omr_method, s.scanned_at,
+              bs.serial_number, c.name as candidate_name
+       FROM scans s
+       JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
+       JOIN candidates c ON c.id = s.candidate_id
+       WHERE s.pass_id = $1
+       ORDER BY s.scanned_at`,
+      [passId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('List pass ballots error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // GET /api/rounds/:id/comparison — Compare all passes side-by-side
 router.get('/rounds/:id/comparison', async (req, res) => {

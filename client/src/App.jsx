@@ -17,6 +17,7 @@ import PublicRoundDetail from './pages/PublicRoundDetail';
 import PublicBallotViewer from './pages/PublicBallotViewer';
 import UserManagement from './pages/UserManagement';
 import ControlCenter from './pages/ControlCenter';
+import StationSetup from './pages/StationSetup';
 
 function ProtectedRoute({ children, auth, requiredRoles }) {
   if (!auth.checked) return null;
@@ -55,14 +56,15 @@ export default function App() {
     setAuth({ role: null, token: null, user_id: null, name: null, checked: true });
   };
 
+  const scannerUser = auth.name && auth.name.match(/^scan\d/i);
   const loginRedirect = auth.role
-    ? <Navigate to="/admin" replace />
+    ? <Navigate to={scannerUser ? '/station-setup' : '/admin'} replace />
     : <Login onLogin={handleLogin} />;
 
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/admin" replace />} />
+        <Route path="/" element={<Navigate to={scannerUser ? '/station-setup' : '/admin'} replace />} />
         <Route path="/login" element={loginRedirect} />
 
         {/* Admin routes — any authenticated user */}
@@ -110,7 +112,8 @@ export default function App() {
           </ProtectedRoute>
         } />
 
-        {/* Scanner routes — no auth */}
+        {/* Station setup + Scanner routes — no auth */}
+        <Route path="/station-setup" element={<StationSetup />} />
         <Route path="/scan/:roundId" element={<Scanner />} />
 
         {/* Public routes — no auth */}

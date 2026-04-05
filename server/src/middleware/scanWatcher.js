@@ -1,9 +1,7 @@
 const chokidar = require('chokidar');
 const path = require('path');
 const fs = require('fs');
-const sharp = require('sharp');
 const db = require('../db');
-const { findQRInImage, processScannedBallot } = require('../services/omrService');
 
 // Fixed container paths — mapped via docker volume mount ./data/scans:/app/data/scans
 const SCAN_BASE = '/app/data/scans';
@@ -49,208 +47,45 @@ function moveFile(srcPath, destDir, newName) {
 }
 
 /**
- * Load the ballot-spec.json for a given round.
- */
-function loadBallotSpec(electionId, roundId) {
-  const specPath = path.join(UPLOADS_BASE, 'elections', String(electionId), 'rounds', String(roundId), 'ballot-spec.json');
-  console.log(`[ScanWatcher] Loading ballot spec: ${specPath}`);
-  if (!fs.existsSync(specPath)) {
-    console.log(`[ScanWatcher] ballot-spec.json NOT FOUND at ${specPath}`);
-    return null;
-  }
-  const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-  console.log(`[ScanWatcher] Loaded ballot spec: ${spec.candidates.length} candidates, size: ${spec.ballot_size}`);
-  return spec;
-}
-
-/**
- * Find the active pass for a round, or create one.
- */
-async function getOrCreateActivePass(roundId) {
-  const { rows: [existing] } = await db.query(
-    "SELECT * FROM passes WHERE round_id = $1 AND status = 'active' ORDER BY pass_number DESC LIMIT 1",
-    [roundId]
-  );
-  if (existing) {
-    console.log(`[ScanWatcher] Using existing pass ${existing.pass_number} for round ${roundId}`);
-    return existing;
-  }
-
-  // Auto-create a pass
-  const { rows: [{ max }] } = await db.query(
-    "SELECT COALESCE(MAX(pass_number), 0) as max FROM passes WHERE round_id = $1 AND status != 'deleted'",
-    [roundId]
-  );
-
-  await db.query("UPDATE rounds SET status = 'tallying' WHERE id = $1 AND status IN ('pending_needs_action', 'ready')", [roundId]);
-
-  const { rows: [pass] } = await db.query(
-    'INSERT INTO passes (round_id, pass_number) VALUES ($1, $2) RETURNING *',
-    [roundId, max + 1]
-  );
-  console.log(`[ScanWatcher] Auto-created pass ${pass.pass_number} for round ${roundId}`);
-  return pass;
-}
-
-/**
  * Process a single scanned ballot image.
- * Tries to decode QR, run OMR, and record result.
+ * Delegates to scanProcessingService for QR decode, OMR, and DB writes.
  */
 async function processSingleBallot(filePath, scannerId, io) {
   console.log(`[ScanWatcher] Processing ballot: ${path.basename(filePath)}`);
 
-  const scanner = await db.query('SELECT * FROM scanners WHERE id = $1', [scannerId]);
-  if (!scanner.rows[0]) {
-    console.log(`[ScanWatcher] Scanner ${scannerId} not found in database, skipping`);
-    return;
-  }
-  const scannerRow = scanner.rows[0];
+  const { processBallot } = require('../services/scanProcessingService');
 
-  // Read image and try QR decode
-  let frontBuffer;
+  let imageBuffer;
   try {
-    frontBuffer = fs.readFileSync(filePath);
+    imageBuffer = fs.readFileSync(filePath);
   } catch (err) {
     console.error(`[ScanWatcher] Error reading file ${filePath}:`, err.message);
     return;
   }
 
-  console.log(`[ScanWatcher] Checking for QR in: ${path.basename(filePath)}`);
-  const qrResult = await findQRInImage(frontBuffer);
-  console.log(`[ScanWatcher] QR decode result for ${path.basename(filePath)}: ${qrResult ? JSON.stringify(qrResult.qrData) : 'NOT FOUND'}`);
+  const result = await processBallot({
+    imageBuffer,
+    filePath,
+    stationId: `scanner-${scannerId}`,
+    scannerId,
+    io,
+  });
 
-  if (!qrResult || !qrResult.qrData) {
-    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — No QR found in ${path.basename(filePath)}\x1b[0m`);
-    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `noqr-${Date.now()}-${path.basename(filePath)}`);
-    if (io) io.emit('scan:error', { reason: 'qr_not_found', scanner_id: scannerId, scanner_name: scannerRow.name });
-    return;
-  }
-
-  // QR encodes only the serial number as a plain string
-  const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData.trim() : null;
-  if (!serialNumber || serialNumber.length < 8) {
-    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — ${path.basename(filePath)}: QR data invalid "${qrResult.qrData}"\x1b[0m`);
-    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `badqr-${Date.now()}-${path.basename(filePath)}`);
-    if (io) io.emit('scan:error', { reason: 'invalid_qr', scanner_id: scannerId });
-    return;
-  }
-
-  console.log(`[ScanWatcher] QR decoded — SN: ${serialNumber}`);
-
-  // Look up round and race from the database by serial number
-  const { rows: [ballotInfo] } = await db.query(
-    `SELECT bs.*, r.race_id, r.id as round_id, rc.election_id
-     FROM ballot_serials bs
-     JOIN rounds r ON bs.round_id = r.id
-     JOIN races rc ON r.race_id = rc.id
-     WHERE bs.serial_number = $1`,
-    [serialNumber]
-  );
-
-  if (!ballotInfo) {
-    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — ${serialNumber}: SN not found in database\x1b[0m`);
-    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `invalid-${serialNumber}-${path.basename(filePath)}`);
-    if (io) io.emit('scan:error', { reason: 'invalid_sn', serial_number: serialNumber, scanner_id: scannerId });
-    return;
-  }
-
-  const roundId = ballotInfo.round_id;
-  const raceId = ballotInfo.race_id;
-  const electionId = ballotInfo.election_id;
-  console.log(`[ScanWatcher] DB lookup — SN: ${serialNumber}, round: ${roundId}, race: ${raceId}, election: ${electionId}`);
-
-  // Check for duplicate
-  const pass = await getOrCreateActivePass(roundId);
-  const { rows: [existingScan] } = await db.query(
-    'SELECT id FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2',
-    [pass.id, ballotInfo.id]
-  );
-
-  if (existingScan) {
-    console.log(`\x1b[31m[ScanWatcher] ✗ ERROR — ${serialNumber}: Duplicate in pass ${pass.pass_number}\x1b[0m`);
-    moveFile(filePath, path.join(SCAN_BASE, 'errors'), `dup-${serialNumber}-${path.basename(filePath)}`);
-    if (io) io.emit('scan:duplicate', { serial_number: serialNumber, scanner_id: scannerId });
-    return;
-  }
-
-  // Load ballot spec for OMR
-  const ballotSpec = loadBallotSpec(electionId, roundId);
-
-  if (!ballotSpec) {
-    console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${serialNumber}: No ballot-spec.json for round ${roundId}\x1b[0m`);
-    await db.query(
-      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path)
-       VALUES ($1, $2, $3, $4, 'uncertain', $5)`,
-      [roundId, pass.id, ballotInfo.id, scannerId, filePath]
-    );
-    if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'no_spec', scanner_id: scannerId });
-    return;
-  }
-
-  // Run OMR
-  console.log(`[ScanWatcher] Running OMR analysis on ${serialNumber}...`);
-  const omrResult = await processScannedBallot(frontBuffer, ballotSpec);
-  console.log(`[ScanWatcher] OMR result: vote=${omrResult.detected_vote}, confidence=${omrResult.confidence}, flag=${omrResult.flag_reason || 'none'}`);
-  console.log(`[ScanWatcher] OMR candidate scores: ${JSON.stringify(omrResult.candidates.map(c => ({ name: c.name, fill: c.fill_ratio, marked: c.is_marked })))}`);
-
-  // Determine destination folder
-  const { rows: [roundRow] } = await db.query('SELECT round_number FROM rounds WHERE id = $1', [roundId]);
-  const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [raceId]);
-  const destBase = path.join(SCAN_BASE, 'processed',
-    String(electionId), race.name.toLowerCase().replace(/\s+/g, '-'),
-    `round-${roundRow.round_number}`
-  );
-
-  if (omrResult.flag_reason) {
-    // Flagged ballot — needs manual review
-    const flaggedPath = moveFile(filePath, path.join(SCAN_BASE, 'flagged'),
-      `${serialNumber}-${omrResult.flag_reason}-${Date.now()}.jpg`);
-
-    await db.query(
-      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, omr_scores)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [roundId, pass.id, ballotInfo.id, scannerId, omrResult.flag_reason, flaggedPath,
-       JSON.stringify(omrResult.candidates)]
-    );
-
-    console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${serialNumber} (${omrResult.flag_reason})\x1b[0m`);
-    if (io) io.emit('scan:review_needed', {
-      serial_number: serialNumber,
-      reason: omrResult.flag_reason,
-      scanner_id: scannerId,
-      scanner_name: scannerRow.name,
-      candidates: omrResult.candidates,
-    });
+  if (result.success) {
+    if (result.flagged) {
+      console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${result.serial_number} (${result.flag_reason})\x1b[0m`);
+    } else {
+      console.log(`\x1b[32m[ScanWatcher] ✓ RECORDED — ${result.serial_number} → ${result.candidate} (${(result.confidence * 100).toFixed(1)}%, count: ${result.count})\x1b[0m`);
+    }
+    // Move file to processed
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
   } else {
-    // Clear vote — record it
-    const processedPath = moveFile(filePath, destBase, `${serialNumber}.jpg`);
-
-    await db.query(
-      `INSERT INTO scans (pass_id, ballot_serial_id, candidate_id, ballot_box_id, scanner_id, scanned_by, image_path, omr_confidence, omr_method)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto')`,
-      [pass.id, ballotInfo.id, omrResult.detected_vote, scannerRow.current_box_id || null,
-       scannerId, `ADF:${scannerRow.name}`, processedPath, omrResult.confidence]
-    );
-
-    await db.query("UPDATE ballot_serials SET status = 'counted' WHERE id = $1", [ballotInfo.id]);
-
-    const { rows: [{ count }] } = await db.query(
-      'SELECT COUNT(*) as count FROM scans WHERE pass_id = $1', [pass.id]
-    );
-
-    const candidateName = omrResult.candidates.find(c => c.candidate_id === omrResult.detected_vote)?.name || `ID:${omrResult.detected_vote}`;
-    console.log(`\x1b[32m[ScanWatcher] ✓ RECORDED — ${serialNumber} → ${candidateName} (confidence: ${(omrResult.confidence * 100).toFixed(1)}%, count: ${count})\x1b[0m`);
-    if (io) io.emit('scan:recorded', {
-      serial_number: serialNumber,
-      candidate_id: omrResult.detected_vote,
-      scanner_id: scannerId,
-      scanner_name: scannerRow.name,
-      pass_id: pass.id,
-      count: parseInt(count),
-      confidence: omrResult.confidence,
-      method: 'auto',
-    });
+    console.log(`\x1b[31m[ScanWatcher] ✗ ${result.error || 'Processing failed'}\x1b[0m`);
+    const errDir = path.join(SCAN_BASE, 'errors');
+    fs.mkdirSync(errDir, { recursive: true });
+    try { moveFile(filePath, errDir, `err-${Date.now()}-${path.basename(filePath)}`); } catch {}
   }
+  return;
 }
 
 // Track files that existed before watcher started (skip them)
@@ -274,24 +109,23 @@ function onNewFile(filePath, scannerId, io) {
     return;
   }
 
-  console.log(`[ScanWatcher] File detected: ${filePath}`);
+  console.log(`[ScanWatcher] File detected: ${path.basename(filePath)} (active=${activeCount}, pending=${pendingQueue.length})`);
 
-  // Process each file individually — no duplex pairing
+  // Process each file individually
   enqueueProcessing(filePath, scannerId, io);
 }
 
 // Sequential processing queue per scanner (prevents concurrent DB writes)
 const processingQueues = new Map();
 
-/**
- * Enqueue a single file for sequential processing.
- */
-function enqueueProcessing(filePath, scannerId, io) {
-  if (!processingQueues.has(scannerId)) {
-    processingQueues.set(scannerId, Promise.resolve());
-  }
+// Concurrency limiter — process up to N ballots in parallel
+const MAX_CONCURRENT = 4;
+let activeCount = 0;
+const pendingQueue = [];
 
-  processingQueues.set(scannerId, processingQueues.get(scannerId).then(async () => {
+function enqueueProcessing(filePath, scannerId, io) {
+  const task = async () => {
+    activeCount++;
     try {
       await processSingleBallot(filePath, scannerId, io);
     } catch (err) {
@@ -299,8 +133,20 @@ function enqueueProcessing(filePath, scannerId, io) {
       try {
         moveFile(filePath, path.join(SCAN_BASE, 'errors'), `err-${Date.now()}-${path.basename(filePath)}`);
       } catch {}
+    } finally {
+      activeCount--;
+      if (pendingQueue.length > 0) {
+        const next = pendingQueue.shift();
+        next();
+      }
     }
-  }));
+  };
+
+  if (activeCount < MAX_CONCURRENT) {
+    task();
+  } else {
+    pendingQueue.push(task);
+  }
 }
 
 /**

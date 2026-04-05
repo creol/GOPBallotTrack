@@ -23,6 +23,17 @@ async function seed() {
       [hashPin('1234')]
     );
     console.log('Created default super_admin user: Admin (PIN: 1234, must change on first login)');
+
+    // Create default scanner operator accounts
+    for (let i = 1; i <= 4; i++) {
+      const pin = String(i).padStart(4, '0');
+      await db.query(
+        `INSERT INTO admin_users (name, role, pin_hash, must_change_pin)
+         VALUES ($1, 'race_admin', $2, false)`,
+        [`scan${i}`, hashPin(pin)]
+      );
+    }
+    console.log('Created scanner accounts: scan1 (0001), scan2 (0002), scan3 (0003), scan4 (0004)');
   }
 
   // Seed 10 global scanners if none exist

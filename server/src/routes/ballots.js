@@ -282,7 +282,8 @@ async function getOutputDir(roundId) {
 // GET /api/admin/rounds/:id/ballot-pdf — Download the printable PDF
 router.get('/rounds/:id/ballot-pdf', async (req, res) => {
   try {
-    const outDir = await getOutputDir(parseInt(req.params.id));
+    const roundId = parseInt(req.params.id);
+    const outDir = await getOutputDir(roundId);
     if (!outDir) return res.status(404).json({ error: 'Round not found' });
 
     const pdfPath = path.join(outDir, 'ballots.pdf');
@@ -290,7 +291,11 @@ router.get('/rounds/:id/ballot-pdf', async (req, res) => {
       return res.status(404).json({ error: 'Ballots not yet generated' });
     }
 
-    res.download(pdfPath, `ballots-round-${req.params.id}.pdf`);
+    // Use round number and race name for a friendly filename
+    const { rows: [round] } = await db.query('SELECT round_number, race_id FROM rounds WHERE id = $1', [roundId]);
+    const { rows: [race] } = await db.query('SELECT name FROM races WHERE id = $1', [round.race_id]);
+    const raceName = race.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    res.download(pdfPath, `ballots-${raceName}-round-${round.round_number}.pdf`);
   } catch (err) {
     console.error('Download ballot PDF error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -300,7 +305,8 @@ router.get('/rounds/:id/ballot-pdf', async (req, res) => {
 // GET /api/admin/rounds/:id/ballot-data — Download the ZIP (metadata only)
 router.get('/rounds/:id/ballot-data', async (req, res) => {
   try {
-    const outDir = await getOutputDir(parseInt(req.params.id));
+    const roundId = parseInt(req.params.id);
+    const outDir = await getOutputDir(roundId);
     if (!outDir) return res.status(404).json({ error: 'Round not found' });
 
     const zipPath = path.join(outDir, 'ballot-data.zip');
@@ -308,7 +314,10 @@ router.get('/rounds/:id/ballot-data', async (req, res) => {
       return res.status(404).json({ error: 'Ballot data not yet generated' });
     }
 
-    res.download(zipPath, `ballot-data-round-${req.params.id}.zip`);
+    const { rows: [round] } = await db.query('SELECT round_number, race_id FROM rounds WHERE id = $1', [roundId]);
+    const { rows: [race] } = await db.query('SELECT name FROM races WHERE id = $1', [round.race_id]);
+    const raceName = race.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    res.download(zipPath, `ballot-data-${raceName}-round-${round.round_number}.zip`);
   } catch (err) {
     console.error('Download ballot data error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -378,7 +387,10 @@ router.get('/rounds/:id/results-pdf', async (req, res) => {
   try {
     const { generateResultsPdf } = require('../pdf/resultsPdf');
     const pdfPath = await generateResultsPdf(parseInt(req.params.id));
-    res.download(pdfPath, `results-round-${req.params.id}.pdf`);
+    const { rows: [round] } = await db.query('SELECT round_number, race_id FROM rounds WHERE id = $1', [parseInt(req.params.id)]);
+    const { rows: [race] } = await db.query('SELECT name FROM races WHERE id = $1', [round.race_id]);
+    const raceName = race.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    res.download(pdfPath, `results-${raceName}-round-${round.round_number}.pdf`);
   } catch (err) {
     console.error('Results PDF error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });

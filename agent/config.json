@@ -1,0 +1,6 @@
+{
+  "serverUrl": "http://192.168.1.100:3000",
+  "stationId": "station-1",
+  "watchFolder": "C:/ScanSnap/Output",
+  "retryAttempts": 5
+}

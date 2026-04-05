@@ -16,6 +16,7 @@ RUN cd client && npm install
 # Copy source (volumes override in dev)
 COPY server/ server/
 COPY client/ client/
+COPY agent/ agent/
 
 # Create uploads directory
 RUN mkdir -p uploads

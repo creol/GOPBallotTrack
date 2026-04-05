@@ -162,10 +162,12 @@ export default function Scanner() {
     <div style={styles.container}>
       <div style={styles.topBar}>
         <div>
-          <h2 style={{ margin: 0 }}>{round.race?.name || 'Race'} — Round {round.round_number}</h2>
-          <span style={styles.muted}>Paper: {round.paper_color}</span>
+          <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 6, padding: '0.4rem 0.75rem', marginBottom: '0.35rem', fontSize: '0.82rem', color: '#1e40af', fontWeight: 600 }}>
+            Scanning for: {round.race?.name || 'Race'} — Round {round.round_number} ({round.paper_color})
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <Link to="/station-setup" style={styles.backLink}>Change</Link>
           {round.race?.election_id && (
             <Link to={`/admin/elections/${round.race.election_id}/races/${round.race_id}/rounds/${roundId}`} style={styles.backLink}>
               Back to Round

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
@@ -12,6 +12,12 @@ export default function Confirmation() {
   const [overrideNotes, setOverrideNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [reviewPassId, setReviewPassId] = useState(null);
+  const [reviewBallots, setReviewBallots] = useState([]);
+  const [loadingBallots, setLoadingBallots] = useState(false);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const [showBallotTable, setShowBallotTable] = useState(false);
+  const [allPassBallots, setAllPassBallots] = useState({});
 
   const fetchComparison = async () => {
     try {
@@ -23,6 +29,49 @@ export default function Confirmation() {
   };
 
   useEffect(() => { fetchComparison(); }, [roundId]);
+
+  const handleToggleBallotTable = async () => {
+    if (showBallotTable) { setShowBallotTable(false); return; }
+    // Load ballots from all passes
+    const byPass = {};
+    for (const p of data.passes) {
+      try {
+        const { data: ballots } = await api.get(`/passes/${p.id}/ballots`);
+        byPass[p.pass_number] = ballots;
+      } catch { byPass[p.pass_number] = []; }
+    }
+    setAllPassBallots(byPass);
+    setShowBallotTable(true);
+  };
+
+  const handleReviewPass = async (passId) => {
+    if (reviewPassId === passId) { setReviewPassId(null); return; }
+    setLoadingBallots(true);
+    setReviewIndex(0);
+    try {
+      // Load ballots from the selected pass
+      const { data: ballots } = await api.get(`/passes/${passId}/ballots`);
+      setReviewBallots(ballots);
+      // Also load all other passes for comparison
+      const byPass = {};
+      for (const p of data.passes) {
+        if (p.id === passId) {
+          byPass[p.pass_number] = ballots;
+        } else {
+          try {
+            const { data: pb } = await api.get(`/passes/${p.id}/ballots`);
+            byPass[p.pass_number] = pb;
+          } catch { byPass[p.pass_number] = []; }
+        }
+      }
+      setAllPassBallots(byPass);
+      setReviewPassId(passId);
+    } catch {
+      setReviewBallots([]);
+    } finally {
+      setLoadingBallots(false);
+    }
+  };
 
   const handleConfirm = async () => {
     if (!judgeName.trim()) { setError('Please enter your name'); return; }
@@ -62,7 +111,6 @@ export default function Confirmation() {
 
   if (!data) return <div style={styles.container}><p>{error || 'Loading...'}</p></div>;
 
-  const passNumbers = data.passes.map(p => p.pass_number);
   const notEnoughPasses = data.passes.length < 2;
 
   return (
@@ -92,8 +140,16 @@ export default function Confirmation() {
             <thead>
               <tr>
                 <th style={styles.th}>Candidate</th>
-                {passNumbers.map(n => (
-                  <th key={n} style={styles.th}>Pass {n}</th>
+                {data.passes.map(p => (
+                  <th key={p.pass_number} style={styles.th}>
+                    Pass {p.pass_number}
+                    <button
+                      style={{ ...styles.btnReview, background: reviewPassId === p.id ? '#2563eb' : '#e5e7eb', color: reviewPassId === p.id ? '#fff' : '#374151' }}
+                      onClick={() => handleReviewPass(p.id)}
+                    >
+                      {reviewPassId === p.id ? 'Hide' : 'Review'}
+                    </button>
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -104,9 +160,9 @@ export default function Confirmation() {
                 return (
                   <tr key={row.candidate_id}>
                     <td style={styles.td}>{row.candidate_name}</td>
-                    {passNumbers.map(n => (
+                    {data.passes.map(p => (
                       <td
-                        key={n}
+                        key={p.pass_number}
                         style={{
                           ...styles.td,
                           ...styles.countCell,
@@ -115,7 +171,7 @@ export default function Confirmation() {
                           fontWeight: 700,
                         }}
                       >
-                        {row.counts[n] ?? '-'}
+                        {row.counts[p.pass_number] ?? '-'}
                       </td>
                     ))}
                   </tr>
@@ -125,6 +181,197 @@ export default function Confirmation() {
           </table>
         </div>
       </div>
+
+      {/* Ballot-Level Comparison Table */}
+      {data.passes.length >= 1 && (
+        <div style={styles.section}>
+          <button style={styles.btnPrimary} onClick={handleToggleBallotTable}>
+            {showBallotTable ? 'Hide Ballot Table' : 'Show Ballot-Level Comparison'}
+          </button>
+
+          {showBallotTable && (() => {
+            const snMap = {};
+            for (const [passNum, ballots] of Object.entries(allPassBallots)) {
+              for (const b of ballots) {
+                if (!snMap[b.serial_number]) snMap[b.serial_number] = {};
+                snMap[b.serial_number][passNum] = { candidate: b.candidate_name, confidence: b.omr_confidence };
+              }
+            }
+            const sns = Object.keys(snMap).sort();
+            const passNums = data.passes.map(p => p.pass_number);
+
+            return (
+              <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>#</th>
+                      <th style={styles.th}>Serial Number</th>
+                      {passNums.map(n => (
+                        <React.Fragment key={n}>
+                          <th style={styles.th}>Pass {n} Vote</th>
+                          <th style={styles.th}>Pass {n} Conf.</th>
+                        </React.Fragment>
+                      ))}
+                      <th style={styles.th}>Conf. Diff</th>
+                      <th style={styles.th}>Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sns.map((sn, i) => {
+                      const row = snMap[sn];
+                      const votes = passNums.map(n => row[n]?.candidate).filter(Boolean);
+                      const confs = passNums.map(n => row[n]?.confidence).filter(c => c != null);
+                      const sameResult = new Set(votes).size <= 1;
+                      const confDiff = confs.length >= 2 ? Math.abs(confs[0] - confs[1]) * 100 : 0;
+                      const significantDiff = confDiff > 20;
+
+                      let rowBg = '';
+                      if (!sameResult) rowBg = '#fef2f2';
+                      else if (significantDiff) rowBg = '#fffbeb';
+
+                      return (
+                        <tr key={sn} style={{ background: rowBg }}>
+                          <td style={styles.td}>{i + 1}</td>
+                          <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 600, fontSize: '0.8rem' }}>{sn}</td>
+                          {passNums.map(n => {
+                            const d = row[n];
+                            return (
+                              <React.Fragment key={n}>
+                                <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: !sameResult ? '#dc2626' : '#374151' }}>
+                                  {d?.candidate || '—'}
+                                </td>
+                                <td style={{ ...styles.td, fontSize: '0.8rem', color: d?.confidence > 0.5 ? '#16a34a' : d?.confidence > 0.2 ? '#f59e0b' : '#dc2626' }}>
+                                  {d?.confidence != null ? `${(d.confidence * 100).toFixed(1)}%` : '—'}
+                                </td>
+                              </React.Fragment>
+                            );
+                          })}
+                          <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: significantDiff ? '#f59e0b' : '#6b7280' }}>
+                            {confs.length >= 2 ? `${confDiff.toFixed(1)}%` : '—'}
+                          </td>
+                          <td style={{ ...styles.td, textAlign: 'center' }}>
+                            <span style={{
+                              display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: '0.75rem',
+                              background: sameResult ? '#dcfce7' : '#fee2e2',
+                              color: sameResult ? '#166534' : '#dc2626',
+                            }}>
+                              {sameResult ? 'Yes' : 'No'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Ballot Review Panel */}
+      {reviewPassId && (
+        <div style={styles.section}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ margin: 0 }}>Ballot Review — Pass {data.passes.find(p => p.id === reviewPassId)?.pass_number}</h2>
+            <button style={styles.btnSmall} onClick={() => setReviewPassId(null)}>Close</button>
+          </div>
+
+          {loadingBallots && <p>Loading ballots...</p>}
+
+          {!loadingBallots && reviewBallots.length > 0 && (() => {
+            const b = reviewBallots[reviewIndex];
+            const imgSrc = b.image_path ? `/data/scans/${b.image_path.replace(/^\/app\/data\/scans\//, '')}` : null;
+            const passNums = data.passes.map(p => p.pass_number);
+
+            // Find this SN's data across all passes
+            const passData = {};
+            for (const [pn, ballots] of Object.entries(allPassBallots)) {
+              const match = ballots.find(x => x.serial_number === b.serial_number);
+              if (match) passData[pn] = match;
+            }
+            const votes = Object.values(passData).map(d => d.candidate_name).filter(Boolean);
+            const confs = Object.values(passData).map(d => d.omr_confidence).filter(c => c != null);
+            const sameResult = new Set(votes).size <= 1;
+            const confDiff = confs.length >= 2 ? Math.abs(confs[0] - confs[1]) * 100 : 0;
+            const significantDiff = confDiff > 20;
+
+            // Status bar color: green = match, yellow = significant conf diff, red = different votes
+            let statusColor = '#16a34a'; // green
+            let statusBg = '#dcfce7';
+            let statusText = 'Passes Agree';
+            if (!sameResult) {
+              statusColor = '#dc2626'; statusBg = '#fee2e2'; statusText = 'DIFFERENT RESULTS';
+            } else if (significantDiff) {
+              statusColor = '#f59e0b'; statusBg = '#fef3c7'; statusText = `Conf. Diff: ${confDiff.toFixed(1)}%`;
+            }
+
+            return (
+              <div style={styles.reviewCard}>
+                {/* Navigation */}
+                <div style={styles.reviewNav}>
+                  <button style={styles.btnNav} onClick={() => setReviewIndex(Math.max(0, reviewIndex - 1))} disabled={reviewIndex === 0}>
+                    &larr; Prev
+                  </button>
+                  <span style={{ fontWeight: 600 }}>{reviewIndex + 1} of {reviewBallots.length}</span>
+                  <button style={styles.btnNav} onClick={() => setReviewIndex(Math.min(reviewBallots.length - 1, reviewIndex + 1))} disabled={reviewIndex === reviewBallots.length - 1}>
+                    Next &rarr;
+                  </button>
+                </div>
+
+                {/* Status bar */}
+                <div style={{ background: statusBg, color: statusColor, padding: '0.5rem 1rem', fontWeight: 700, fontSize: '0.9rem', textAlign: 'center' }}>
+                  {statusText}
+                </div>
+
+                {/* SN */}
+                <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #e5e7eb' }}>
+                  <span style={styles.reviewLabel}>Serial Number</span>
+                  <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.2rem', marginLeft: '0.5rem' }}>{b.serial_number}</span>
+                </div>
+
+                {/* Per-pass comparison */}
+                <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
+                  {passNums.map(pn => {
+                    const pd = passData[pn];
+                    const isCurrentPass = data.passes.find(p => p.id === reviewPassId)?.pass_number === parseInt(pn);
+                    return (
+                      <div key={pn} style={{ flex: 1, padding: '0.5rem 1rem', borderRight: '1px solid #e5e7eb', background: isCurrentPass ? '#f9fafb' : '#fff' }}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                          Pass {pn}
+                        </div>
+                        {pd ? (
+                          <>
+                            <div style={{ fontWeight: 700, fontSize: '1rem', color: !sameResult ? '#dc2626' : '#1d4ed8' }}>
+                              {pd.candidate_name}
+                            </div>
+                            <div style={{
+                              fontSize: '0.85rem', fontWeight: 600,
+                              color: pd.omr_confidence > 0.5 ? '#16a34a' : pd.omr_confidence > 0.2 ? '#f59e0b' : '#dc2626',
+                            }}>
+                              {pd.omr_confidence != null ? `${(pd.omr_confidence * 100).toFixed(1)}%` : 'manual'}
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ color: '#9ca3af' }}>Not scanned</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Ballot image */}
+                {imgSrc ? (
+                  <img src={imgSrc} alt={`Ballot ${b.serial_number}`} style={styles.reviewImage} />
+                ) : (
+                  <div style={styles.reviewNoImage}>No image available</div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Mismatch Warning or Match Confirmation */}
       {!notEnoughPasses && (
@@ -224,6 +471,15 @@ const styles = {
   btnConfirm: { padding: '0.6rem 1.2rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '1rem', fontWeight: 600 },
   btnWarning: { padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 },
   btnSmall: { padding: '0.3rem 0.6rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' },
+  btnReview: { marginLeft: '0.5rem', padding: '0.15rem 0.5rem', border: 'none', borderRadius: 3, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600 },
+  reviewCard: { marginTop: '1rem', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' },
+  reviewNav: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' },
+  btnNav: { padding: '0.5rem 1.25rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 },
+  reviewInfo: { display: 'flex', gap: '2rem', padding: '0.75rem 1rem', background: '#f0fdf4', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap' },
+  reviewInfoItem: { display: 'flex', flexDirection: 'column', gap: '0.1rem' },
+  reviewLabel: { fontSize: '0.7rem', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.03em' },
+  reviewImage: { width: '100%', maxHeight: 600, objectFit: 'contain', display: 'block' },
+  reviewNoImage: { padding: '3rem', textAlign: 'center', color: '#9ca3af', fontSize: '1rem' },
   errorMsg: { color: '#dc2626', marginTop: '0.75rem', fontWeight: 600 },
   muted: { color: '#666', fontSize: '0.9rem' },
 };

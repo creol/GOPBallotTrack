@@ -26,7 +26,11 @@ export default function Login({ onLogin }) {
         return;
       }
       onLogin(data.role, data.token, data.user_id, data.name);
-      navigate('/admin');
+      if (data.name && data.name.match(/^scan\d/i)) {
+        navigate('/station-setup');
+      } else {
+        navigate('/admin');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {

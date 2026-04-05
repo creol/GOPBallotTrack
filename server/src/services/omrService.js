@@ -72,37 +72,53 @@ async function tryDecodeWithPreprocess(imageBuffer, metadata, maxDim, preprocess
  */
 async function findQRInImage(imageBuffer) {
   const metadata = await sharp(imageBuffer).metadata();
-  console.log(`[OMR] Image dimensions: ${metadata.width}x${metadata.height}, format: ${metadata.format}`);
 
-  // Try combinations of scale + preprocessing
-  const sizes = [null, 2000, 1500, 1000, 800];
-  const preprocessMethods = ['sharpen', 'binarize', 'highcontrast'];
+  // Try QR decode — fastest methods first
+  // Step 1: Try raw decode at small size (fastest, works for clean scans)
+  try {
+    const smallSize = 600;
+    const scale = smallSize / Math.max(metadata.width, metadata.height);
+    const { data: rgbaBuffer, info } = await sharp(imageBuffer)
+      .resize(Math.round(metadata.width * scale), Math.round(metadata.height * scale))
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const qr = decodeQR(rgbaBuffer, info.width, info.height);
+    if (qr && qr.data && qr.data.length >= 8) {
+      console.log(`[OMR] QR found with raw@600px: ${JSON.stringify(qr.data)}`);
+      return { qrData: qr.data, location: qr.location, rotation: calculateRotation(qr.location), width: metadata.width, height: metadata.height, scale };
+    }
+  } catch {}
 
-  for (const preprocess of preprocessMethods) {
-    for (const maxDim of sizes) {
-      const label = `${preprocess}@${maxDim ? maxDim + 'px' : 'full'}`;
-      try {
-        const result = await tryDecodeWithPreprocess(imageBuffer, metadata, maxDim, preprocess);
-        if (result && result.data) {
-          // Verify we got real data, not empty string
-          // QR encodes plain serial number string — just check it's non-empty
-          const hasData = typeof result.data === 'string' && result.data.length >= 8;
-          if (hasData) {
-            console.log(`[OMR] QR found with ${label}: ${JSON.stringify(result.data)}`);
-            return {
-              qrData: result.data,
-              location: result.location,
-              rotation: calculateRotation(result.location),
-              width: metadata.width,
-              height: metadata.height,
-              scale: result.scale,
-            };
-          }
-          console.log(`[OMR] QR finder patterns detected at ${label} but data empty/invalid`);
+  // Step 2: Try with sharpening at progressively larger sizes
+  const fastAttempts = [
+    { preprocess: 'sharpen', maxDim: 800 },
+    { preprocess: 'sharpen', maxDim: 1000 },
+  ];
+  const slowAttempts = [
+    { preprocess: 'sharpen', maxDim: 1500 },
+    { preprocess: 'binarize', maxDim: 800 },
+    { preprocess: 'highcontrast', maxDim: 800 },
+  ];
+
+  for (const { preprocess, maxDim } of [...fastAttempts, ...slowAttempts]) {
+    const label = `${preprocess}@${maxDim ? maxDim + 'px' : 'full'}`;
+    try {
+      const result = await tryDecodeWithPreprocess(imageBuffer, metadata, maxDim, preprocess);
+      if (result && result.data) {
+        const hasData = typeof result.data === 'string' && result.data.length >= 8;
+        if (hasData) {
+          console.log(`[OMR] QR found with ${label}: ${JSON.stringify(result.data)}`);
+          return {
+            qrData: result.data,
+            location: result.location,
+            rotation: calculateRotation(result.location),
+            width: metadata.width,
+            height: metadata.height,
+            scale: result.scale,
+          };
         }
-      } catch (err) {
-        // Skip errors silently for individual attempts
       }
+    } catch {
+      // Skip errors silently
     }
   }
 
@@ -230,9 +246,9 @@ async function analyzeOvalFill(imageBuffer, cropX, cropY, cropW, cropH, imgWidth
  * relative to QR using x_offset_from_qr / y_offset_from_qr from the spec.
  * This works regardless of whether the scan is a full page or a cut ballot.
  */
-async function processScannedBallot(imageBuffer, ballotSpec) {
-  // 1. Find QR code
-  const qrResult = await findQRInImage(imageBuffer);
+async function processScannedBallot(imageBuffer, ballotSpec, preDecodedQR) {
+  // 1. Use pre-decoded QR if available, otherwise find it
+  const qrResult = preDecodedQR || await findQRInImage(imageBuffer);
   if (!qrResult) {
     return {
       serial_number: null,
@@ -244,51 +260,14 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
     };
   }
 
-  // QR encodes only the serial number as a plain string
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData : null;
 
-  // 2. Determine orientation using QR position and rotate to upright
-  const imgMeta = await sharp(imageBuffer).metadata();
-  const s = qrResult.scale || 1;
-  const qrCx = (qrResult.location.topLeftCorner.x + qrResult.location.topRightCorner.x) / 2 / s;
-  const qrCy = (qrResult.location.topLeftCorner.y + qrResult.location.bottomLeftCorner.y) / 2 / s;
-  const inRight = qrCx > imgMeta.width / 2;
-  const inBottom = qrCy > imgMeta.height / 2;
+  // 2. Use the image as-is (scanner middleware already rotates correctly)
+  const finalBuffer = imageBuffer;
+  const uprightQR = qrResult;
+  const uprightMeta = await sharp(imageBuffer).metadata();
 
-  let rotation = 0;
-  if (inRight && inBottom) rotation = 0;
-  else if (!inRight && inBottom) rotation = 90;
-  else if (!inRight && !inBottom) rotation = 180;
-  else if (inRight && !inBottom) rotation = 270;
-
-  console.log(`[OMR] QR at (${Math.round(qrCx)},${Math.round(qrCy)}) in ${imgMeta.width}x${imgMeta.height}, right=${inRight}, bottom=${inBottom}, rotation=${rotation}°`);
-
-  let finalBuffer = await rotateToUpright(imageBuffer, rotation);
-
-  // 3. Re-find QR in upright image for accurate position
-  let uprightQR = await findQRInImage(finalBuffer);
-  let uprightMeta = await sharp(finalBuffer).metadata();
-
-  // Check if mirrored (face-down scan) — QR should be in bottom-right
-  if (uprightQR) {
-    const us = uprightQR.scale || 1;
-    const uCx = (uprightQR.location.topLeftCorner.x + uprightQR.location.topRightCorner.x) / 2 / us;
-    if (uCx < uprightMeta.width / 2) {
-      console.log(`[OMR] QR in left half after rotation — flipping (face-down scan)`);
-      finalBuffer = await sharp(finalBuffer).flop().toBuffer();
-      uprightQR = await findQRInImage(finalBuffer);
-      uprightMeta = await sharp(finalBuffer).metadata();
-    }
-  }
-
-  if (!uprightQR) {
-    console.log(`[OMR] Lost QR after rotation — using original`);
-    uprightQR = qrResult;
-    finalBuffer = imageBuffer;
-    uprightMeta = imgMeta;
-  }
-
-  // 4. Calculate scale from image dimensions vs spec ballot dimensions
+  // 3. Calculate scale from image dimensions vs spec ballot dimensions
   // This is the most reliable method — no guessing about QR bounding boxes.
   // The spec is at 300 DPI. A quarter-letter ballot = 4.25" x 5.5" = 1275 x 1650 px at 300 DPI.
   const BALLOT_SIZES_PX = {
@@ -412,7 +391,7 @@ async function processScannedBallot(imageBuffer, ballotSpec) {
 
   return {
     serial_number: serialNumber,
-    rotation_applied: rotation,
+    rotation_applied: 0,
     candidates: candidateResults,
     detected_vote: detectedVote,
     confidence,

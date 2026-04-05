@@ -20,6 +20,9 @@ RUN cd server && npm install --omit=dev
 # Copy server source
 COPY server/ server/
 
+# Copy agent files (for download from station setup page)
+COPY agent/ agent/
+
 # Copy built client
 COPY --from=client-build /app/client/dist client/dist
 

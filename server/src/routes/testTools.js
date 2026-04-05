@@ -148,22 +148,16 @@ router.post('/import-election', async (req, res) => {
           [race.id, roundData.round_number, roundData.paper_color]
         );
 
-        // Generate fresh serial numbers (same count as exported)
-        const snCount = (roundData.serials || []).length;
-        for (let s = 0; s < snCount; s++) {
-          let sn;
-          let attempts = 0;
-          do {
-            sn = generateSN();
-            attempts++;
-          } while (attempts < 100 && (await db.query(
+        // Try to restore original serial numbers; generate fresh ones only on conflict
+        for (const sn of (roundData.serials || [])) {
+          const { rows: [existing] } = await db.query(
             'SELECT id FROM ballot_serials WHERE serial_number = $1', [sn]
-          )).rows.length > 0);
-
+          );
+          const finalSN = existing ? generateSN() : sn;
           await db.query(
             `INSERT INTO ballot_serials (round_id, serial_number, status)
              VALUES ($1, $2, 'unused')`,
-            [round.id, sn]
+            [round.id, finalSN]
           );
         }
       }
