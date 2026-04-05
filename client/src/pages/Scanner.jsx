@@ -171,7 +171,6 @@ export default function Scanner() {
               Back to Round
             </Link>
           )}
-          <Link to={`/scan/${roundId}/spoiled`} style={styles.spoiledLink}>Report Spoiled</Link>
         </div>
       </div>
 
@@ -346,7 +345,6 @@ const styles = {
   container: { maxWidth: 500, margin: '0 auto', padding: '0.75rem', fontFamily: 'system-ui, sans-serif' },
   topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' },
   backLink: { color: '#2563eb', fontSize: '0.85rem', textDecoration: 'none' },
-  spoiledLink: { color: '#dc2626', fontSize: '0.85rem' },
   passBar: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#f3f4f6', borderRadius: 8, marginBottom: '0.75rem' },
   passLabel: { fontWeight: 700, color: '#16a34a' },
   scanCount: { background: '#dbeafe', color: '#1e40af', padding: '2px 10px', borderRadius: 12, fontWeight: 600, fontSize: '0.85rem' },

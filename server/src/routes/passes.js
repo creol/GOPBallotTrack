@@ -34,9 +34,9 @@ router.post('/rounds/:id/passes', async (req, res) => {
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
     if (!round) return res.status(404).json({ error: 'Round not found' });
 
-    // Auto-set round to scanning if pending
-    if (round.status === 'pending') {
-      await db.query("UPDATE rounds SET status = 'scanning' WHERE id = $1", [roundId]);
+    // Auto-set round to tallying if pending_needs_action or ready
+    if (['pending_needs_action', 'ready'].includes(round.status)) {
+      await db.query("UPDATE rounds SET status = 'tallying' WHERE id = $1", [roundId]);
     }
 
     // Get next pass number
@@ -85,8 +85,8 @@ router.delete('/passes/:id', async (req, res) => {
 
     // Check round is not confirmed
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [pass.round_id]);
-    if (['confirmed', 'pending_release', 'released'].includes(round.status)) {
-      return res.status(400).json({ error: 'Cannot delete pass after round confirmation' });
+    if (['round_finalized', 'canceled'].includes(round.status)) {
+      return res.status(400).json({ error: 'Cannot delete pass after round finalization' });
     }
 
     const { deleted_reason } = req.body || {};

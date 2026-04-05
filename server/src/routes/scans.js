@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
-const { recordScan, logSpoiledBallot } = require('../services/scannerService');
+const { recordScan } = require('../services/scannerService');
 
 const router = Router();
 
@@ -103,58 +103,6 @@ router.post('/passes/:id/scans/manual', scanUpload, async (req, res) => {
   } catch (err) {
     console.error('Manual scan error:', err);
     const status = err.message.includes('not found') || err.message.includes('already been') || err.message.includes('spoiled') ? 400 : 500;
-    res.status(status).json({ error: err.message });
-  }
-});
-
-// Spoiled ballot upload storage
-const spoiledStorage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    try {
-      const roundId = req.params.id;
-      const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
-      const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
-      const dir = path.join(__dirname, '..', '..', '..', 'uploads', 'elections', String(race.election_id), 'rounds', String(roundId), 'spoiled');
-      fs.mkdirSync(dir, { recursive: true });
-      cb(null, dir);
-    } catch (err) {
-      cb(err);
-    }
-  },
-  filename: (req, file, cb) => {
-    cb(null, `spoiled-${Date.now()}${path.extname(file.originalname) || '.jpg'}`);
-  },
-});
-
-const spoiledUpload = multer({ storage: spoiledStorage }).single('image');
-
-// POST /api/rounds/:id/spoiled — Log spoiled ballot
-router.post('/rounds/:id/spoiled', spoiledUpload, async (req, res) => {
-  try {
-    const roundId = parseInt(req.params.id);
-    const { serial_number, spoil_type, notes, reported_by } = req.body;
-
-    if (!serial_number || !spoil_type) {
-      return res.status(400).json({ error: 'serial_number and spoil_type are required' });
-    }
-
-    if (!['unreadable', 'intent_undermined'].includes(spoil_type)) {
-      return res.status(400).json({ error: 'spoil_type must be "unreadable" or "intent_undermined"' });
-    }
-
-    const spoiled = await logSpoiledBallot({
-      roundId,
-      serialNumber: serial_number,
-      spoilType: spoil_type,
-      notes,
-      imagePath: req.file?.path || null,
-      reportedBy: reported_by || null,
-    });
-
-    res.status(201).json(spoiled);
-  } catch (err) {
-    console.error('Log spoiled ballot error:', err);
-    const status = err.message.includes('not found') || err.message.includes('already') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
 });

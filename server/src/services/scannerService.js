@@ -17,9 +17,9 @@ async function validateScan(passId, serialNumber) {
   );
   if (!ballotSerial) return { valid: false, error: 'Serial number not found for this round' };
 
-  // Check SN is not spoiled
-  if (ballotSerial.status === 'spoiled') {
-    return { valid: false, error: 'This ballot has been marked as spoiled' };
+  // Check SN is not spoiled/damaged
+  if (['spoiled', 'damaged'].includes(ballotSerial.status)) {
+    return { valid: false, error: `This ballot has been marked as ${ballotSerial.status}` };
   }
 
   // Check SN not already scanned in this pass
@@ -65,35 +65,4 @@ async function recordScan({ passId, serialNumber, candidateId, ballotBoxId, scan
   return { scan, count: parseInt(count) };
 }
 
-/**
- * Log a spoiled ballot.
- */
-async function logSpoiledBallot({ roundId, serialNumber, spoilType, notes, imagePath, reportedBy }) {
-  // Validate SN exists for this round
-  const { rows: [ballotSerial] } = await db.query(
-    'SELECT * FROM ballot_serials WHERE serial_number = $1 AND round_id = $2',
-    [serialNumber, roundId]
-  );
-  if (!ballotSerial) throw new Error('Serial number not found for this round');
-
-  if (ballotSerial.status === 'spoiled') {
-    throw new Error('This ballot is already marked as spoiled');
-  }
-
-  // Mark as spoiled
-  await db.query(
-    "UPDATE ballot_serials SET status = 'spoiled' WHERE id = $1",
-    [ballotSerial.id]
-  );
-
-  // Create spoiled ballot record
-  const { rows: [spoiled] } = await db.query(
-    `INSERT INTO spoiled_ballots (round_id, ballot_serial_id, spoil_type, notes, image_path, reported_by)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [roundId, ballotSerial.id, spoilType, notes || null, imagePath || null, reportedBy || null]
-  );
-
-  return spoiled;
-}
-
-module.exports = { validateScan, recordScan, logSpoiledBallot };
+module.exports = { validateScan, recordScan };

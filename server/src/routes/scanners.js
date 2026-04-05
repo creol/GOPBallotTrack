@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const db = require('../db');
+const { restartWatchers } = require('../middleware/scanWatcher');
 
 const router = Router();
 
@@ -19,6 +20,11 @@ router.post('/elections/:electionId/scanners', async (req, res) => {
        VALUES ($1, $2, $3) RETURNING *`,
       [req.params.electionId, name, watchPath]
     );
+
+    // Start watching the new scanner's folder immediately
+    const io = req.app.get('io');
+    if (io) restartWatchers(io);
+
     res.status(201).json(scanner);
   } catch (err) {
     console.error('Create scanner error:', err);
@@ -67,6 +73,11 @@ router.delete('/scanners/:id', async (req, res) => {
       'DELETE FROM scanners WHERE id = $1', [req.params.id]
     );
     if (rowCount === 0) return res.status(404).json({ error: 'Scanner not found' });
+
+    // Stop watching the deleted scanner's folder
+    const io = req.app.get('io');
+    if (io) restartWatchers(io);
+
     res.json({ message: 'Scanner deleted' });
   } catch (err) {
     console.error('Delete scanner error:', err);

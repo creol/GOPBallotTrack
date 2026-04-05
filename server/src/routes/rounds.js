@@ -102,13 +102,19 @@ router.get('/rounds/:id/box-counts', async (req, res) => {
       [round.race_id]
     );
 
-    // Get scans grouped by box and candidate (only from non-deleted passes)
+    // Get all non-deleted passes for this round
+    const { rows: passes } = await db.query(
+      "SELECT * FROM passes WHERE round_id = $1 AND status != 'deleted' ORDER BY pass_number",
+      [roundId]
+    );
+
+    // Get scans grouped by pass, box, and candidate
     const { rows: scanCounts } = await db.query(
-      `SELECT s.ballot_box_id, s.candidate_id, COUNT(*) as count
+      `SELECT s.ballot_box_id, s.candidate_id, p.id as pass_id, p.pass_number, COUNT(*) as count
        FROM scans s
        JOIN passes p ON p.id = s.pass_id
        WHERE p.round_id = $1 AND p.status != 'deleted'
-       GROUP BY s.ballot_box_id, s.candidate_id`,
+       GROUP BY s.ballot_box_id, s.candidate_id, p.id, p.pass_number`,
       [roundId]
     );
 
@@ -118,31 +124,40 @@ router.get('/rounds/:id/box-counts', async (req, res) => {
       [race.election_id]
     );
 
-    // Build result
+    // Build result per pass
     const boxIds = [...boxes.map(b => b.id), null]; // include null for unassigned
-    const result = boxIds.map(boxId => {
-      const box = boxes.find(b => b.id === boxId);
-      const boxScans = scanCounts.filter(sc => sc.ballot_box_id === boxId);
-      const totalScans = boxScans.reduce((sum, sc) => sum + parseInt(sc.count), 0);
-      const candidateBreakdown = candidates.map(c => {
-        const match = boxScans.find(sc => sc.candidate_id === c.id);
-        return { candidate_id: c.id, candidate_name: c.name, count: match ? parseInt(match.count) : 0 };
-      });
-      const assignedScanners = scanners.filter(s => s.current_box_id === boxId);
 
-      return {
-        box_id: boxId,
-        box_name: box ? box.name : 'Unassigned',
-        total_scans: totalScans,
-        candidates: candidateBreakdown,
-        scanners: assignedScanners.map(s => s.name),
-      };
-    });
+    const buildBoxBreakdown = (passFilter) => {
+      const filtered = passFilter ? scanCounts.filter(passFilter) : scanCounts;
+      return boxIds.map(boxId => {
+        const box = boxes.find(b => b.id === boxId);
+        const boxScans = filtered.filter(sc => sc.ballot_box_id === boxId);
+        const totalScans = boxScans.reduce((sum, sc) => sum + parseInt(sc.count), 0);
+        const candidateBreakdown = candidates.map(c => {
+          const match = boxScans.find(sc => sc.candidate_id === c.id);
+          return { candidate_id: c.id, candidate_name: c.name, count: match ? parseInt(match.count) : 0 };
+        });
+        const assignedScanners = scanners.filter(s => s.current_box_id === boxId);
 
-    // Filter out empty unassigned group
-    const filtered = result.filter(r => r.box_id !== null || r.total_scans > 0);
+        return {
+          box_id: boxId,
+          box_name: box ? box.name : 'Unassigned',
+          total_scans: totalScans,
+          candidates: candidateBreakdown,
+          scanners: assignedScanners.map(s => s.name),
+        };
+      }).filter(r => r.box_id !== null || r.total_scans > 0);
+    };
 
-    res.json(filtered);
+    // Per-pass breakdown
+    const passSummaries = passes.map(p => ({
+      pass_id: p.id,
+      pass_number: p.pass_number,
+      status: p.status,
+      boxes: buildBoxBreakdown(sc => sc.pass_id === p.id),
+    }));
+
+    res.json({ passes: passSummaries });
   } catch (err) {
     console.error('Box counts error:', err);
     res.status(500).json({ error: 'Internal server error' });

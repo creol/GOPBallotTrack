@@ -21,7 +21,7 @@ const publicRouter = require('./routes/public');
 const exportsRouter = require('./routes/exports');
 const ballotDesignRouter = require('./routes/ballotDesign');
 const scannersRouter = require('./routes/scanners');
-const flaggedRouter = require('./routes/flagged');
+const reviewedBallotsRouter = require('./routes/reviewedBallots');
 const { startWatchers } = require('./middleware/scanWatcher');
 
 const app = express();
@@ -61,8 +61,8 @@ app.use('/api/admin', requireAdmin, scannersRouter);
 app.use('/api', passesRouter);
 app.use('/api', scansRouter);
 
-// Flagged ballot review (requireJudge — judge or chair)
-app.use('/api', requireJudge, flaggedRouter);
+// Reviewed ballots — admin routes + public mobile photo upload (token-gated)
+app.use('/api', reviewedBallotsRouter);
 
 // Confirmation routes (requireJudge for confirm, requireChair for release)
 app.use('/api', confirmationRouter);

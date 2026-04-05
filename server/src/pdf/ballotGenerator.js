@@ -36,18 +36,34 @@ async function fetchBallotData(roundId) {
 }
 
 /**
- * Load design config for an election, merged with defaults.
+ * Load design config for an election, merged with defaults and per-round overrides.
  */
-async function loadDesignConfig(electionId) {
+async function loadDesignConfig(electionId, roundId) {
   const { rows: [design] } = await db.query(
     'SELECT config FROM ballot_designs WHERE election_id = $1', [electionId]
   );
-  if (!design) return { ...DEFAULT_CONFIG };
-  const merged = {};
+  const base = {};
   for (const key of Object.keys(DEFAULT_CONFIG)) {
-    merged[key] = { ...DEFAULT_CONFIG[key], ...(design.config[key] || {}) };
+    base[key] = { ...DEFAULT_CONFIG[key], ...(design?.config?.[key] || {}) };
   }
-  return merged;
+
+  // Merge per-round overrides if they exist
+  if (roundId) {
+    const { rows: [round] } = await db.query(
+      'SELECT ballot_design_overrides FROM rounds WHERE id = $1', [roundId]
+    );
+    if (round?.ballot_design_overrides) {
+      for (const key of Object.keys(round.ballot_design_overrides)) {
+        if (base[key]) {
+          base[key] = { ...base[key], ...round.ballot_design_overrides[key] };
+        } else {
+          base[key] = round.ballot_design_overrides[key];
+        }
+      }
+    }
+  }
+
+  return base;
 }
 
 async function generateQR(data, size) {
@@ -337,7 +353,7 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
 
   const data = await fetchBallotData(roundId);
   const { round, race, election, candidates } = data;
-  const cfg = await loadDesignConfig(election.id);
+  const cfg = await loadDesignConfig(election.id, roundId);
 
   // Use existing SNs if they exist (pre-generated at race/round creation).
   // Only generate new ones if none exist (backward compat).
@@ -474,7 +490,7 @@ async function generateBallots({ roundId, quantity, sizeKey, logoPath }) {
 async function generatePreviewPdf({ roundId, sizeKey, serialNumbers, outputPath }) {
   const data = await fetchBallotData(roundId);
   const { round, race, election, candidates } = data;
-  const cfg = await loadDesignConfig(election.id);
+  const cfg = await loadDesignConfig(election.id, roundId);
   const size = SIZES[sizeKey];
   const { perPage, cols, rows } = size;
 
@@ -538,7 +554,7 @@ async function generatePreviewPdf({ roundId, sizeKey, serialNumbers, outputPath 
 async function generateCalibrationPdf({ roundId, outputPath }) {
   const data = await fetchBallotData(roundId);
   const { round, race, election, candidates } = data;
-  const cfg = await loadDesignConfig(election.id);
+  const cfg = await loadDesignConfig(election.id, roundId);
   const sizeKey = 'quarter_letter'; // Use whatever size was last generated
   const size = SIZES[sizeKey];
 

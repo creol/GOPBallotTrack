@@ -87,8 +87,8 @@ export default function ElectionDetail() {
 
   if (!election) return <div style={styles.container}><p>Loading...</p></div>;
 
-  const statusColor = { pending: '#f59e0b', active: '#10b981', complete: '#6366f1' };
-  const roundStatusColor = { pending: '#f59e0b', scanning: '#3b82f6', confirmed: '#10b981', pending_release: '#8b5cf6', released: '#6366f1' };
+  const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', in_progress: '#3b82f6', results_finalized: '#6366f1' };
+  const roundStatusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
 
   return (
     <div style={styles.container}>

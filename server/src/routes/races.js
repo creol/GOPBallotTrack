@@ -197,7 +197,7 @@ router.put('/races/:id/outcome', async (req, res) => {
     const { rows: [race] } = await db.query(
       `UPDATE races SET
         outcome = $1, outcome_candidate_id = $2, outcome_notes = $3,
-        outcome_at = NOW(), status = 'complete'
+        outcome_at = NOW(), status = 'results_finalized'
        WHERE id = $4 RETURNING *`,
       [outcome, candidate_id || null, notes || null, req.params.id]
     );
@@ -206,7 +206,7 @@ router.put('/races/:id/outcome', async (req, res) => {
     // Close any pending rounds for this race
     if (outcome === 'closed') {
       await db.query(
-        "UPDATE rounds SET status = 'closed' WHERE race_id = $1 AND status IN ('pending', 'scanning')",
+        "UPDATE rounds SET status = 'canceled' WHERE race_id = $1 AND status IN ('pending_needs_action', 'ready', 'tallying')",
         [req.params.id]
       );
     }
@@ -223,7 +223,7 @@ router.delete('/races/:id/outcome', async (req, res) => {
   try {
     const { rows: [race] } = await db.query(
       `UPDATE races SET outcome = NULL, outcome_candidate_id = NULL, outcome_notes = NULL,
-        outcome_at = NULL, status = 'active'
+        outcome_at = NULL, status = 'in_progress'
        WHERE id = $1 RETURNING *`,
       [req.params.id]
     );

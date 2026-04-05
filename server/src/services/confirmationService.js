@@ -123,9 +123,9 @@ async function confirmRound({ roundId, confirmedByName, isOverride, overrideNote
     [roundId, 'judge', confirmedByName, isOverride, overrideNotes || null]
   );
 
-  // Update round status to pending_release
+  // Update round status to round_finalized
   await db.query(
-    `UPDATE rounds SET status = 'pending_release', confirmed_by = $1, confirmed_at = NOW()
+    `UPDATE rounds SET status = 'round_finalized', confirmed_by = $1, confirmed_at = NOW()
      WHERE id = $2`,
     [confirmedByName, roundId]
   );
@@ -139,12 +139,12 @@ async function confirmRound({ roundId, confirmedByName, isOverride, overrideNote
 async function releaseRound({ roundId, releasedByName }) {
   const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
   if (!round) throw new Error('Round not found');
-  if (round.status !== 'pending_release') {
-    throw new Error('Round must be confirmed before release');
+  if (round.status !== 'round_finalized') {
+    throw new Error('Round must be finalized before release');
   }
 
   await db.query(
-    `UPDATE rounds SET status = 'released', released_by = $1, released_at = NOW()
+    `UPDATE rounds SET published_at = NOW(), released_by = $1, released_at = NOW()
      WHERE id = $2`,
     [releasedByName, roundId]
   );

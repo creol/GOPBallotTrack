@@ -13,13 +13,7 @@ if %errorlevel% neq 0 (
     echo  Requesting administrator permission...
     echo  Click YES on the prompt that appears.
     echo.
-    powershell -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs" 2>nul
-    if %errorlevel% neq 0 (
-        echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\bt_elevate.vbs"
-        echo UAC.ShellExecute "cmd.exe", "/c ""%~f0""", "", "runas", 1 >> "%temp%\bt_elevate.vbs"
-        cscript //nologo "%temp%\bt_elevate.vbs"
-        del "%temp%\bt_elevate.vbs" 2>nul
-    )
+    powershell -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
     exit /b
 )
 
@@ -89,6 +83,19 @@ echo   This takes 5-10 minutes. Please wait.
 echo   (You may see a progress window appear.)
 echo.
 
+:: Enable WSL feature and update before Docker install
+echo   Enabling Windows Subsystem for Linux...
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart >nul 2>&1
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart >nul 2>&1
+echo   [OK] WSL features enabled.
+echo.
+
+echo   Updating WSL...
+wsl --update >nul 2>&1
+wsl --set-default-version 2 >nul 2>&1
+echo   [OK] WSL updated to latest version.
+echo.
+
 "%DOCKER_INSTALLER%" install --quiet --accept-license
 if %errorlevel% neq 0 (
     echo.
@@ -123,12 +130,28 @@ shutdown /r /t 15 /c "Restarting to finish BallotTrack/Docker setup. Run install
 exit /b
 
 :: ============================================
-::  Docker is installed — make sure it's running
+::  Docker is installed — ensure WSL is ready
 :: ============================================
 :check_docker_running
 echo  -------------------------------------------
 echo   STEP 2 of 5:  Starting Docker Desktop
 echo  -------------------------------------------
+echo.
+
+:: Ensure WSL2 is up to date (needed by Docker Desktop)
+echo   Checking WSL...
+wsl --status >nul 2>&1
+if %errorlevel% neq 0 (
+    echo   WSL needs to be set up. Enabling now...
+    dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart >nul 2>&1
+    dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart >nul 2>&1
+    wsl --update >nul 2>&1
+    wsl --set-default-version 2 >nul 2>&1
+    echo   [OK] WSL configured.
+) else (
+    wsl --update >nul 2>&1
+    echo   [OK] WSL is ready.
+)
 echo.
 
 docker info >nul 2>&1

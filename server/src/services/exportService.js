@@ -166,7 +166,7 @@ async function exportFull(electionId) {
               'SELECT * FROM ballot_serials WHERE round_id = $1 ORDER BY serial_number', [round.id]
             );
             const { rows: spoiled } = await db.query(
-              'SELECT * FROM spoiled_ballots WHERE round_id = $1', [round.id]
+              'SELECT * FROM reviewed_ballots WHERE round_id = $1', [round.id]
             );
             const { rows: confirmations } = await db.query(
               'SELECT * FROM round_confirmations WHERE round_id = $1', [round.id]
@@ -182,7 +182,7 @@ async function exportFull(electionId) {
             }
 
             // Generate and add results PDF if round is confirmed
-            if (['confirmed', 'pending_release', 'released'].includes(round.status)) {
+            if (['round_finalized'].includes(round.status)) {
               try {
                 const resultsPdfPath = await generateResultsPdf(round.id);
                 archive.file(resultsPdfPath, { name: `results-pdfs/${raceDirName}/round-${round.round_number}-results.pdf` });

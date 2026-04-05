@@ -19,6 +19,10 @@ router.get('/rounds/:id/ballot-status', async (req, res) => {
     );
     const serialCount = parseInt(count);
 
+    const { rows: [round] } = await db.query(
+      'SELECT ballot_pdf_generated_at, ballot_design_overrides FROM rounds WHERE id = $1', [roundId]
+    );
+
     const outDir = await getOutputDir(roundId);
     const pdfExists = outDir && fs.existsSync(path.join(outDir, 'ballots.pdf'));
 
@@ -26,6 +30,8 @@ router.get('/rounds/:id/ballot-status', async (req, res) => {
       has_serials: serialCount > 0,
       serial_count: serialCount,
       pdf_exists: !!pdfExists,
+      generated_at: round?.ballot_pdf_generated_at || null,
+      has_overrides: !!round?.ballot_design_overrides,
     });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -67,6 +73,17 @@ router.post('/rounds/:id/generate-ballots', upload.single('logo'), async (req, r
     }
 
     const result = await generateBallots({ roundId, quantity, sizeKey, logoPath });
+
+    // Track generation and auto-set round to ready
+    const pdfPath = path.join(await getOutputDir(roundId), 'ballots.pdf');
+    await db.query(
+      `UPDATE rounds SET
+        ballot_pdf_generated_at = NOW(),
+        ballot_pdf_path = $1,
+        status = CASE WHEN status = 'pending_needs_action' THEN 'ready' ELSE status END
+       WHERE id = $2`,
+      [pdfPath, roundId]
+    );
 
     res.json({
       message: `Generated ${result.serials.length} ballots`,
@@ -140,6 +157,43 @@ router.post('/elections/:id/generate-all-ballots', async (req, res) => {
   } catch (err) {
     console.error('Generate all ballots error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// GET /api/admin/rounds/:id/ballot-overrides — Get per-round design overrides
+router.get('/rounds/:id/ballot-overrides', async (req, res) => {
+  try {
+    const { rows: [round] } = await db.query(
+      'SELECT ballot_design_overrides, ballot_pdf_generated_at FROM rounds WHERE id = $1',
+      [req.params.id]
+    );
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    res.json({
+      overrides: round.ballot_design_overrides || {},
+      generated_at: round.ballot_pdf_generated_at,
+    });
+  } catch (err) {
+    console.error('Get ballot overrides error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/admin/rounds/:id/ballot-overrides — Save per-round design overrides
+router.put('/rounds/:id/ballot-overrides', async (req, res) => {
+  try {
+    const { overrides } = req.body;
+    if (!overrides || typeof overrides !== 'object') {
+      return res.status(400).json({ error: 'overrides object is required' });
+    }
+    const { rows: [round] } = await db.query(
+      'UPDATE rounds SET ballot_design_overrides = $1 WHERE id = $2 RETURNING ballot_design_overrides',
+      [JSON.stringify(overrides), req.params.id]
+    );
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    res.json({ overrides: round.ballot_design_overrides });
+  } catch (err) {
+    console.error('Save ballot overrides error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

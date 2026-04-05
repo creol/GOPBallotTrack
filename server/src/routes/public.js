@@ -21,7 +21,7 @@ router.get('/:electionId', async (req, res) => {
     // For each race, get released rounds with results
     for (const race of races) {
       const { rows: rounds } = await db.query(
-        "SELECT * FROM rounds WHERE race_id = $1 AND status = 'released' ORDER BY round_number",
+        "SELECT * FROM rounds WHERE race_id = $1 AND published_at IS NOT NULL ORDER BY round_number",
         [race.id]
       );
 
@@ -60,7 +60,7 @@ router.get('/:electionId', async (req, res) => {
 
       // Determine race status label
       const { rows: allRounds } = await db.query(
-        'SELECT status FROM rounds WHERE race_id = $1 ORDER BY round_number DESC LIMIT 1',
+        'SELECT status, published_at FROM rounds WHERE race_id = $1 ORDER BY round_number DESC LIMIT 1',
         [race.id]
       );
       if (race.outcome === 'winner') {
@@ -70,18 +70,26 @@ router.get('/:electionId', async (req, res) => {
         race.status_label = 'Advances to Primary';
       } else if (race.outcome === 'closed') {
         race.status_label = 'Race Closed';
-      } else if (race.status === 'complete') {
+      } else if (race.status === 'results_finalized') {
         race.status_label = 'Race Complete';
       } else if (allRounds.length > 0) {
         const latest = allRounds[0];
-        const releasedCount = rounds.length;
-        if (latest.status === 'released') {
-          race.status_label = `Round ${releasedCount} Complete`;
+        const publishedCount = rounds.length; // rounds already filtered to published_at IS NOT NULL
+        if (latest.status === 'voting_open') {
+          race.status_label = 'Voting Open';
+        } else if (latest.status === 'voting_closed') {
+          race.status_label = 'Voting Closed';
+        } else if (latest.status === 'tallying') {
+          race.status_label = 'Tallying in Progress';
+        } else if (latest.status === 'round_finalized' && !latest.published_at) {
+          race.status_label = 'Tallying in Progress';
+        } else if (publishedCount > 0) {
+          race.status_label = `Round ${publishedCount} Results`;
         } else {
-          race.status_label = `Round ${releasedCount + 1} in Progress`;
+          race.status_label = 'Awaiting Vote';
         }
       } else {
-        race.status_label = 'Not Started';
+        race.status_label = 'Awaiting Vote';
       }
     }
 
@@ -107,7 +115,7 @@ router.get('/:electionId/races/:raceId', async (req, res) => {
     if (!race) return res.status(404).json({ error: 'Race not found' });
 
     const { rows: rounds } = await db.query(
-      "SELECT * FROM rounds WHERE race_id = $1 AND status = 'released' ORDER BY round_number",
+      "SELECT * FROM rounds WHERE race_id = $1 AND published_at IS NOT NULL ORDER BY round_number",
       [race.id]
     );
 
@@ -134,7 +142,7 @@ router.get('/:electionId/races/:raceId', async (req, res) => {
 router.get('/:electionId/rounds/:roundId', async (req, res) => {
   try {
     const { rows: [round] } = await db.query(
-      "SELECT * FROM rounds WHERE id = $1 AND status = 'released'",
+      "SELECT * FROM rounds WHERE id = $1 AND published_at IS NOT NULL",
       [req.params.roundId]
     );
     if (!round) return res.status(404).json({ error: 'Round not found or not yet released' });
@@ -174,7 +182,7 @@ router.get('/:electionId/ballots/:serialNumber', async (req, res) => {
     const { rows } = await db.query(
       `SELECT bs.id as bs_id, bs.round_id, r.race_id, rc.election_id, s.front_image_path
        FROM ballot_serials bs
-       JOIN rounds r ON r.id = bs.round_id AND r.status = 'released'
+       JOIN rounds r ON r.id = bs.round_id AND r.published_at IS NOT NULL
        JOIN races rc ON rc.id = r.race_id AND rc.election_id = $1
        LEFT JOIN scans s ON s.ballot_serial_id = bs.id
        WHERE bs.serial_number = $2
@@ -216,7 +224,7 @@ router.get('/:electionId/search', async (req, res) => {
               r.round_number, r.status as round_status,
               rc.id as race_id, rc.name as race_name
        FROM ballot_serials bs
-       JOIN rounds r ON r.id = bs.round_id AND r.status = 'released'
+       JOIN rounds r ON r.id = bs.round_id AND r.published_at IS NOT NULL
        JOIN races rc ON rc.id = r.race_id AND rc.election_id = $1
        WHERE bs.serial_number = $2`,
       [req.params.electionId, sn]

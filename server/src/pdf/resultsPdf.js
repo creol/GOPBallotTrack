@@ -25,12 +25,22 @@ async function generateResultsPdf(roundId) {
     [roundId]
   );
 
+  const { rows: remadeBallots } = await db.query(
+    `SELECT rb.*, bs.serial_number as original_sn, rbs.serial_number as replacement_sn
+     FROM reviewed_ballots rb
+     JOIN ballot_serials bs ON bs.id = rb.original_serial_id
+     LEFT JOIN ballot_serials rbs ON rbs.id = rb.replacement_serial_id
+     WHERE rb.round_id = $1 AND rb.outcome = 'remade'
+     ORDER BY rb.created_at`,
+    [roundId]
+  );
+
   const { rows: spoiled } = await db.query(
-    `SELECT sb.*, bs.serial_number
-     FROM spoiled_ballots sb
-     JOIN ballot_serials bs ON bs.id = sb.ballot_serial_id
-     WHERE sb.round_id = $1
-     ORDER BY sb.created_at`,
+    `SELECT rb.*, bs.serial_number
+     FROM reviewed_ballots rb
+     JOIN ballot_serials bs ON bs.id = rb.original_serial_id
+     WHERE rb.round_id = $1 AND rb.outcome IN ('spoiled', 'rejected')
+     ORDER BY rb.created_at`,
     [roundId]
   );
 
@@ -105,7 +115,39 @@ async function generateResultsPdf(roundId) {
   doc.fontSize(9).font('Helvetica').text(`Total votes: ${totalVotes}`, col1);
   doc.moveDown(1);
 
-  // === 3. SPOILED BALLOT LOG ===
+  // === 3a. REMADE BALLOTS ===
+  doc.fontSize(13).font('Helvetica-Bold').text('Remade Ballots');
+  doc.moveDown(0.3);
+
+  if (remadeBallots.length === 0) {
+    doc.fontSize(9).font('Helvetica').text('None');
+  } else {
+    doc.fontSize(9).font('Helvetica').text(`Includes ${remadeBallots.length} remade ballot(s) in candidate totals above.`);
+    doc.moveDown(0.2);
+    doc.fontSize(8).font('Helvetica-Bold');
+    const rCol1 = 50, rCol2 = 140, rCol3 = 250, rCol4 = 400;
+    doc.text('Original SN', rCol1, doc.y, { continued: false });
+    const rhY = doc.y - 9;
+    doc.text('Replacement SN', rCol2, rhY);
+    doc.text('Notes', rCol3, rhY);
+    doc.text('Reviewed By', rCol4, rhY);
+    doc.moveDown(0.2);
+    doc.moveTo(rCol1, doc.y).lineTo(rCol1 + pageWidth, doc.y).lineWidth(0.5).stroke();
+    doc.moveDown(0.3);
+
+    doc.font('Helvetica').fontSize(8);
+    for (const r of remadeBallots) {
+      const y = doc.y;
+      doc.text(r.original_sn, rCol1, y);
+      doc.text(r.replacement_sn || '-', rCol2, y);
+      doc.text(r.notes || '-', rCol3, y, { width: 140 });
+      doc.text(r.reviewed_by || '-', rCol4, y);
+      doc.moveDown(0.3);
+    }
+  }
+  doc.moveDown(1);
+
+  // === 3b. SPOILED BALLOTS ===
   doc.fontSize(13).font('Helvetica-Bold').text('Spoiled Ballots');
   doc.moveDown(0.3);
 
@@ -116,9 +158,9 @@ async function generateResultsPdf(roundId) {
     const sCol1 = 50, sCol2 = 140, sCol3 = 250, sCol4 = 400;
     doc.text('SN', sCol1, doc.y, { continued: false });
     const shY = doc.y - 9;
-    doc.text('Type', sCol2, shY);
+    doc.text('Reason', sCol2, shY);
     doc.text('Notes', sCol3, shY);
-    doc.text('Reported By', sCol4, shY);
+    doc.text('Reviewed By', sCol4, shY);
     doc.moveDown(0.2);
     doc.moveTo(sCol1, doc.y).lineTo(sCol1 + pageWidth, doc.y).lineWidth(0.5).stroke();
     doc.moveDown(0.3);
@@ -127,9 +169,9 @@ async function generateResultsPdf(roundId) {
     for (const s of spoiled) {
       const y = doc.y;
       doc.text(s.serial_number, sCol1, y);
-      doc.text(s.spoil_type, sCol2, y);
+      doc.text(s.outcome || s.flag_reason || '-', sCol2, y);
       doc.text(s.notes || '-', sCol3, y, { width: 140 });
-      doc.text(s.reported_by || '-', sCol4, y);
+      doc.text(s.reviewed_by || '-', sCol4, y);
       doc.moveDown(0.3);
     }
   }

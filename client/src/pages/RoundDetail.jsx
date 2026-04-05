@@ -38,7 +38,7 @@ export default function RoundDetail() {
 
   const fetchFlaggedCount = async () => {
     try {
-      const { data } = await api.get(`/rounds/${roundId}/flagged`);
+      const { data } = await api.get(`/rounds/${roundId}/reviewed-ballots?status=unresolved`);
       setFlaggedCount(Array.isArray(data) ? data.length : 0);
     } catch {}
   };
@@ -79,7 +79,7 @@ export default function RoundDetail() {
 
   if (!round) return <div style={styles.container}><p>Loading...</p></div>;
 
-  const statusColor = { pending: '#f59e0b', scanning: '#3b82f6', confirmed: '#10b981', pending_release: '#8b5cf6', released: '#6366f1' };
+  const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
   const hasSerials = ballotStatus?.has_serials;
   const hasPdf = ballotStatus?.pdf_exists;
 
@@ -126,7 +126,7 @@ export default function RoundDetail() {
           title="Scan Ballots"
           description="Feed ballots through the ADF scanner or use the phone scanner"
           done={round.passes?.some(p => p.status === 'complete')}
-          active={['pending', 'scanning'].includes(round.status)}
+          active={['pending_needs_action', 'ready', 'tallying'].includes(round.status)}
         >
           <Link to={`/scan/${roundId}`} style={styles.btnLink}>Open Scanner</Link>
           <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={{ ...styles.btnSmall, textDecoration: 'none' }} target="_blank">Calibration PDF</a>
@@ -135,14 +135,14 @@ export default function RoundDetail() {
         {flaggedCount > 0 && (
           <WorkflowStep
             number={2}
-            title={`Review Flagged Ballots (${flaggedCount})`}
-            description="Ballots that couldn't be read automatically need manual review"
+            title={`Review Ballots (${flaggedCount})`}
+            description="Ballots needing manual review — resolve all before finalizing"
             done={false}
             active={true}
           >
             <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/review`}
               style={{ ...styles.btnLink, background: '#dc2626' }}>
-              Review Flagged ({flaggedCount})
+              Review Ballots ({flaggedCount})
             </Link>
           </WorkflowStep>
         )}
@@ -151,8 +151,8 @@ export default function RoundDetail() {
           number={flaggedCount > 0 ? 3 : 2}
           title="Confirm Results"
           description="Compare pass counts and confirm the results are accurate"
-          done={['confirmed', 'pending_release', 'released'].includes(round.status)}
-          active={['scanning', 'pending'].includes(round.status)}
+          done={['round_finalized'].includes(round.status)}
+          active={['tallying', 'voting_closed'].includes(round.status)}
         >
           <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/confirm`} style={styles.btnLinkGreen}>
             Confirm Round
@@ -163,15 +163,15 @@ export default function RoundDetail() {
           number={flaggedCount > 0 ? 4 : 3}
           title="Preview & Release"
           description="Preview what the public will see, then release the results"
-          done={round.status === 'released'}
-          active={['confirmed', 'pending_release'].includes(round.status)}
+          done={!!round.published_at}
+          active={['round_finalized'].includes(round.status) && !round.published_at}
         >
           <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/chair`} style={styles.btnLinkPurple}>
             Preview & Release
           </Link>
         </WorkflowStep>
 
-        {['confirmed', 'pending_release', 'released'].includes(round.status) && (
+        {['round_finalized'].includes(round.status) && (
           <WorkflowStep
             number={flaggedCount > 0 ? 5 : 4}
             title="Download Results"
@@ -203,6 +203,11 @@ export default function RoundDetail() {
           <>
             <div style={styles.generatedBanner}>
               <strong>{ballotStatus.serial_count} serial numbers &nbsp;|&nbsp; PDF ready</strong>
+              {ballotStatus.generated_at && (
+                <p style={styles.muted}>
+                  Generated: {new Date(ballotStatus.generated_at).toLocaleString()}
+                </p>
+              )}
               <p style={styles.muted}>
                 The PDF and serial numbers are saved. Download and print at any time —
                 the serial numbers will not change.

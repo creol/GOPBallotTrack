@@ -7,11 +7,10 @@ import AdminDashboard from './pages/AdminDashboard';
 import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
 import RoundDetail from './pages/RoundDetail';
-import FlaggedReview from './pages/FlaggedReview';
+import BallotReviewQueue from './pages/BallotReviewQueue';
 import BallotBoxDetail from './pages/BallotBoxDetail';
 import BallotDesigner from './pages/BallotDesigner';
 import Scanner from './pages/Scanner';
-import SpoiledBallot from './pages/SpoiledBallot';
 import Confirmation from './pages/Confirmation';
 import ChairDecision from './pages/ChairDecision';
 import PublicDashboard from './pages/PublicDashboard';
@@ -98,7 +97,7 @@ export default function App() {
           <ProtectedRoute auth={auth} requiredRoles={['admin', 'chair']}><ChairDecision /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/review" element={
-          <ProtectedRoute auth={auth}><FlaggedReview /></ProtectedRoute>
+          <ProtectedRoute auth={auth}><BallotReviewQueue /></ProtectedRoute>
         } />
         <Route path="/admin/rounds/:roundId/boxes" element={
           <ProtectedRoute auth={auth}><BallotBoxDetail /></ProtectedRoute>
@@ -106,7 +105,6 @@ export default function App() {
 
         {/* Scanner routes — no auth (tally operators) */}
         <Route path="/scan/:roundId" element={<Scanner />} />
-        <Route path="/scan/:roundId/spoiled" element={<SpoiledBallot />} />
 
         {/* Public routes — no auth */}
         <Route path="/public/:electionId" element={<PublicDashboard />} />

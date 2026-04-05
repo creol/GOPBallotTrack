@@ -40,8 +40,10 @@ ballottrack/
 - **Round**: One counting cycle within a race. Paper color designates the round.
 - **Pass**: One complete scan of all ballots. Pass 1 & 2 required. Additional optional.
 - **SN**: Serial Number — 8+ character unique ID on each ballot, printed below the QR code
-- **Spoiled Ballot**: Damaged/jammed (unreadable) OR intent undermined. Jammed ballots support mobile phone camera capture.
-- **Confirmation**: A human question asked of the Election Judge — NOT an automated software decision.
+- **Reviewed Ballot**: A ballot flagged for review — auto-flagged by OMR (no mark, overvote, uncertain, QR not found) or manually reported. Outcomes: counted, remade, spoiled, rejected.
+- **Remade Ballot**: A reviewed ballot where intent was clear — original marked damaged, replacement SN assigned and counted.
+- **Spoiled Ballot**: A reviewed ballot where intent could not be determined — not counted.
+- **Confirmation**: A human question asked of the admin — NOT an automated software decision.
 
 ## Roles
 - **Admin**: Manages elections, ballot generation, QR toggle on TV display, backups/exports
@@ -83,11 +85,11 @@ Phase 1: Set up the project structure and database.
 
    elections (id, name, date, description, status [active/archived/deleted], is_sample boolean, created_at, updated_at)
 
-   races (id, election_id FK, name, threshold_type [majority/two_thirds/custom], threshold_value, display_order, status [pending/active/complete], created_at)
+   races (id, election_id FK, name, threshold_type [majority/two_thirds/custom], threshold_value, display_order, status [pending_needs_action/ready/in_progress/results_finalized], created_at)
 
    candidates (id, race_id FK, name, display_order, status [active/withdrawn], withdrawn_at, created_at)
 
-   rounds (id, race_id FK, round_number, paper_color, status [pending/scanning/confirmed/pending_release/released], confirmed_by, confirmed_at, released_by, released_at, created_at)
+   rounds (id, race_id FK, round_number, paper_color, status [pending_needs_action/ready/voting_open/voting_closed/tallying/round_finalized/canceled], published_at, confirmed_by, confirmed_at, released_by, released_at, created_at)
 
    ballot_serials (id, round_id FK, serial_number VARCHAR(64) UNIQUE, status [unused/counted/spoiled], created_at)
    — serial_number has 8 char minimum enforced by CHECK constraint
@@ -98,7 +100,7 @@ Phase 1: Set up the project structure and database.
 
    scans (id, pass_id FK, ballot_serial_id FK, candidate_id FK, ballot_box_id FK, scanned_by, scanned_at, front_image_path, back_image_path)
 
-   spoiled_ballots (id, round_id FK, ballot_serial_id FK, spoil_type [unreadable/intent_undermined], notes TEXT, image_path, reported_by, confirmed_by, created_at)
+   reviewed_ballots (id, round_id FK, pass_id FK, original_serial_id FK, replacement_serial_id FK, scanner_id FK, outcome [remade/spoiled/counted/rejected], flag_reason, omr_scores JSONB, notes TEXT, photo_path, image_path, reviewed_by, reviewed_at, created_at)
 
    round_confirmations (id, round_id FK, confirmed_by_role [judge/chair], confirmed_by_name, is_override BOOLEAN, override_notes TEXT, created_at)
 

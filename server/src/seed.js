@@ -43,13 +43,13 @@ async function seed() {
   const { rows: [chairRace] } = await db.query(
     `INSERT INTO races (election_id, name, threshold_type, display_order, status)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [election.id, 'Chair', 'majority', 1, 'pending']
+    [election.id, 'Chair', 'majority', 1, 'pending_needs_action']
   );
 
   const { rows: [viceChairRace] } = await db.query(
     `INSERT INTO races (election_id, name, threshold_type, display_order, status)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [election.id, 'Vice Chair', 'majority', 2, 'pending']
+    [election.id, 'Vice Chair', 'majority', 2, 'pending_needs_action']
   );
 
   // Create candidates for Chair race
@@ -77,7 +77,7 @@ async function seed() {
   // --- Pre-populate scan data for Chair race, Round 1 (released) ---
   const { rows: [round1] } = await db.query(
     `INSERT INTO rounds (race_id, round_number, paper_color, status, confirmed_by, confirmed_at, released_by, released_at)
-     VALUES ($1, 1, 'White', 'released', 'Judge Smith', NOW(), 'Chair Jones', NOW()) RETURNING id`,
+     VALUES ($1, 1, 'White', 'round_finalized', 'Admin', NOW(), 'Admin', NOW()) RETURNING id`,
     [chairRace.id]
   );
 

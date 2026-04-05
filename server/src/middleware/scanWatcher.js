@@ -82,7 +82,7 @@ async function getOrCreateActivePass(roundId) {
     [roundId]
   );
 
-  await db.query("UPDATE rounds SET status = 'scanning' WHERE id = $1 AND status = 'pending'", [roundId]);
+  await db.query("UPDATE rounds SET status = 'tallying' WHERE id = $1 AND status IN ('pending_needs_action', 'ready')", [roundId]);
 
   const { rows: [pass] } = await db.query(
     'INSERT INTO passes (round_id, pass_number) VALUES ($1, $2) RETURNING *',
@@ -179,11 +179,11 @@ async function processSingleBallot(filePath, scannerId, io) {
   if (!ballotSpec) {
     console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${serialNumber}: No ballot-spec.json for round ${roundId}\x1b[0m`);
     await db.query(
-      `INSERT INTO flagged_ballots (round_id, pass_id, ballot_serial_id, scanner_id, flag_reason, image_path)
+      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path)
        VALUES ($1, $2, $3, $4, 'uncertain', $5)`,
       [roundId, pass.id, ballotInfo.id, scannerId, filePath]
     );
-    if (io) io.emit('scan:flagged', { serial_number: serialNumber, reason: 'no_spec', scanner_id: scannerId });
+    if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'no_spec', scanner_id: scannerId });
     return;
   }
 
@@ -207,14 +207,14 @@ async function processSingleBallot(filePath, scannerId, io) {
       `${serialNumber}-${omrResult.flag_reason}-${Date.now()}.jpg`);
 
     await db.query(
-      `INSERT INTO flagged_ballots (round_id, pass_id, ballot_serial_id, scanner_id, flag_reason, image_path, omr_scores)
+      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, omr_scores)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [roundId, pass.id, ballotInfo.id, scannerId, omrResult.flag_reason, flaggedPath,
        JSON.stringify(omrResult.candidates)]
     );
 
     console.log(`\x1b[33m[ScanWatcher] ⚠ FLAGGED — ${serialNumber} (${omrResult.flag_reason})\x1b[0m`);
-    if (io) io.emit('scan:flagged', {
+    if (io) io.emit('scan:review_needed', {
       serial_number: serialNumber,
       reason: omrResult.flag_reason,
       scanner_id: scannerId,
