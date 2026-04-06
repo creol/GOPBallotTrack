@@ -1,16 +1,7 @@
 const { Router } = require('express');
-const crypto = require('crypto');
 const db = require('../db');
 
 const router = Router();
-
-const SN_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-function generateSN() {
-  const bytes = crypto.randomBytes(8);
-  let sn = '';
-  for (let i = 0; i < 8; i++) sn += SN_CHARSET[bytes[i] % SN_CHARSET.length];
-  return sn;
-}
 
 // GET /api/admin/elections/:id/export-json — Export election event as JSON
 router.get('/elections/:id/export-json', async (req, res) => {
@@ -151,16 +142,12 @@ router.post('/import-election', async (req, res) => {
           [race.id, roundData.round_number, roundData.paper_color]
         );
 
-        // Try to restore original serial numbers; generate fresh ones only on conflict
+        // Restore original serial numbers exactly (uniqueness is per-round, not global)
         for (const sn of (roundData.serials || [])) {
-          const { rows: [existing] } = await db.query(
-            'SELECT id FROM ballot_serials WHERE serial_number = $1', [sn]
-          );
-          const finalSN = existing ? generateSN() : sn;
           await db.query(
             `INSERT INTO ballot_serials (round_id, serial_number, status)
              VALUES ($1, $2, 'unused')`,
-            [round.id, finalSN]
+            [round.id, sn]
           );
         }
       }
