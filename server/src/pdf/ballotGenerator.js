@@ -146,7 +146,7 @@ function ptToPx(pt) {
  * ox, oy = origin offset on the page. bw, bh = ballot dimensions.
  * Returns { qr: {x,y,w,h in pts}, ovals: [{candidateId, cx, cy, rx, ry in pts}] }
  */
-async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candidates, serialNumber, sizeKey, logoPath, cfg }) {
+async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candidates, serialNumber, sizeKey, logoPath, cfg, filledCandidateId, testMode }) {
   const margin = Math.max(bw * 0.06, 14);
   const contentWidth = bw - margin * 2;
   const sc = getScale(sizeKey, cfg);
@@ -160,6 +160,18 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
 
   let y = oy + margin;
   const left = ox + margin;
+
+  // === TEST BANNER ===
+  if (testMode) {
+    const bannerH = sc.titleSize + 6;
+    doc.rect(ox, oy, bw, bannerH + margin).fill('#fee2e2');
+    doc.fillColor('#dc2626').fontSize(sc.titleSize).font('Helvetica-Bold');
+    doc.text('TEST BALLOT — NOT FOR OFFICIAL USE', left, y, { width: contentWidth, align: 'center' });
+    y += bannerH + 4;
+  }
+
+  // Reset fill color to black before rendering content
+  doc.fillColor('#000');
 
   // === HEADER ===
   if (cfg.header.show) {
@@ -205,7 +217,11 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
   for (const c of candidates) {
     const ovalX = left + sc.ovalRx + 4;
     const ovalY = y + sc.lineHeight / 2;
-    drawEmptyOval(doc, ovalX, ovalY, sc.ovalRx, sc.ovalRy);
+    if (filledCandidateId && c.id === filledCandidateId) {
+      drawFilledOval(doc, ovalX, ovalY, sc.ovalRx, sc.ovalRy);
+    } else {
+      drawEmptyOval(doc, ovalX, ovalY, sc.ovalRx, sc.ovalRy);
+    }
     doc.fontSize(sc.bodySize);
     doc.text(c.name, left + sc.ovalRx * 2 + 14, y + (sc.lineHeight - sc.bodySize) / 2, { width: contentWidth - sc.ovalRx * 2 - 20 });
 
@@ -287,12 +303,14 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
     };
 
     if (cfg.sn.show) {
-      const snSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
+      const autoSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
+      const snSize = (parseFloat(cfg.sn.fontSize) > 0) ? parseFloat(cfg.sn.fontSize) : autoSize;
       doc.fontSize(snSize).font('Courier-Bold');
       doc.text(serialNumber, qrX, qrY + sc.qrSize + 2, { width: sc.qrSize, align: 'center' });
     }
   } else if (cfg.sn.show) {
-    const snSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
+    const autoSize = sizeKey === 'eighth_letter' ? 5.5 : sizeKey === 'quarter_letter' ? 7 : 9;
+    const snSize = (parseFloat(cfg.sn.fontSize) > 0) ? parseFloat(cfg.sn.fontSize) : autoSize;
     doc.fontSize(snSize).font('Courier-Bold');
     doc.text(serialNumber, left, oy + bh - margin - snSize - 4, { width: contentWidth, align: 'center' });
   }
@@ -655,7 +673,7 @@ async function generateCalibrationPdf({ roundId, outputPath }) {
  * Render a single ballot to a PDF file for a specific serial number.
  * Returns the path to the generated PDF.
  */
-async function renderSingleBallotPdf({ roundId, serialNumber, outputPath, sizeKey: overrideSizeKey }) {
+async function renderSingleBallotPdf({ roundId, serialNumber, outputPath, sizeKey: overrideSizeKey, filledCandidateId, testMode }) {
   const data = await fetchBallotData(roundId);
   const { round, race, election, candidates } = data;
   const cfg = await loadDesignConfig(election.id, roundId);
@@ -664,15 +682,12 @@ async function renderSingleBallotPdf({ roundId, serialNumber, outputPath, sizeKe
   const size = SIZES[sizeKey];
   if (!size) throw new Error(`Invalid size: ${sizeKey}`);
 
-  const PDFDocument = require('pdfkit');
-  const fs = require('fs');
-
   const doc = new PDFDocument({ size: [size.width, size.height], margin: 0 });
   const stream = fs.createWriteStream(outputPath);
   doc.pipe(stream);
 
   await renderBallot(doc, 0, 0, size.width, size.height, {
-    election, race, round, candidates, serialNumber, sizeKey, logoPath: null, cfg,
+    election, race, round, candidates, serialNumber, sizeKey, logoPath: null, cfg, filledCandidateId, testMode,
   });
 
   doc.end();
@@ -684,4 +699,4 @@ async function renderSingleBallotPdf({ roundId, serialNumber, outputPath, sizeKe
   return outputPath;
 }
 
-module.exports = { generateBallots, generatePreviewPdf, generateCalibrationPdf, renderSingleBallotPdf, SIZES };
+module.exports = { generateBallots, generatePreviewPdf, generateCalibrationPdf, renderSingleBallotPdf, SIZES, renderBallot, fetchBallotData, loadDesignConfig };

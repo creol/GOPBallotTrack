@@ -20,8 +20,16 @@ RUN cd server && npm install --omit=dev
 # Copy server source
 COPY server/ server/
 
-# Copy agent files (for download from station setup page)
+# Copy agent files and install dependencies (served to station laptops for download)
+COPY agent/package.json agent/package-lock.json* agent/
+RUN cd agent && npm install --omit=dev
 COPY agent/ agent/
+
+# Copy station installer template (served with baked-in server URL)
+COPY station-install.bat station-install.bat
+
+# Download Windows x64 node.exe (served to station laptops — they run Windows, not Linux)
+RUN wget -q -O /app/node-win.exe https://nodejs.org/dist/v20.18.1/win-x64/node.exe
 
 # Copy built client
 COPY --from=client-build /app/client/dist client/dist

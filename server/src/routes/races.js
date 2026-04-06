@@ -1,4 +1,6 @@
 const { Router } = require('express');
+const path = require('path');
+const fs = require('fs');
 const db = require('../db');
 const { generateSerials } = require('../services/serialGenerator');
 
@@ -108,6 +110,21 @@ router.get('/races/:id/rounds', async (req, res) => {
       'SELECT * FROM rounds WHERE race_id = $1 ORDER BY round_number',
       [req.params.id]
     );
+
+    // Check PDF existence on disk for rounds missing ballot_pdf_generated_at
+    const { rows: [race] } = await db.query('SELECT election_id FROM races WHERE id = $1', [req.params.id]);
+    if (race) {
+      for (const round of rows) {
+        if (!round.ballot_pdf_generated_at) {
+          const pdfPath = path.join(__dirname, '..', '..', '..', 'uploads', 'elections',
+            String(race.election_id), 'rounds', String(round.id), 'ballots.pdf');
+          if (fs.existsSync(pdfPath)) {
+            round.ballot_pdf_generated_at = fs.statSync(pdfPath).mtime;
+          }
+        }
+      }
+    }
+
     res.json(rows);
   } catch (err) {
     console.error('List rounds error:', err);
@@ -204,17 +221,21 @@ router.put('/races/:id/outcome', async (req, res) => {
       return res.status(400).json({ error: 'outcome must be winner, advances_next_round, advances_primary, or closed' });
     }
 
+    // Only finalize race for terminal outcomes — not for advances_next_round
+    const isTerminal = ['winner', 'advances_primary', 'closed'].includes(outcome);
+    const newStatus = isTerminal ? 'results_finalized' : 'in_progress';
+
     const { rows: [race] } = await db.query(
       `UPDATE races SET
         outcome = $1, outcome_candidate_id = $2, outcome_notes = $3,
-        outcome_at = NOW(), status = 'results_finalized'
-       WHERE id = $4 RETURNING *`,
-      [outcome, candidate_id || null, notes || null, req.params.id]
+        outcome_at = NOW(), status = $4
+       WHERE id = $5 RETURNING *`,
+      [outcome, candidate_id || null, notes || null, newStatus, req.params.id]
     );
     if (!race) return res.status(404).json({ error: 'Race not found' });
 
-    // Close any pending rounds for this race
-    if (outcome === 'closed') {
+    // Cancel pending rounds only for terminal outcomes
+    if (isTerminal) {
       await db.query(
         "UPDATE rounds SET status = 'canceled' WHERE race_id = $1 AND status IN ('pending_needs_action', 'ready', 'tallying')",
         [req.params.id]

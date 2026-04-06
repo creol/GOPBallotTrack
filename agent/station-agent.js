@@ -55,6 +55,42 @@ function logSuccess(msg) {
 }
 
 /**
+ * Check if station is assigned to a round; auto-assign if exactly one round is active.
+ */
+async function ensureAssignment() {
+  try {
+    const { data: assignment } = await axios.get(`${serverUrl}/api/stations/${stationId}/assignment`);
+    if (assignment.assigned) {
+      logSuccess(`Assigned to round ${assignment.roundId}`);
+      return assignment.roundId;
+    }
+
+    log('Not assigned to a round — checking for active rounds...');
+    const { data: rounds } = await axios.get(`${serverUrl}/api/stations/active-rounds`);
+
+    if (rounds.length === 0) {
+      logError('No rounds are currently in tallying status.');
+      log(`Assign manually at: ${serverUrl}/station-setup`);
+      return null;
+    }
+
+    if (rounds.length === 1) {
+      const round = rounds[0];
+      await axios.post(`${serverUrl}/api/stations/${stationId}/assign`, { roundId: round.round_id });
+      logSuccess(`Auto-assigned to: ${round.race_name} — Round ${round.round_number} (${round.paper_color})`);
+      return round.round_id;
+    }
+
+    logError(`Found ${rounds.length} active rounds — cannot auto-assign.`);
+    log(`Assign manually at: ${serverUrl}/station-setup`);
+    return null;
+  } catch (err) {
+    logError(`Assignment check failed: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * Upload a file to the server with retry logic.
  */
 async function uploadFile(filePath) {
@@ -87,6 +123,15 @@ async function uploadFile(filePath) {
       const isAppError = status && (status >= 400 && status < 500) || (status === 500 && err.response?.data?.error);
       if (isAppError) {
         logError(`Upload rejected: ${errMsg} (${status}) — not retrying`);
+        // Move to failed folder so it doesn't sit in the watch folder
+        try {
+          const dest = path.join(failedDir, `${Date.now()}-${filename}`);
+          fs.renameSync(filePath, dest);
+          log(`Moved to failed: ${dest}`);
+        } catch (moveErr) {
+          logError(`Could not move failed file: ${moveErr.message}`);
+        }
+        return;
       } else if (attempt < retryAttempts) {
         const delay = Math.pow(2, attempt) * 1000;
         logError(`Upload failed (attempt ${attempt}/${retryAttempts}): ${errMsg} — retrying in ${delay / 1000}s`);
@@ -129,9 +174,21 @@ if (!fs.existsSync(watchFolder)) {
   fs.mkdirSync(watchFolder, { recursive: true });
 }
 
-// Test server connection
+// Test server connection, then auto-assign to a round if possible
 axios.get(`${serverUrl}/api/health`)
-  .then(res => logSuccess(`Server connection OK: ${res.data.status}`))
+  .then(res => {
+    logSuccess(`Server connection OK: ${res.data.status}`);
+    return ensureAssignment();
+  })
+  .then(roundId => {
+    if (roundId) {
+      log(`Uploads will be processed for round ${roundId}`);
+      log(`Scanner page: ${serverUrl}/scan/${roundId}`);
+    } else {
+      log('WARNING: Not assigned — uploads will fail until assigned.');
+      log(`Visit: ${serverUrl}/station-setup`);
+    }
+  })
   .catch(err => logError(`Cannot reach server: ${err.message}`));
 
 // Snapshot existing files to skip them

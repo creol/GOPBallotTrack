@@ -126,6 +126,17 @@ router.post('/elections/:id/generate-all-ballots', async (req, res) => {
 
         try {
           const result = await generateBallots({ roundId: round.id, quantity: null, sizeKey, logoPath: null });
+
+          // Mark PDF as generated and auto-set round to ready
+          await db.query(
+            `UPDATE rounds SET
+              ballot_pdf_generated_at = NOW(),
+              ballot_pdf_path = $1,
+              status = CASE WHEN status = 'pending_needs_action' THEN 'ready' ELSE status END
+             WHERE id = $2`,
+            [result.pdfPath, round.id]
+          );
+
           results.push({
             race: race.name,
             round: round.round_number,

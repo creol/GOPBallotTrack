@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
+import DashboardPreview from '../components/DashboardPreview';
 
 const CANDIDATE_OUTCOMES = [
   { value: '', label: '— No decision —' },
   { value: 'eliminated', label: 'Eliminated', color: '#ef4444', bg: '#fef2f2' },
+  { value: 'withdrew', label: 'Withdrew', color: '#6b7280', bg: '#f3f4f6' },
   { value: 'advance', label: 'Advance', color: '#16a34a', bg: '#f0fdf4' },
   { value: 'convention_winner', label: 'Convention Winner', color: '#16a34a', bg: '#f0fdf4' },
   { value: 'winner', label: 'Winner', color: '#16a34a', bg: '#f0fdf4' },
@@ -16,11 +18,8 @@ export default function ChairDecision() {
   const { id: electionId, raceId, roundId } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
-  const [chairName, setChairName] = useState('');
   const [showPreview, setShowPreview] = useState(false);
-  const [hasPreviewedOnce, setHasPreviewedOnce] = useState(false);
   const [released, setReleased] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [decisions, setDecisions] = useState({});
   const [withdrawn, setWithdrawn] = useState(new Set());
@@ -30,9 +29,39 @@ export default function ChairDecision() {
 
   const fetchData = async () => {
     try {
-      const { data: decision } = await api.get(`/rounds/${roundId}/chair-decision`);
+      const { data: decision } = await api.get(`/admin/rounds/${roundId}/chair-decision`);
       setData(decision);
       if (decision.round.published_at) setReleased(true);
+      // Load existing outcomes from DB into decisions state
+      const existingDecisions = {};
+      for (const r of decision.results) {
+        if (r.outcome) existingDecisions[r.candidate_id] = r.outcome;
+      }
+
+      // Carry forward eliminated/withdrew from prior rounds if this round has no decisions yet
+      if (Object.keys(existingDecisions).length === 0 && decision.round.round_number > 1) {
+        try {
+          // Get all published rounds for this race to find prior outcomes
+          const { data: raceRounds } = await api.get(`/admin/races/${raceId}/rounds`);
+          for (const pr of raceRounds) {
+            if (pr.round_number >= decision.round.round_number) continue;
+            try {
+              const { data: prDecision } = await api.get(`/admin/rounds/${pr.id}/chair-decision`);
+              for (const r of prDecision.results) {
+                if (r.outcome === 'eliminated' || r.outcome === 'withdrew') {
+                  existingDecisions[r.candidate_id] = r.outcome;
+                }
+              }
+            } catch {}
+          }
+          // Auto-save carried-forward decisions
+          if (Object.keys(existingDecisions).length > 0) {
+            await api.put(`/admin/rounds/${roundId}/candidate-outcomes`, { outcomes: existingDecisions });
+          }
+        } catch {}
+      }
+
+      setDecisions(existingDecisions);
       const { data: cands } = await api.get(`/admin/races/${raceId}/candidates`);
       setWithdrawn(new Set(cands.filter(c => c.status === 'withdrawn').map(c => c.id)));
     } catch (err) {
@@ -42,49 +71,52 @@ export default function ChairDecision() {
 
   useEffect(() => { fetchData(); }, [roundId]);
 
-  const handleDecisionChange = (candidateId, outcome) => {
-    setDecisions(prev => {
-      const next = { ...prev };
-      if (outcome) {
-        next[candidateId] = outcome;
-      } else {
-        delete next[candidateId];
-      }
-      return next;
-    });
+  const handleDecisionChange = async (candidateId, outcome) => {
+    console.log('[Decision] Change:', candidateId, '→', outcome);
+    const next = { ...decisions };
+    if (outcome) {
+      next[candidateId] = outcome;
+    } else {
+      delete next[candidateId];
+    }
+    setDecisions(next);
+
+    // Auto-save to DB
+    try {
+      const resp = await api.put(`/admin/rounds/${roundId}/candidate-outcomes`, {
+        outcomes: { [candidateId]: outcome || null },
+      });
+      console.log('[Decision] Saved:', resp.data);
+    } catch (err) {
+      console.error('[Decision] Save failed:', err.response?.data || err.message);
+      setError('Failed to save decision: ' + (err.response?.data?.error || err.message));
+    }
   };
 
   const handleApplyDecisions = async () => {
     setError(null);
     try {
-      for (const [candidateId, outcome] of Object.entries(decisions)) {
-        if (outcome === 'eliminated') {
-          await api.put(`/admin/candidates/${candidateId}/withdraw`);
-          setWithdrawn(prev => new Set([...prev, parseInt(candidateId)]));
-        }
+      // Save all outcomes to round_results
+      if (Object.keys(decisions).length > 0) {
+        await api.put(`/admin/rounds/${roundId}/candidate-outcomes`, { outcomes: decisions });
       }
-      // TODO: Store other outcomes (advance, winner, etc.) when round_results.outcome column exists
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to apply decisions');
     }
   };
 
-  const handleResetDecisions = () => {
-    setDecisions({});
-  };
-
-  const handleRelease = async () => {
-    if (!chairName.trim()) { setError('Please enter your name'); return; }
-    setSubmitting(true);
-    setError(null);
+  const handleResetDecisions = async () => {
+    // Clear all outcomes in DB
+    const clearOutcomes = {};
+    for (const candidateId of Object.keys(decisions)) {
+      clearOutcomes[candidateId] = null;
+    }
     try {
-      await api.post(`/rounds/${roundId}/release`, { released_by_name: chairName });
-      setReleased(true);
+      await api.put(`/admin/rounds/${roundId}/candidate-outcomes`, { outcomes: clearOutcomes });
+      setDecisions({});
     } catch (err) {
-      setError(err.response?.data?.error || 'Release failed');
-    } finally {
-      setSubmitting(false);
+      setError('Failed to reset: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -101,7 +133,8 @@ export default function ChairDecision() {
     try {
       if (action === 'next_round') {
         await handleApplyDecisions();
-        await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'advances_next_round' });
+        // Finalize the round so it can be published in Control Center
+        await api.post(`/admin/rounds/${roundId}/confirm`, { confirmed_by_name: actionPin ? 'admin' : 'admin' });
         setShowAction(null);
         setActionPin('');
         navigate(`/admin/elections/${electionId}/races/${raceId}`);
@@ -172,19 +205,24 @@ export default function ChairDecision() {
           <tbody>
             {data.results.map(r => {
               const pct = Number(r.percentage);
-              const isWithdrawn = withdrawn.has(r.candidate_id);
               const decision = decisions[r.candidate_id] || '';
               const outcomeInfo = CANDIDATE_OUTCOMES.find(o => o.value === decision);
+              const isOut = decision === 'eliminated' || decision === 'withdrew' || r.candidate_status === 'withdrawn';
               return (
                 <tr key={r.candidate_id} style={{
-                  background: isWithdrawn ? '#fef2f2' : outcomeInfo?.bg || '',
-                  opacity: isWithdrawn ? 0.6 : 1,
+                  background: outcomeInfo?.bg || '',
+                  opacity: isOut ? 0.6 : 1,
                 }}>
                   <td style={styles.td}>
-                    <strong style={isWithdrawn ? { textDecoration: 'line-through' } : {}}>
+                    <strong style={isOut ? { textDecoration: 'line-through' } : {}}>
                       {r.candidate_name}
                     </strong>
-                    {isWithdrawn && <span style={styles.eliminatedBadge}>Withdrawn</span>}
+                    {outcomeInfo && decision && (
+                      <span style={{ marginLeft: '0.5rem', background: outcomeInfo.bg, color: outcomeInfo.color, padding: '2px 6px', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700 }}>
+                        {outcomeInfo.label}
+                      </span>
+                    )}
+                    {!decision && r.candidate_status === 'withdrawn' && <span style={styles.eliminatedBadge}>Withdrawn</span>}
                   </td>
                   <td style={styles.td}>{r.vote_count}</td>
                   <td style={styles.td}>
@@ -196,20 +234,22 @@ export default function ChairDecision() {
                     </div>
                   </td>
                   <td style={styles.td}>
-                    {!released && !isWithdrawn && (
                       <select
                         style={{ ...styles.input, fontSize: '0.82rem', padding: '0.3rem 0.4rem',
                           color: outcomeInfo?.color || '#333',
                           fontWeight: decision ? 700 : 400,
                         }}
                         value={decision}
-                        onChange={e => handleDecisionChange(r.candidate_id, e.target.value)}
+                        onChange={e => {
+                          console.log('[Select] onChange fired for', r.candidate_id, e.target.value);
+                          handleDecisionChange(r.candidate_id, e.target.value);
+                        }}
+                        disabled={data.race?.status === 'results_finalized'}
                       >
                         {CANDIDATE_OUTCOMES.map(o => (
                           <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </select>
-                    )}
                   </td>
                 </tr>
               );
@@ -218,62 +258,34 @@ export default function ChairDecision() {
         </table>
 
         {/* Apply / Reset buttons */}
-        {!released && hasDecisions && (
+        {data.race?.status !== 'results_finalized' && hasDecisions && (
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
             <button style={styles.btnReset} onClick={handleResetDecisions}>Reset All Decisions</button>
           </div>
         )}
       </div>
 
-      {/* Release Section */}
-      {!released && (
-        <div style={styles.section}>
-          <h2>Release Results</h2>
+      {/* Preview Section */}
+      <div style={styles.section}>
+        <button
+          style={styles.btnPreview}
+          onClick={() => setShowPreview(!showPreview)}
+        >
+          {showPreview ? 'Close Preview' : 'Preview Public Dashboard'}
+        </button>
 
-          <button
-            style={styles.btnPreview}
-            onClick={() => { setShowPreview(!showPreview); setHasPreviewedOnce(true); }}
-          >
-            {showPreview ? 'Close Preview' : 'Preview Public Dashboard'}
-          </button>
-
-          {showPreview && (
-            <div style={styles.previewPanel}>
-              <h3 style={{ marginTop: 0 }}>Public View Preview</h3>
-              <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>{data.election.name} — {data.race.name} — Round {data.round.round_number}</p>
-              {data.results.map(r => {
-                const isW = withdrawn.has(r.candidate_id);
-                const decision = decisions[r.candidate_id];
-                const outcomeInfo = CANDIDATE_OUTCOMES.find(o => o.value === decision);
-                return (
-                  <div key={r.candidate_id} style={{ ...styles.previewRow, opacity: isW || decision === 'eliminated' ? 0.5 : 1 }}>
-                    <span style={{ flex: 1, fontWeight: 600 }}>
-                      <span style={{ textDecoration: isW || decision === 'eliminated' ? 'line-through' : 'none' }}>{r.candidate_name}</span>
-                      {isW && <span style={{ color: '#f87171', fontSize: '0.75rem', marginLeft: '0.5rem' }}>WITHDRAWN</span>}
-                      {outcomeInfo && decision && (
-                        <span style={{ color: outcomeInfo.color, fontSize: '0.75rem', marginLeft: '0.5rem' }}>{outcomeInfo.label.toUpperCase()}</span>
-                      )}
-                    </span>
-                    <span>{r.vote_count} votes ({Number(r.percentage).toFixed(5)}%)</span>
-                  </div>
-                );
-              })}
-              <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>{data.total_votes} ballots counted</p>
-            </div>
-          )}
-
-          {hasPreviewedOnce && (
-            <div style={styles.releaseBox}>
-              <input style={styles.input} placeholder="Your name" value={chairName}
-                onChange={e => setChairName(e.target.value)} />
-              <button style={{ ...styles.btnRelease, opacity: submitting ? 0.6 : 1 }}
-                onClick={handleRelease} disabled={submitting}>
-                {submitting ? 'Releasing...' : 'Release to Public'}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+        {showPreview && (
+          <DashboardPreview
+            electionName={data.election.name}
+            raceName={data.race.name}
+            roundNumber={data.round.round_number}
+            results={data.results}
+            decisions={decisions}
+            withdrawn={withdrawn}
+            totalVotes={data.total_votes}
+          />
+        )}
+      </div>
 
       {/* Race Actions */}
       <div style={styles.section}>
@@ -282,7 +294,7 @@ export default function ChairDecision() {
 
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
           <button style={styles.btnPrimary} onClick={() => { setShowAction('next_round'); setActionPin(''); setActionError(null); }}>
-            Move to Next Round
+            Finalize Round & Move to Next
           </button>
           <button style={styles.btnSuccess} onClick={() => { setShowAction('finalize'); setActionPin(''); setActionError(null); }}>
             Finalize Race
@@ -297,12 +309,12 @@ export default function ChairDecision() {
           <div style={styles.modalOverlay}>
             <div style={styles.modalCard}>
               <h3 style={{ margin: '0 0 0.5rem' }}>
-                {showAction === 'next_round' && 'Move to Next Round'}
+                {showAction === 'next_round' && 'Finalize Round & Move to Next'}
                 {showAction === 'finalize' && 'Finalize Race'}
                 {showAction === 'cancel' && 'Cancel Race'}
               </h3>
               <p style={{ color: '#4b5563', margin: '0 0 1rem', fontSize: '0.9rem' }}>
-                {showAction === 'next_round' && 'This will apply candidate decisions and create the next round.'}
+                {showAction === 'next_round' && 'This will save candidate decisions, finalize this round, and return to the race page. The round will be available for publishing in the Control Center.'}
                 {showAction === 'finalize' && 'This will apply all candidate decisions and close the race. This cannot be undone.'}
                 {showAction === 'cancel' && 'This will cancel the race. A reason is required. This cannot be undone.'}
               </p>

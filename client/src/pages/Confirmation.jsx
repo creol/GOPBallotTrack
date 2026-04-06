@@ -18,11 +18,22 @@ export default function Confirmation() {
   const [reviewIndex, setReviewIndex] = useState(0);
   const [showBallotTable, setShowBallotTable] = useState(false);
   const [allPassBallots, setAllPassBallots] = useState({});
+  const [comparePass1, setComparePass1] = useState(null);
+  const [comparePass2, setComparePass2] = useState(null);
+  const [tableFilter, setTableFilter] = useState('all'); // all, mismatch, confDiff, corrected
+  const [tableSearch, setTableSearch] = useState('');
 
   const fetchComparison = async () => {
     try {
-      const { data: comp } = await api.get(`/rounds/${roundId}/comparison`);
+      const { data: comp } = await api.get(`/admin/rounds/${roundId}/comparison`);
       setData(comp);
+      // Default compare passes to first two
+      if (comp.passes.length >= 2 && !comparePass1) {
+        setComparePass1(comp.passes[0].pass_number);
+        setComparePass2(comp.passes[1].pass_number);
+      } else if (comp.passes.length === 1 && !comparePass1) {
+        setComparePass1(comp.passes[0].pass_number);
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load comparison');
     }
@@ -36,7 +47,7 @@ export default function Confirmation() {
     const byPass = {};
     for (const p of data.passes) {
       try {
-        const { data: ballots } = await api.get(`/passes/${p.id}/ballots`);
+        const { data: ballots } = await api.get(`/admin/passes/${p.id}/ballots`);
         byPass[p.pass_number] = ballots;
       } catch { byPass[p.pass_number] = []; }
     }
@@ -50,7 +61,7 @@ export default function Confirmation() {
     setReviewIndex(0);
     try {
       // Load ballots from the selected pass
-      const { data: ballots } = await api.get(`/passes/${passId}/ballots`);
+      const { data: ballots } = await api.get(`/admin/passes/${passId}/ballots`);
       setReviewBallots(ballots);
       // Also load all other passes for comparison
       const byPass = {};
@@ -59,7 +70,7 @@ export default function Confirmation() {
           byPass[p.pass_number] = ballots;
         } else {
           try {
-            const { data: pb } = await api.get(`/passes/${p.id}/ballots`);
+            const { data: pb } = await api.get(`/admin/passes/${p.id}/ballots`);
             byPass[p.pass_number] = pb;
           } catch { byPass[p.pass_number] = []; }
         }
@@ -78,7 +89,7 @@ export default function Confirmation() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/rounds/${roundId}/confirm`, { confirmed_by_name: judgeName });
+      await api.post(`/admin/rounds/${roundId}/confirm`, { confirmed_by_name: judgeName });
       navigate(`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/chair`);
     } catch (err) {
       setError(err.response?.data?.error || 'Confirmation failed');
@@ -93,7 +104,7 @@ export default function Confirmation() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/rounds/${roundId}/confirm-override`, {
+      await api.post(`/admin/rounds/${roundId}/confirm-override`, {
         confirmed_by_name: judgeName,
         override_notes: overrideNotes,
       });
@@ -185,25 +196,85 @@ export default function Confirmation() {
       {/* Ballot-Level Comparison Table */}
       {data.passes.length >= 1 && (
         <div style={styles.section}>
-          <button style={styles.btnPrimary} onClick={handleToggleBallotTable}>
-            {showBallotTable ? 'Hide Ballot Table' : 'Show Ballot-Level Comparison'}
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button style={styles.btnPrimary} onClick={handleToggleBallotTable}>
+              {showBallotTable ? 'Hide Ballot Table' : 'Show Ballot-Level Comparison'}
+            </button>
+            {showBallotTable && data.passes.length > 2 && (
+              <>
+                <span style={{ fontSize: '0.82rem', color: '#666' }}>Compare:</span>
+                <select style={styles.input} value={comparePass1 || ''} onChange={e => setComparePass1(parseInt(e.target.value))}>
+                  {data.passes.map(p => <option key={p.pass_number} value={p.pass_number}>Pass {p.pass_number}</option>)}
+                </select>
+                <span style={{ fontSize: '0.82rem', color: '#666' }}>vs</span>
+                <select style={styles.input} value={comparePass2 || ''} onChange={e => setComparePass2(parseInt(e.target.value))}>
+                  {data.passes.map(p => <option key={p.pass_number} value={p.pass_number}>Pass {p.pass_number}</option>)}
+                </select>
+              </>
+            )}
+          </div>
 
           {showBallotTable && (() => {
+            const selectedPasses = [comparePass1, comparePass2].filter(Boolean);
             const snMap = {};
             for (const [passNum, ballots] of Object.entries(allPassBallots)) {
+              if (selectedPasses.length > 0 && !selectedPasses.includes(parseInt(passNum))) continue;
               for (const b of ballots) {
                 if (!snMap[b.serial_number]) snMap[b.serial_number] = {};
-                snMap[b.serial_number][passNum] = { candidate: b.candidate_name, confidence: b.omr_confidence };
+                snMap[b.serial_number][passNum] = { candidate: b.candidate_name, confidence: b.omr_confidence, method: b.omr_method };
               }
             }
-            const sns = Object.keys(snMap).sort();
-            const passNums = data.passes.map(p => p.pass_number);
+            const passNums = selectedPasses.length > 0 ? selectedPasses : data.passes.map(p => p.pass_number);
+
+            // Build rows with computed fields for filtering
+            const allRows = Object.keys(snMap).sort().map(sn => {
+              const row = snMap[sn];
+              const votes = passNums.map(n => row[n]?.candidate).filter(Boolean);
+              const confs = passNums.map(n => row[n]?.confidence).filter(c => c != null);
+              const sameResult = new Set(votes).size <= 1;
+              const confDiff = confs.length >= 2 ? Math.abs(confs[0] - confs[1]) * 100 : 0;
+              const significantDiff = confDiff > 20;
+              const wasCorrected = passNums.some(n => row[n]?.method === 'manual_correction');
+              return { sn, row, votes, confs, sameResult, confDiff, significantDiff, wasCorrected };
+            });
+
+            // Apply filters
+            let filtered = allRows;
+            if (tableSearch) {
+              filtered = filtered.filter(r => r.sn.includes(tableSearch.toUpperCase()));
+            }
+            if (tableFilter === 'mismatch') filtered = filtered.filter(r => !r.sameResult);
+            else if (tableFilter === 'confDiff') filtered = filtered.filter(r => r.significantDiff);
+            else if (tableFilter === 'corrected') filtered = filtered.filter(r => r.wasCorrected);
+
+            const mismatchCount = allRows.filter(r => !r.sameResult).length;
+            const confDiffCount = allRows.filter(r => r.significantDiff).length;
+            const correctedCount = allRows.filter(r => r.wasCorrected).length;
 
             return (
-              <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
-                <table style={styles.table}>
-                  <thead>
+              <div style={{ marginTop: '0.75rem' }}>
+                {/* Filters */}
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                  <input
+                    style={{ ...styles.input, width: 150, fontFamily: 'monospace', textTransform: 'uppercase', fontSize: '0.82rem' }}
+                    placeholder="Search SN..."
+                    value={tableSearch}
+                    onChange={e => setTableSearch(e.target.value)}
+                  />
+                  <button style={{ ...styles.btnSmall, background: tableFilter === 'all' ? '#2563eb' : '#e5e7eb', color: tableFilter === 'all' ? '#fff' : '#374151' }}
+                    onClick={() => setTableFilter('all')}>All ({allRows.length})</button>
+                  <button style={{ ...styles.btnSmall, background: tableFilter === 'mismatch' ? '#dc2626' : '#e5e7eb', color: tableFilter === 'mismatch' ? '#fff' : '#374151' }}
+                    onClick={() => setTableFilter(tableFilter === 'mismatch' ? 'all' : 'mismatch')}>Mismatch ({mismatchCount})</button>
+                  <button style={{ ...styles.btnSmall, background: tableFilter === 'confDiff' ? '#f59e0b' : '#e5e7eb', color: tableFilter === 'confDiff' ? '#fff' : '#374151' }}
+                    onClick={() => setTableFilter(tableFilter === 'confDiff' ? 'all' : 'confDiff')}>Conf. Diff ({confDiffCount})</button>
+                  <button style={{ ...styles.btnSmall, background: tableFilter === 'corrected' ? '#3730a3' : '#e5e7eb', color: tableFilter === 'corrected' ? '#fff' : '#374151' }}
+                    onClick={() => setTableFilter(tableFilter === 'corrected' ? 'all' : 'corrected')}>Corrected ({correctedCount})</button>
+                </div>
+
+                {/* Scrollable table window */}
+                <div style={{ maxHeight: 280, overflowY: 'auto', overflowX: 'auto', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+                <table style={{ ...styles.table, marginTop: 0 }}>
+                  <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
                     <tr>
                       <th style={styles.th}>#</th>
                       <th style={styles.th}>Serial Number</th>
@@ -218,27 +289,56 @@ export default function Confirmation() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sns.map((sn, i) => {
-                      const row = snMap[sn];
-                      const votes = passNums.map(n => row[n]?.candidate).filter(Boolean);
-                      const confs = passNums.map(n => row[n]?.confidence).filter(c => c != null);
-                      const sameResult = new Set(votes).size <= 1;
-                      const confDiff = confs.length >= 2 ? Math.abs(confs[0] - confs[1]) * 100 : 0;
-                      const significantDiff = confDiff > 20;
-
+                    {filtered.map((r, i) => {
                       let rowBg = '';
-                      if (!sameResult) rowBg = '#fef2f2';
-                      else if (significantDiff) rowBg = '#fffbeb';
+                      if (!r.sameResult) rowBg = '#fef2f2';
+                      else if (r.significantDiff) rowBg = '#fffbeb';
 
                       return (
-                        <tr key={sn} style={{ background: rowBg }}>
+                        <tr key={r.sn} style={{ background: rowBg }}>
                           <td style={styles.td}>{i + 1}</td>
-                          <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 600, fontSize: '0.8rem' }}>{sn}</td>
+                          <td style={{ ...styles.td, fontFamily: 'monospace', fontWeight: 600, fontSize: '0.8rem' }}>
+                            <a href="#review" style={{ color: '#2563eb', textDecoration: 'none', cursor: 'pointer' }}
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const firstPassId = data.passes[0]?.id;
+                                if (!firstPassId) return;
+                                if (reviewPassId !== firstPassId) {
+                                  await handleReviewPass(firstPassId);
+                                }
+                                const idx = (reviewPassId === firstPassId ? reviewBallots : []).findIndex(b => b.serial_number === r.sn);
+                                if (idx >= 0) {
+                                  setReviewIndex(idx);
+                                } else {
+                                  try {
+                                    const { data: ballots } = await api.get(`/admin/passes/${firstPassId}/ballots`);
+                                    const foundIdx = ballots.findIndex(b => b.serial_number === r.sn);
+                                    setReviewBallots(ballots);
+                                    setReviewPassId(firstPassId);
+                                    setReviewIndex(foundIdx >= 0 ? foundIdx : 0);
+                                    const byPass = {};
+                                    for (const p of data.passes) {
+                                      try {
+                                        const { data: pb } = await api.get(`/admin/passes/${p.id}/ballots`);
+                                        byPass[p.pass_number] = pb;
+                                      } catch { byPass[p.pass_number] = []; }
+                                    }
+                                    setAllPassBallots(byPass);
+                                  } catch {}
+                                }
+                              }}
+                            >{r.sn}</a>
+                            {r.wasCorrected && (
+                              <span style={{ marginLeft: '0.35rem', background: '#e0e7ff', color: '#3730a3', padding: '1px 5px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, verticalAlign: 'middle' }}>
+                                CORRECTED
+                              </span>
+                            )}
+                          </td>
                           {passNums.map(n => {
-                            const d = row[n];
+                            const d = r.row[n];
                             return (
                               <React.Fragment key={n}>
-                                <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: !sameResult ? '#dc2626' : '#374151' }}>
+                                <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: !r.sameResult ? '#dc2626' : '#374151' }}>
                                   {d?.candidate || '—'}
                                 </td>
                                 <td style={{ ...styles.td, fontSize: '0.8rem', color: d?.confidence > 0.5 ? '#16a34a' : d?.confidence > 0.2 ? '#f59e0b' : '#dc2626' }}>
@@ -247,16 +347,16 @@ export default function Confirmation() {
                               </React.Fragment>
                             );
                           })}
-                          <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: significantDiff ? '#f59e0b' : '#6b7280' }}>
-                            {confs.length >= 2 ? `${confDiff.toFixed(1)}%` : '—'}
+                          <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: r.significantDiff ? '#f59e0b' : '#6b7280' }}>
+                            {r.confs.length >= 2 ? `${r.confDiff.toFixed(1)}%` : '—'}
                           </td>
                           <td style={{ ...styles.td, textAlign: 'center' }}>
                             <span style={{
                               display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: '0.75rem',
-                              background: sameResult ? '#dcfce7' : '#fee2e2',
-                              color: sameResult ? '#166534' : '#dc2626',
+                              background: r.sameResult ? '#dcfce7' : '#fee2e2',
+                              color: r.sameResult ? '#166534' : '#dc2626',
                             }}>
-                              {sameResult ? 'Yes' : 'No'}
+                              {r.sameResult ? 'Yes' : 'No'}
                             </span>
                           </td>
                         </tr>
@@ -264,6 +364,10 @@ export default function Confirmation() {
                     })}
                   </tbody>
                 </table>
+                </div>
+                <p style={{ color: '#9ca3af', fontSize: '0.75rem', marginTop: '0.35rem' }}>
+                  Showing {filtered.length} of {allRows.length} ballots
+                </p>
               </div>
             );
           })()}
@@ -273,9 +377,23 @@ export default function Confirmation() {
       {/* Ballot Review Panel */}
       {reviewPassId && (
         <div style={styles.section}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0 }}>Ballot Review — Pass {data.passes.find(p => p.id === reviewPassId)?.pass_number}</h2>
-            <button style={styles.btnSmall} onClick={() => setReviewPassId(null)}>Close</button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h2 style={{ margin: 0 }}>Ballot Review</h2>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              {data.passes.length > 2 && (
+                <>
+                  <span style={{ fontSize: '0.82rem', color: '#666' }}>Comparing:</span>
+                  <select style={{ ...styles.input, fontSize: '0.8rem', padding: '0.2rem' }} value={comparePass1 || ''} onChange={e => { setComparePass1(parseInt(e.target.value)); }}>
+                    {data.passes.map(p => <option key={p.pass_number} value={p.pass_number}>Pass {p.pass_number}</option>)}
+                  </select>
+                  <span style={{ fontSize: '0.82rem', color: '#666' }}>vs</span>
+                  <select style={{ ...styles.input, fontSize: '0.8rem', padding: '0.2rem' }} value={comparePass2 || ''} onChange={e => { setComparePass2(parseInt(e.target.value)); }}>
+                    {data.passes.map(p => <option key={p.pass_number} value={p.pass_number}>Pass {p.pass_number}</option>)}
+                  </select>
+                </>
+              )}
+              <button style={styles.btnSmall} onClick={() => setReviewPassId(null)}>Close</button>
+            </div>
           </div>
 
           {loadingBallots && <p>Loading ballots...</p>}
@@ -283,11 +401,13 @@ export default function Confirmation() {
           {!loadingBallots && reviewBallots.length > 0 && (() => {
             const b = reviewBallots[reviewIndex];
             const imgSrc = b.image_path ? `/data/scans/${b.image_path.replace(/^\/app\/data\/scans\//, '')}` : null;
-            const passNums = data.passes.map(p => p.pass_number);
+            const selectedPasses = [comparePass1, comparePass2].filter(Boolean);
+            const passNums = selectedPasses.length >= 2 ? selectedPasses : data.passes.map(p => p.pass_number);
 
-            // Find this SN's data across all passes
+            // Find this SN's data across selected passes
             const passData = {};
             for (const [pn, ballots] of Object.entries(allPassBallots)) {
+              if (selectedPasses.length >= 2 && !selectedPasses.includes(parseInt(pn))) continue;
               const match = ballots.find(x => x.serial_number === b.serial_number);
               if (match) passData[pn] = match;
             }
@@ -331,7 +451,7 @@ export default function Confirmation() {
                   <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.2rem', marginLeft: '0.5rem' }}>{b.serial_number}</span>
                 </div>
 
-                {/* Per-pass comparison */}
+                {/* Per-pass comparison with change vote */}
                 <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
                   {passNums.map(pn => {
                     const pd = passData[pn];
@@ -352,6 +472,37 @@ export default function Confirmation() {
                             }}>
                               {pd.omr_confidence != null ? `${(pd.omr_confidence * 100).toFixed(1)}%` : 'manual'}
                             </div>
+                            <select
+                              style={{ marginTop: '0.35rem', padding: '0.25rem', fontSize: '0.8rem', border: '1px solid #d1d5db', borderRadius: 4, width: '100%' }}
+                              value={pd.candidate_id}
+                              onChange={async (e) => {
+                                const newCandId = parseInt(e.target.value);
+                                if (newCandId === pd.candidate_id) return;
+                                let name = judgeName;
+                                if (!name) {
+                                  name = prompt('Enter your name to log this change:');
+                                  if (!name) { e.target.value = pd.candidate_id; return; }
+                                  setJudgeName(name);
+                                }
+                                const reason = prompt('Reason for change (optional):');
+                                try {
+                                  await api.put(`/admin/scans/${pd.scan_id}/change-vote`, {
+                                    candidate_id: newCandId,
+                                    changed_by: name,
+                                    reason: reason || null,
+                                  });
+                                  handleReviewPass(reviewPassId);
+                                  fetchComparison();
+                                } catch (err) {
+                                  alert('Failed to change vote: ' + (err.response?.data?.error || err.message));
+                                  e.target.value = pd.candidate_id;
+                                }
+                              }}
+                            >
+                              {data.candidates.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </select>
                           </>
                         ) : (
                           <div style={{ color: '#9ca3af' }}>Not scanned</div>

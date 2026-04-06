@@ -6,7 +6,6 @@ const {
   getChairPreview,
   getChairDecision,
 } = require('../services/confirmationService');
-
 const db = require('../db');
 
 const router = Router();
@@ -29,6 +28,69 @@ router.get('/passes/:id/ballots', async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('List pass ballots error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/scans/:id/change-vote — Change the candidate vote on a scan
+router.put('/scans/:id/change-vote', async (req, res) => {
+  try {
+    const { candidate_id, changed_by, reason } = req.body;
+    if (!candidate_id) return res.status(400).json({ error: 'candidate_id is required' });
+    if (!changed_by) return res.status(400).json({ error: 'changed_by (your name) is required' });
+
+    // Get the current vote before changing
+    const { rows: [current] } = await db.query('SELECT candidate_id FROM scans WHERE id = $1', [req.params.id]);
+    if (!current) return res.status(404).json({ error: 'Scan not found' });
+
+    // Update the vote
+    const { rows: [scan] } = await db.query(
+      `UPDATE scans SET candidate_id = $1, omr_method = 'manual_correction', scanned_by = $2
+       WHERE id = $3 RETURNING *`,
+      [candidate_id, `Corrected:${changed_by}`, req.params.id]
+    );
+
+    // Log the change
+    await db.query(
+      `INSERT INTO vote_changes (scan_id, old_candidate_id, new_candidate_id, changed_by, reason)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [req.params.id, current.candidate_id, candidate_id, changed_by, reason || null]
+    );
+
+    res.json({ message: 'Vote corrected', scan });
+  } catch (err) {
+    console.error('Change vote error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/rounds/:id/candidate-outcomes — Save candidate outcomes for a round
+router.put('/rounds/:id/candidate-outcomes', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { outcomes } = req.body; // { candidateId: 'advance', candidateId2: 'eliminated', ... }
+    if (!outcomes || typeof outcomes !== 'object') {
+      return res.status(400).json({ error: 'outcomes object is required' });
+    }
+
+    for (const [candidateId, outcome] of Object.entries(outcomes)) {
+      // Try update first, insert if no row exists
+      const { rowCount } = await db.query(
+        'UPDATE round_results SET outcome = $1 WHERE round_id = $2 AND candidate_id = $3',
+        [outcome || null, roundId, parseInt(candidateId)]
+      );
+      if (rowCount === 0 && outcome) {
+        // No round_results row — insert one with 0 votes
+        await db.query(
+          'INSERT INTO round_results (round_id, candidate_id, vote_count, percentage, outcome) VALUES ($1, $2, 0, 0, $3)',
+          [roundId, parseInt(candidateId), outcome]
+        );
+      }
+    }
+
+    res.json({ message: 'Candidate outcomes saved' });
+  } catch (err) {
+    console.error('Save candidate outcomes error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

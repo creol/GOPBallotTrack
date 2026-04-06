@@ -17,7 +17,7 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 });
 
-// GET /api/stations/download-agent — Download station agent as ZIP
+// GET /api/stations/download-agent — Download station agent as ZIP (includes node_modules)
 router.get('/stations/download-agent', (req, res) => {
   const stationId = req.query.stationId || 'station-1';
   const serverUrl = `${req.protocol}://${req.get('host')}`;
@@ -41,11 +41,17 @@ router.get('/stations/download-agent', (req, res) => {
   archive.file(path.join(agentDir, 'package.json'), { name: 'package.json' });
   archive.file(path.join(agentDir, 'README.md'), { name: 'README.md' });
 
+  // Include node_modules if they exist (so stations don't need npm)
+  const nodeModulesDir = path.join(agentDir, 'node_modules');
+  if (fs.existsSync(nodeModulesDir)) {
+    archive.directory(nodeModulesDir, 'node_modules');
+  }
+
   // Generate a pre-filled config.json with this server's URL and the station ID
   const config = JSON.stringify({
     serverUrl,
     stationId,
-    watchFolder: process.platform === 'win32' ? 'C:\\ScanSnap\\Output' : `${require('os').homedir()}/ScanSnap/Output`,
+    watchFolder: 'C:\\ScanSnap\\Output',
     retryAttempts: 5,
   }, null, 2);
   archive.append(config, { name: 'config.json' });
@@ -53,7 +59,85 @@ router.get('/stations/download-agent', (req, res) => {
   archive.finalize();
 });
 
-// GET /api/stations/active-rounds — All rounds in tallying status
+// GET /api/stations/download-installer — Download a self-configuring .bat installer
+router.get('/stations/download-installer', (req, res) => {
+  const stationId = req.query.stationId || 'station-1';
+  const serverUrl = `${req.protocol}://${req.get('host')}`;
+
+  const templatePath = path.join(__dirname, '..', '..', '..', 'station-install.bat');
+  if (!fs.existsSync(templatePath)) {
+    return res.status(404).json({ error: 'station-install.bat template not found on server' });
+  }
+
+  let bat = fs.readFileSync(templatePath, 'utf8');
+  bat = bat.replace('__SERVER_URL__', serverUrl);
+  bat = bat.replace('__STATION_ID__', stationId);
+
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="BallotTrack-Station-Setup.bat"`);
+  res.send(bat);
+});
+
+// GET /api/stations/download-node — Serve Windows x64 node.exe for station laptops
+router.get('/stations/download-node', (req, res) => {
+  // Serve the Windows binary downloaded during Docker build (NOT the container's Linux binary)
+  const nodePath = path.join(__dirname, '..', '..', '..', 'node-win.exe');
+  if (!fs.existsSync(nodePath)) {
+    return res.status(404).json({ error: 'Windows node.exe not found — rebuild the Docker image' });
+  }
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="node.exe"');
+  res.sendFile(path.resolve(nodePath));
+});
+
+// GET /api/stations/download-bundle — Single ZIP with node.exe + agent + node_modules + config
+router.get('/stations/download-bundle', (req, res) => {
+  const stationId = req.query.stationId || 'station-1';
+  const serverUrl = `${req.protocol}://${req.get('host')}`;
+  const agentDir = path.join(__dirname, '..', '..', '..', 'agent');
+  const nodeWinPath = path.join(__dirname, '..', '..', '..', 'node-win.exe');
+
+  if (!fs.existsSync(path.join(agentDir, 'station-agent.js'))) {
+    return res.status(404).json({ error: 'Agent files not found on server' });
+  }
+  if (!fs.existsSync(nodeWinPath)) {
+    return res.status(404).json({ error: 'Windows node.exe not found — rebuild the Docker image' });
+  }
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="ballottrack-station-${stationId}.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 1 } }); // level 1 = fast compression
+  archive.pipe(res);
+
+  // Windows node.exe (~40 MB — doesn't compress much, so speed > ratio)
+  archive.file(nodeWinPath, { name: 'node.exe' });
+
+  // Agent source files
+  archive.file(path.join(agentDir, 'station-agent.js'), { name: 'station-agent.js' });
+  archive.file(path.join(agentDir, 'setup.js'), { name: 'setup.js' });
+  archive.file(path.join(agentDir, 'package.json'), { name: 'package.json' });
+  archive.file(path.join(agentDir, 'README.md'), { name: 'README.md' });
+
+  // Pre-installed node_modules
+  const nodeModulesDir = path.join(agentDir, 'node_modules');
+  if (fs.existsSync(nodeModulesDir)) {
+    archive.directory(nodeModulesDir, 'node_modules');
+  }
+
+  // Pre-filled config.json
+  const config = JSON.stringify({
+    serverUrl,
+    stationId,
+    watchFolder: 'C:\\ScanSnap\\Output',
+    retryAttempts: 5,
+  }, null, 2);
+  archive.append(config, { name: 'config.json' });
+
+  archive.finalize();
+});
+
+// GET /api/stations/active-rounds — All rounds available for station assignment
 router.get('/stations/active-rounds', async (req, res) => {
   try {
     const { rows } = await db.query(
@@ -63,7 +147,7 @@ router.get('/stations/active-rounds', async (req, res) => {
        FROM rounds r
        JOIN races ra ON r.race_id = ra.id
        JOIN elections e ON ra.election_id = e.id
-       WHERE r.status = 'tallying'
+       WHERE r.status IN ('voting_open', 'voting_closed', 'tallying')
        ORDER BY e.name, ra.display_order, r.round_number`
     );
     res.json(rows);

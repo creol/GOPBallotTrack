@@ -8,7 +8,7 @@ export default function BallotDesigner() {
   const [election, setElection] = useState(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [previewSize, setPreviewSize] = useState('letter');
+  const [previewSize, setPreviewSize] = useState('quarter_letter');
   const [previewUrl, setPreviewUrl] = useState(null);
   const [generatingPreview, setGeneratingPreview] = useState(false);
   const [logoUrl, setLogoUrl] = useState(null);
@@ -16,7 +16,6 @@ export default function BallotDesigner() {
   const [rounds, setRounds] = useState([]);
   const [testRoundId, setTestRoundId] = useState('');
   const [testCount, setTestCount] = useState(10);
-  const [testBadPct, setTestBadPct] = useState(10);
   const [generatingTest, setGeneratingTest] = useState(false);
 
   useEffect(() => {
@@ -124,7 +123,7 @@ export default function BallotDesigner() {
 
   return (
     <div style={s.container}>
-      <Link to={`/admin/elections/${electionId}`} style={s.backLink}>&larr; Back to Election Event</Link>
+      <Link to={`/admin/elections/${electionId}?section=ballots`} style={s.backLink}>&larr; Back to Ballot Generation</Link>
       <div style={s.header}>
         <h1>Ballot Designer</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -236,18 +235,25 @@ export default function BallotDesigner() {
           {/* Serial Number */}
           <Section title="Serial Number">
             <Toggle label="Show serial number text" value={config.sn.show} onChange={v => updateField('sn', 'show', v)} />
+            {config.sn.show && (
+              <NumberField label="Font size (0 = auto)" value={config.sn.fontSize || 0} onChange={v => updateField('sn', 'fontSize', v)} />
+            )}
           </Section>
 
           {/* Test Ballot Generation */}
           <Section title="Generate Test Ballots">
+            <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
+              <p style={{ color: '#dc2626', fontSize: '0.8rem', margin: 0, fontWeight: 600 }}>
+                Test ballots are for TEST RACES ONLY. Do not use for real races.
+              </p>
+            </div>
             <p style={{ color: '#666', fontSize: '0.8rem', margin: '0 0 0.5rem' }}>
-              Create random filled ballot images for scanner/OMR testing. Requires ballot PDF to be generated first.
+              Create random filled ballot images for scanner/OMR testing. Uses the ballot size selected above.
             </p>
             <SelectField label="Round" value={testRoundId} options={
               rounds.map(r => ({ value: String(r.id), label: `${r.race_name} — Round ${r.round_number}` }))
             } onChange={v => setTestRoundId(v)} />
             <NumberField label="Number of ballots" value={testCount} onChange={v => setTestCount(v)} />
-            <NumberField label="Bad fill % (light/partial marks)" value={testBadPct} onChange={v => setTestBadPct(v)} />
             <button
               style={{ ...s.btnPrimary, background: '#7c3aed', marginTop: '0.5rem', opacity: generatingTest ? 0.6 : 1 }}
               disabled={generatingTest || !testRoundId}
@@ -255,9 +261,15 @@ export default function BallotDesigner() {
                 setGeneratingTest(true);
                 try {
                   const { data } = await api.post(`/admin/rounds/${testRoundId}/generate-test-ballots`, {
-                    count: testCount, bad_fill_percentage: testBadPct,
+                    count: testCount, size: previewSize,
                   });
-                  alert(`Generated ${data.total} test ballots (${data.bad_fills} bad fills)\n\nOutput: ${data.output_dir}`);
+                  // Auto-download the PDF
+                  const link = document.createElement('a');
+                  link.href = `/api/admin/rounds/${testRoundId}/test-ballot-pdf`;
+                  link.download = 'test-ballots.pdf';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
                 } catch (err) {
                   alert('Failed: ' + (err.response?.data?.error || err.message));
                 } finally {
@@ -267,12 +279,6 @@ export default function BallotDesigner() {
             >
               {generatingTest ? 'Generating...' : 'Generate Test Ballots'}
             </button>
-            {testRoundId && (
-              <div style={{ marginTop: '0.5rem' }}>
-                <a href={`/api/admin/rounds/${testRoundId}/test-ballot-preview`} target="_blank"
-                  style={{ color: '#2563eb', fontSize: '0.82rem' }}>Preview test ballot</a>
-              </div>
-            )}
           </Section>
         </div>
 
@@ -280,10 +286,7 @@ export default function BallotDesigner() {
         <div style={s.previewPanel}>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
             <select style={s.input} value={previewSize} onChange={e => setPreviewSize(e.target.value)}>
-              <option value="letter">Letter (1 per page)</option>
-              <option value="half_letter">Half Letter (2 per page)</option>
               <option value="quarter_letter">Quarter Letter (4 per page)</option>
-              <option value="eighth_letter">1/8 Letter (8 per page)</option>
             </select>
             <button
               style={{ ...s.btnPrimary, opacity: generatingPreview ? 0.6 : 1 }}
@@ -295,10 +298,7 @@ export default function BallotDesigner() {
           </div>
 
           <p style={s.muted}>
-            {previewSize === 'letter' ? '1 ballot per page' :
-             previewSize === 'half_letter' ? '2 ballots per page' :
-             previewSize === 'quarter_letter' ? '4 ballots per page' :
-             '8 ballots per page'} — saves design and generates a real PDF preview.
+            4 ballots per page — saves design and generates a real PDF preview.
           </p>
 
           {previewUrl && (

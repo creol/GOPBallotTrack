@@ -76,11 +76,40 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   const qrResult = await findQRInImage(buffer);
   log(`QR decode done: ${qrResult ? qrResult.qrData : 'NOT FOUND'}`);
   if (!qrResult || !qrResult.qrData) {
+    // Save the image and create a review record so it can be adjudicated
+    const flagDir = path.join(SCAN_BASE, 'flagged');
+    fs.mkdirSync(flagDir, { recursive: true });
+    const savedName = `noqr-${Date.now()}-${filePath ? path.basename(filePath) : 'upload.jpg'}`;
+    const savedPath = path.join(flagDir, savedName);
+    fs.writeFileSync(savedPath, buffer);
+
     if (filePath) {
-      const errDir = path.join(SCAN_BASE, 'errors');
-      fs.mkdirSync(errDir, { recursive: true });
-      fs.renameSync(filePath, path.join(errDir, `noqr-${Date.now()}-${path.basename(filePath)}`));
+      try { fs.unlinkSync(filePath); } catch {}
     }
+
+    // If we know the round (station upload), create a reviewed_ballot for adjudication
+    if (assignedRoundId) {
+      try {
+        const pass = await getOrCreateActivePass(assignedRoundId);
+        await db.query(
+          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, 'qr_not_found', $4, $5)`,
+          [assignedRoundId, pass.id, scannerId || null, savedPath,
+           `QR code could not be decoded. Source: ${source}. Original file: ${filePath ? path.basename(filePath) : 'upload'}`]
+        );
+        log(`QR not found — image saved for review: ${savedName}`);
+        if (io) io.emit('scan:review_needed', { reason: 'qr_not_found', station: source, image_path: savedPath });
+        return {
+          success: true,
+          flagged: true,
+          flag_reason: 'qr_not_found',
+          message: `Ballot image saved for review — QR code could not be decoded`,
+        };
+      } catch (dbErr) {
+        console.error('[Scan] Failed to create review record for QR failure:', dbErr.message);
+      }
+    }
+
     if (io) io.emit('scan:error', { reason: 'qr_not_found', station: source });
     return { success: false, error: 'No QR code found' };
   }

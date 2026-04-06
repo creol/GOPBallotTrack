@@ -15,6 +15,7 @@ import ChairDecision from './pages/ChairDecision';
 import PublicDashboard from './pages/PublicDashboard';
 import PublicRoundDetail from './pages/PublicRoundDetail';
 import PublicBallotViewer from './pages/PublicBallotViewer';
+import PublicBrowseBallots from './pages/PublicBrowseBallots';
 import UserManagement from './pages/UserManagement';
 import ControlCenter from './pages/ControlCenter';
 import StationSetup from './pages/StationSetup';
@@ -118,6 +119,7 @@ export default function App() {
 
         {/* Public routes — no auth */}
         <Route path="/public/:electionId" element={<PublicDashboard />} />
+        <Route path="/public/:electionId/browse" element={<PublicBrowseBallots />} />
         <Route path="/public/:electionId/rounds/:roundId" element={<PublicRoundDetail />} />
         <Route path="/public/:electionId/ballots/:serialNumber" element={<PublicBallotViewer />} />
       </Routes>

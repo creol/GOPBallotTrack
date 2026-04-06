@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
 import api from '../api/client';
+import DashboardPreview from '../components/DashboardPreview';
 
 const STATUS_COLORS = {
   pending_needs_action: { bg: '#fef3c7', color: '#92400e', label: 'Needs Action' },
@@ -15,6 +16,7 @@ const STATUS_COLORS = {
 
 const OUTCOME_COLORS = {
   eliminated: { color: '#ef4444', label: 'Eliminated' },
+  withdrew: { color: '#6b7280', label: 'Withdrew' },
   advance: { color: '#16a34a', label: 'Advances' },
   convention_winner: { color: '#16a34a', label: 'Convention Winner' },
   winner: { color: '#16a34a', label: 'Winner' },
@@ -130,6 +132,8 @@ function RacePanel({ race, onAction, onActionWithNotes, actionLoading }) {
               key={round.id}
               round={round}
               raceId={race.race_id}
+              raceName={race.race_name}
+              electionName={race.election_name}
               onAction={onAction}
               onActionWithNotes={onActionWithNotes}
               actionLoading={actionLoading}
@@ -153,9 +157,11 @@ function RacePanel({ race, onAction, onActionWithNotes, actionLoading }) {
   );
 }
 
-function RoundPanel({ round, raceId, onAction, onActionWithNotes, actionLoading }) {
+function RoundPanel({ round, raceId, raceName, electionName, onAction, onActionWithNotes, actionLoading }) {
+  const [showPreview, setShowPreview] = useState(false);
   const st = STATUS_COLORS[round.status] || {};
   const isPublished = !!round.published_at;
+  const totalVotes = round.results?.reduce((sum, r) => sum + r.vote_count, 0) || 0;
 
   return (
     <div style={{ ...s.roundCard, borderLeftColor: st.color || '#d1d5db' }}>
@@ -166,22 +172,41 @@ function RoundPanel({ round, raceId, onAction, onActionWithNotes, actionLoading 
         {isPublished && <span style={{ ...s.badge, background: '#dcfce7', color: '#166534' }}>Published</span>}
       </div>
 
-      {/* Results preview for finalized rounds */}
+      {/* Results summary for finalized rounds */}
       {round.results && round.results.length > 0 && (
-        <div style={s.resultsPreview}>
-          {round.results.map(r => {
-            const oc = OUTCOME_COLORS[r.outcome];
-            return (
-              <div key={r.candidate_id} style={s.resultRow}>
-                <span style={{ fontWeight: 600, flex: 1 }}>
-                  {r.candidate_name}
-                  {oc && <span style={{ color: oc.color, fontSize: '0.75rem', marginLeft: '0.5rem' }}>{oc.label}</span>}
-                </span>
-                <span style={s.muted}>{r.vote_count} votes ({Number(r.percentage).toFixed(5)}%)</span>
-              </div>
-            );
-          })}
-        </div>
+        <>
+          <div style={s.resultsPreview}>
+            {round.results.map(r => {
+              const oc = OUTCOME_COLORS[r.outcome];
+              return (
+                <div key={r.candidate_id} style={s.resultRow}>
+                  <span style={{ fontWeight: 600, flex: 1 }}>
+                    {r.candidate_name}
+                    {oc && <span style={{ color: oc.color, fontSize: '0.75rem', marginLeft: '0.5rem' }}>{oc.label}</span>}
+                  </span>
+                  <span style={s.muted}>{r.vote_count} votes ({Number(r.percentage).toFixed(5)}%)</span>
+                </div>
+              );
+            })}
+          </div>
+          <button
+            style={{ ...s.btnSmall, marginTop: '0.35rem', marginBottom: '0.35rem' }}
+            onClick={() => setShowPreview(!showPreview)}
+          >
+            {showPreview ? 'Hide Dashboard Preview' : 'Preview Dashboard'}
+          </button>
+          {showPreview && (
+            <DashboardPreview
+              electionName={electionName}
+              raceName={raceName}
+              roundNumber={round.round_number}
+              results={round.results}
+              decisions={{}}
+              withdrawn={new Set()}
+              totalVotes={totalVotes}
+            />
+          )}
+        </>
       )}
 
       {/* Action buttons based on current status */}
@@ -215,8 +240,11 @@ function RoundPanel({ round, raceId, onAction, onActionWithNotes, actionLoading 
             <button style={s.btnSmall} onClick={() => onActionWithNotes(`/admin/control-center/round/${round.id}/recount`, 'Reason for recount (required):')} disabled={actionLoading}>
               Issue Recount
             </button>
-            <button style={s.btnDangerSmall} onClick={() => onActionWithNotes(`/admin/control-center/round/${round.id}/void`, 'Reason for voiding this round (required):')} disabled={actionLoading}>
-              Void Round
+            <button style={s.btnDangerSmall} onClick={() => {
+              if (!confirm(`VOID Round ${round.round_number}? This will cancel ONLY this round. Other rounds will not be affected. This cannot be undone.`)) return;
+              onActionWithNotes(`/admin/control-center/round/${round.id}/void`, 'Reason for voiding this round (required):');
+            }} disabled={actionLoading}>
+              Void Round {round.round_number}
             </button>
           </>
         )}

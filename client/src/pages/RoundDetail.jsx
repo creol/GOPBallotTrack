@@ -3,42 +3,15 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
 
-const BALLOT_SIZES = [
-  { value: 'letter', label: 'Letter (8.5" x 11") — 1 per page' },
-  { value: 'half_letter', label: 'Half Letter (5.5" x 8.5") — 2 per page' },
-  { value: 'quarter_letter', label: 'Quarter Letter (4.25" x 5.5") — 4 per page' },
-  { value: 'eighth_letter', label: '1/8 Letter (2.75" x 4.25") — 8 per page' },
-];
-
 export default function RoundDetail() {
   const { id: electionId, raceId, roundId } = useParams();
   const [round, setRound] = useState(null);
-  const [quantity, setQuantity] = useState(50);
-  const [size, setSize] = useState('letter');
-  const [logo, setLogo] = useState(null);
-  const [generating, setGenerating] = useState(false);
-  const [ballotStatus, setBallotStatus] = useState(null); // { generated, serial_count, pdf_exists }
-  const [showRegenerate, setShowRegenerate] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState(null);
   const [error, setError] = useState(null);
   const [flaggedCount, setFlaggedCount] = useState(0);
-  const [testGenCount, setTestGenCount] = useState(10);
-  const [testBadPct, setTestBadPct] = useState(10);
-  const [generatingTest, setGeneratingTest] = useState(false);
-  const [showTestGen, setShowTestGen] = useState(false);
 
   const fetchRound = async () => {
     const { data } = await api.get(`/admin/rounds/${roundId}`);
     setRound(data);
-  };
-
-  const fetchBallotStatus = async () => {
-    try {
-      const { data } = await api.get(`/admin/rounds/${roundId}/ballot-status`);
-      setBallotStatus(data);
-    } catch {
-      setBallotStatus({ has_serials: false, serial_count: 0, pdf_exists: false });
-    }
   };
 
   const fetchFlaggedCount = async () => {
@@ -48,45 +21,12 @@ export default function RoundDetail() {
     } catch {}
   };
 
-  useEffect(() => { fetchRound(); fetchBallotStatus(); fetchFlaggedCount(); }, [roundId]);
-
-  const handleGenerate = async (e) => {
-    e.preventDefault();
-
-    // If PDF already exists, require confirmation to regenerate
-    if (ballotStatus?.pdf_exists && !showRegenerate) {
-      setShowRegenerate(true);
-      return;
-    }
-
-    setGenerating(true);
-    setError(null);
-    try {
-      const formData = new FormData();
-      // Only send quantity if no pre-existing SNs
-      if (!ballotStatus?.has_serials) formData.append('quantity', quantity);
-      formData.append('size', size);
-      if (logo) formData.append('logo', logo);
-      if (ballotStatus?.pdf_exists) formData.append('confirm_regenerate', 'true');
-
-      await api.post(`/admin/rounds/${roundId}/generate-ballots`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      setShowRegenerate(false);
-      setPreviewUrl(`/api/admin/rounds/${roundId}/ballot-preview?t=${Date.now()}`);
-      fetchBallotStatus();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to generate ballots');
-    } finally {
-      setGenerating(false);
-    }
-  };
+  useEffect(() => { fetchRound(); fetchFlaggedCount(); }, [roundId]);
 
   if (!round) return <div style={styles.container}><p>Loading...</p></div>;
 
   const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
-  const hasSerials = ballotStatus?.has_serials;
-  const hasPdf = ballotStatus?.pdf_exists;
+  const statusLabel = { ready: 'Ready', voting_open: 'Voting Open', voting_closed: 'Voting Closed', tallying: 'Tallying', round_finalized: 'Finalized', canceled: 'Canceled' };
 
   return (
     <ElectionLayout breadcrumbs={[
@@ -101,9 +41,11 @@ export default function RoundDetail() {
           <h1>Round {round.round_number}</h1>
           <p style={styles.muted}>Paper color: {round.paper_color}</p>
         </div>
-        <span style={{ ...styles.statusBadge, background: statusColor[round.status] || '#999' }}>
-          {round.status}
-        </span>
+        {statusLabel[round.status] && (
+          <span style={{ ...styles.statusBadge, background: statusColor[round.status] || '#999' }}>
+            {statusLabel[round.status]}
+          </span>
+        )}
       </div>
 
       {/* Results summary — shown at top when available */}
@@ -137,45 +79,6 @@ export default function RoundDetail() {
         >
           <Link to={`/scan/${roundId}`} style={styles.btnLink}>Open Scanner</Link>
           <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={{ ...styles.btnSmall, textDecoration: 'none' }} target="_blank">Calibration PDF</a>
-          <button style={styles.btnSmall} onClick={() => setShowTestGen(!showTestGen)}>
-            {showTestGen ? 'Hide Test Tools' : 'Generate Test Ballots'}
-          </button>
-          {showTestGen && (
-            <div style={{ width: '100%', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.75rem', marginTop: '0.5rem' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>Count:</label>
-                <input type="number" min="1" max="500" value={testGenCount} onChange={e => setTestGenCount(parseInt(e.target.value) || 10)}
-                  style={{ width: 60, padding: '0.3rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.85rem' }} />
-                <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>Bad fill %:</label>
-                <input type="number" min="0" max="100" value={testBadPct} onChange={e => setTestBadPct(parseInt(e.target.value) || 0)}
-                  style={{ width: 50, padding: '0.3rem', border: '1px solid #ccc', borderRadius: 4, fontSize: '0.85rem' }} />
-                <button
-                  style={{ ...styles.btnSmall, background: '#7c3aed', color: '#fff', opacity: generatingTest ? 0.6 : 1 }}
-                  disabled={generatingTest}
-                  onClick={async () => {
-                    setGeneratingTest(true);
-                    try {
-                      const { data } = await api.post(`/admin/rounds/${roundId}/generate-test-ballots`, {
-                        count: testGenCount, bad_fill_percentage: testBadPct,
-                      });
-                      alert(`Generated ${data.total} test ballots (${data.bad_fills} bad fills) in:\n${data.output_dir}`);
-                    } catch (err) {
-                      alert('Failed: ' + (err.response?.data?.error || err.message));
-                    } finally {
-                      setGeneratingTest(false);
-                    }
-                  }}
-                >
-                  {generatingTest ? 'Generating...' : 'Generate'}
-                </button>
-              </div>
-              <p style={{ color: '#666', fontSize: '0.75rem', margin: '0.5rem 0 0' }}>
-                Creates filled ballot images from the real PDF for scanner testing. Bad fills simulate partial/light marks.
-              </p>
-              <a href={`/api/admin/rounds/${roundId}/test-ballot-preview`} target="_blank"
-                style={{ color: '#2563eb', fontSize: '0.8rem' }}>Preview test ballot</a>
-            </div>
-          )}
         </WorkflowStep>
 
         {flaggedCount > 0 && (
@@ -240,133 +143,7 @@ export default function RoundDetail() {
       {/* Pass Management */}
       <PassManager roundId={roundId} onUpdate={fetchRound} />
 
-      {/* Ballots Section */}
-      <div style={styles.section}>
-        <h2>Ballots</h2>
-
-        {/* State: SNs exist + PDF exists → download */}
-        {hasSerials && hasPdf && (
-          <>
-            <div style={styles.generatedBanner}>
-              <strong>{ballotStatus.serial_count} serial numbers &nbsp;|&nbsp; PDF ready</strong>
-              {ballotStatus.generated_at && (
-                <p style={styles.muted}>
-                  Generated: {new Date(ballotStatus.generated_at).toLocaleString()}
-                </p>
-              )}
-              <p style={styles.muted}>
-                The PDF and serial numbers are saved. Download and print at any time —
-                the serial numbers will not change.
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-              <a href={`/api/admin/rounds/${roundId}/ballot-pdf`} style={styles.btnDownloadLarge} download>
-                Download Ballot PDF
-              </a>
-              <a href={`/api/admin/rounds/${roundId}/ballot-data`} style={styles.btnDownload} download>
-                Download Data ZIP
-              </a>
-            </div>
-
-            <div style={{ marginTop: '1rem' }}>
-              <iframe src={previewUrl || `/api/admin/rounds/${roundId}/ballot-preview`}
-                style={styles.previewFrame} title="Ballot Preview" />
-            </div>
-
-            {/* Regenerate PDF with different size — hidden behind button */}
-            <div style={{ marginTop: '1.5rem' }}>
-              {!showRegenerate ? (
-                <button style={styles.btnDangerSmall} onClick={() => setShowRegenerate(true)}>
-                  Regenerate PDF with different size...
-                </button>
-              ) : (
-                <div style={styles.warningBox}>
-                  <h3 style={{ margin: '0 0 0.5rem', color: '#dc2626' }}>Regenerate PDF</h3>
-                  <p style={{ margin: '0 0 0.75rem', color: '#374151' }}>
-                    This will overwrite the existing PDF using the same serial numbers but a different size layout.
-                  </p>
-                  <form onSubmit={handleGenerate} style={styles.genForm}>
-                    <div style={styles.formGroup}>
-                      <label style={styles.label}>Ballot Size</label>
-                      <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
-                        {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button style={{ ...styles.btnDanger, opacity: generating ? 0.6 : 1 }} type="submit" disabled={generating}>
-                        {generating ? 'Generating...' : 'Regenerate PDF'}
-                      </button>
-                      <button style={styles.btnSmall} type="button" onClick={() => setShowRegenerate(false)}>Cancel</button>
-                    </div>
-                  </form>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* State: SNs exist but no PDF yet → generate PDF */}
-        {hasSerials && !hasPdf && (
-          <>
-            <div style={styles.generatedBanner}>
-              <strong>{ballotStatus.serial_count} serial numbers ready</strong>
-              <p style={styles.muted}>
-                Serial numbers were generated when this round was created. Choose a ballot size to generate the printable PDF.
-              </p>
-            </div>
-
-            <form onSubmit={handleGenerate} style={{ ...styles.genForm, marginTop: '0.75rem' }}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Ballot Size</label>
-                <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
-                  {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Logo (optional)</label>
-                <input style={styles.input} type="file" accept="image/*"
-                  onChange={e => setLogo(e.target.files[0] || null)} />
-              </div>
-              <button style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }} type="submit" disabled={generating}>
-                {generating ? 'Generating...' : 'Generate Ballot PDF'}
-              </button>
-            </form>
-          </>
-        )}
-
-        {/* State: No SNs at all → full generate form (legacy / no ballot_count on race) */}
-        {!hasSerials && (
-          <>
-            <p style={styles.muted}>
-              No serial numbers for this round. Set ballot count when creating the race to auto-generate, or enter a quantity below.
-            </p>
-            <form onSubmit={handleGenerate} style={styles.genForm}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Quantity</label>
-                <input style={styles.input} type="number" min="1" max="5000" value={quantity}
-                  onChange={e => setQuantity(parseInt(e.target.value) || 1)} required />
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Ballot Size</label>
-                <select style={styles.input} value={size} onChange={e => setSize(e.target.value)}>
-                  {BALLOT_SIZES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Logo (optional)</label>
-                <input style={styles.input} type="file" accept="image/*"
-                  onChange={e => setLogo(e.target.files[0] || null)} />
-              </div>
-              <button style={{ ...styles.btnPrimary, opacity: generating ? 0.6 : 1 }} type="submit" disabled={generating}>
-                {generating ? 'Generating...' : 'Generate Ballots'}
-              </button>
-            </form>
-          </>
-        )}
-
-        {error && <p style={styles.errorMsg}>{error}</p>}
-      </div>
+      {error && <p style={styles.errorMsg}>{error}</p>}
     </ElectionLayout>
   );
 }
@@ -488,7 +265,7 @@ function WorkflowStep({ number, title, description, done, active, children }) {
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.15rem' }}>{title}</div>
         <div style={{ color: '#666', fontSize: '0.82rem', marginBottom: '0.5rem' }}>{description}</div>
-        {!done && <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>{children}</div>}
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>{children}</div>
       </div>
     </div>
   );

@@ -39,6 +39,27 @@ router.get('/:electionId', async (req, res) => {
 
       race.rounds = rounds;
 
+      // Get next unpublished round (if any) for display
+      const { rows: [nextRound] } = await db.query(
+        "SELECT id, round_number, status, paper_color FROM rounds WHERE race_id = $1 AND published_at IS NULL AND status != 'canceled' ORDER BY round_number LIMIT 1",
+        [race.id]
+      );
+      race.next_round = nextRound || null;
+
+      // Get all candidates for this race (for pre-voting display)
+      const { rows: candidates } = await db.query(
+        "SELECT id, name, display_order, status FROM candidates WHERE race_id = $1 ORDER BY display_order",
+        [race.id]
+      );
+      race.candidates = candidates;
+
+      // Get current (latest) round info — even if not published
+      const { rows: [currentRound] } = await db.query(
+        'SELECT id, round_number, status, paper_color FROM rounds WHERE race_id = $1 ORDER BY round_number DESC LIMIT 1',
+        [race.id]
+      );
+      race.current_round = currentRound || null;
+
       // Get eliminated candidates
       const { rows: withdrawnCandidates } = await db.query(
         "SELECT id, name, withdrawn_at FROM candidates WHERE race_id = $1 AND status = 'withdrawn' ORDER BY withdrawn_at",
@@ -59,10 +80,19 @@ router.get('/:electionId', async (req, res) => {
       }
 
       // Determine race status label
+      // Get all non-canceled rounds, ordered by most advanced first
       const { rows: allRounds } = await db.query(
-        'SELECT status, published_at FROM rounds WHERE race_id = $1 ORDER BY round_number DESC LIMIT 1',
+        `SELECT status, published_at, round_number FROM rounds
+         WHERE race_id = $1 AND status != 'canceled'
+         ORDER BY round_number DESC`,
         [race.id]
       );
+      // Find the most advanced round (skip pending_needs_action/ready to find active work)
+      const activeRound = allRounds.find(r =>
+        !['pending_needs_action', 'ready'].includes(r.status)
+      ) || allRounds[0] || null;
+      const publishedCount = rounds.length; // rounds already filtered to published_at IS NOT NULL
+
       if (race.outcome === 'winner') {
         const winnerName = race.outcome_details?.candidate_name || 'TBD';
         race.status_label = `Winner: ${winnerName}`;
@@ -72,19 +102,17 @@ router.get('/:electionId', async (req, res) => {
         race.status_label = 'Race Closed';
       } else if (race.status === 'results_finalized') {
         race.status_label = 'Race Complete';
-      } else if (allRounds.length > 0) {
-        const latest = allRounds[0];
-        const publishedCount = rounds.length; // rounds already filtered to published_at IS NOT NULL
-        if (latest.status === 'voting_open') {
+      } else if (activeRound) {
+        if (activeRound.status === 'voting_open') {
           race.status_label = 'Voting Open';
-        } else if (latest.status === 'voting_closed') {
+        } else if (activeRound.status === 'voting_closed') {
           race.status_label = 'Voting Closed';
-        } else if (latest.status === 'tallying') {
-          race.status_label = 'Tallying in Progress';
-        } else if (latest.status === 'round_finalized' && !latest.published_at) {
-          race.status_label = 'Tallying in Progress';
+        } else if (activeRound.status === 'tallying') {
+          race.status_label = 'Tallying';
+        } else if (activeRound.status === 'round_finalized' && !activeRound.published_at) {
+          race.status_label = 'Results Announced Soon';
         } else if (publishedCount > 0) {
-          race.status_label = `Round ${publishedCount} Results`;
+          race.status_label = `Round ${publishedCount} Complete`;
         } else {
           race.status_label = 'Awaiting Vote';
         }
@@ -180,7 +208,8 @@ router.get('/:electionId/ballots/:serialNumber', async (req, res) => {
 
     // Find the ballot serial in a released round within this election
     const { rows } = await db.query(
-      `SELECT bs.id as bs_id, bs.round_id, r.race_id, rc.election_id, s.front_image_path
+      `SELECT bs.id as bs_id, bs.round_id, r.race_id, rc.election_id,
+              COALESCE(s.image_path, s.front_image_path) as image_path
        FROM ballot_serials bs
        JOIN rounds r ON r.id = bs.round_id AND r.published_at IS NOT NULL
        JOIN races rc ON rc.id = r.race_id AND rc.election_id = $1
@@ -196,7 +225,7 @@ router.get('/:electionId/ballots/:serialNumber', async (req, res) => {
 
     const row = rows[0];
 
-    if (!row.front_image_path || !fs.existsSync(row.front_image_path)) {
+    if (!row.image_path || !fs.existsSync(row.image_path)) {
       return res.status(404).json({
         error: 'Ballot image not available',
         serial_number: sn,
@@ -204,7 +233,7 @@ router.get('/:electionId/ballots/:serialNumber', async (req, res) => {
       });
     }
 
-    res.sendFile(path.resolve(row.front_image_path));
+    res.sendFile(path.resolve(row.image_path));
   } catch (err) {
     console.error('Public ballot image error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -222,10 +251,13 @@ router.get('/:electionId/search', async (req, res) => {
     const { rows } = await db.query(
       `SELECT bs.serial_number, bs.round_id, bs.status as ballot_status,
               r.round_number, r.status as round_status,
-              rc.id as race_id, rc.name as race_name
+              rc.id as race_id, rc.name as race_name,
+              c.name as voted_for
        FROM ballot_serials bs
        JOIN rounds r ON r.id = bs.round_id AND r.published_at IS NOT NULL
        JOIN races rc ON rc.id = r.race_id AND rc.election_id = $1
+       LEFT JOIN scans s ON s.ballot_serial_id = bs.id
+       LEFT JOIN candidates c ON c.id = s.candidate_id
        WHERE bs.serial_number = $2`,
       [req.params.electionId, sn]
     );
@@ -235,6 +267,17 @@ router.get('/:electionId/search', async (req, res) => {
     }
 
     const row = rows[0];
+
+    // Get prev/next serial numbers for navigation
+    const { rows: allSerials } = await db.query(
+      "SELECT serial_number FROM ballot_serials WHERE round_id = $1 AND status = 'counted' ORDER BY serial_number",
+      [row.round_id]
+    );
+    const snList = allSerials.map(s => s.serial_number);
+    const idx = snList.indexOf(row.serial_number);
+    const prev_sn = idx > 0 ? snList[idx - 1] : null;
+    const next_sn = idx < snList.length - 1 ? snList[idx + 1] : null;
+
     res.json({
       found: true,
       serial_number: row.serial_number,
@@ -242,6 +285,11 @@ router.get('/:electionId/search', async (req, res) => {
       round_number: row.round_number,
       race_name: row.race_name,
       ballot_status: row.ballot_status,
+      voted_for: row.voted_for || null,
+      ballot_index: idx + 1,
+      ballot_total: snList.length,
+      prev_sn,
+      next_sn,
       image_url: `/api/public/${req.params.electionId}/ballots/${sn}`,
     });
   } catch (err) {

@@ -133,6 +133,7 @@ export default function RaceDetail() {
   if (!race) return <div style={styles.container}><p>Loading...</p></div>;
 
   const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
+  const statusLabel = { ready: 'Ready', voting_open: 'Voting Open', voting_closed: 'Voting Closed', tallying: 'Tallying', round_finalized: 'Finalized', canceled: 'Canceled' };
 
   return (
     <ElectionLayout breadcrumbs={[
@@ -272,9 +273,14 @@ export default function RaceDetail() {
                 >
                   <span style={{ fontWeight: 600 }}>Round {round.round_number}</span>
                   <span style={styles.muted}>Paper: {round.paper_color}</span>
-                  <span style={{ ...styles.statusBadge, background: statusColor[round.status] || '#999' }}>
-                    {round.status}
-                  </span>
+                  {statusLabel[round.status] && (
+                    <span style={{ ...styles.statusBadge, background: statusColor[round.status] || '#999' }}>
+                      {statusLabel[round.status]}
+                    </span>
+                  )}
+                  {!round.ballot_pdf_generated_at && round.status !== 'canceled' && (
+                    <span style={styles.noBallotsBadge}>Ballots not generated</span>
+                  )}
                 </Link>
               ))}
 
@@ -388,6 +394,7 @@ const styles = {
     textDecoration: 'none', color: 'inherit',
   },
   statusBadge: { color: '#fff', padding: '2px 10px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 600 },
+  noBallotsBadge: { background: '#fef3c7', color: '#92400e', padding: '2px 10px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 600 },
   btnPrimary: { padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
   btnSmall: { padding: '0.25rem 0.5rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },
   btnDanger: { padding: '0.25rem 0.5rem', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },

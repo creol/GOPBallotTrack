@@ -19,7 +19,7 @@ export default function ElectionDetail() {
   const [ballotBoxes, setBallotBoxes] = useState([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', date: '', description: '' });
-  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '' });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
   const [raceRounds, setRaceRounds] = useState({});
@@ -65,10 +65,13 @@ export default function ElectionDetail() {
       name: raceForm.name,
       ballot_count: raceForm.ballot_count ? parseInt(raceForm.ballot_count) : null,
       max_rounds: raceForm.max_rounds ? parseInt(raceForm.max_rounds) : null,
+      race_date: raceForm.race_date || null,
+      race_time: raceForm.race_time || null,
+      location: raceForm.location || null,
     });
-    setRaceForm({ name: '', ballot_count: '', max_rounds: '' });
+    setRaceForm({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '' });
     setShowRaceForm(false);
-    navigate(`/admin/elections/${id}/races/${newRace.id}`);
+    navigate(`/admin/elections/${id}/races/${newRace.id}?tab=candidates`);
   };
 
   const handleAddBoxes = async (e) => {
@@ -128,14 +131,24 @@ export default function ElectionDetail() {
               </div>
 
               {showRaceForm && (
-                <form onSubmit={handleAddRace} style={styles.form}>
+                <form onSubmit={handleAddRace} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: 500 }}>
                   <input style={styles.input} placeholder="Race Name" value={raceForm.name}
                     onChange={e => setRaceForm({ ...raceForm, name: e.target.value })} required />
-                  <input style={{ ...styles.input, width: 130 }} type="number" min="1" placeholder="# of Ballots"
-                    value={raceForm.ballot_count} onChange={e => setRaceForm({ ...raceForm, ballot_count: e.target.value })} required />
-                  <input style={{ ...styles.input, width: 130 }} type="number" min="1" placeholder="Max Rounds"
-                    value={raceForm.max_rounds} onChange={e => setRaceForm({ ...raceForm, max_rounds: e.target.value })} required />
-                  <button style={styles.btnPrimary} type="submit">Add Candidates →</button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input style={{ ...styles.input, flex: 1 }} type="number" min="1" placeholder="# of Ballots"
+                      value={raceForm.ballot_count} onChange={e => setRaceForm({ ...raceForm, ballot_count: e.target.value })} required />
+                    <input style={{ ...styles.input, flex: 1 }} type="number" min="1" placeholder="Max Rounds"
+                      value={raceForm.max_rounds} onChange={e => setRaceForm({ ...raceForm, max_rounds: e.target.value })} required />
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input style={{ ...styles.input, flex: 1 }} type="date" value={raceForm.race_date}
+                      onChange={e => setRaceForm({ ...raceForm, race_date: e.target.value })} />
+                    <input style={{ ...styles.input, flex: 1 }} type="time" value={raceForm.race_time}
+                      onChange={e => setRaceForm({ ...raceForm, race_time: e.target.value })} />
+                  </div>
+                  <input style={styles.input} placeholder="Location (optional)" value={raceForm.location}
+                    onChange={e => setRaceForm({ ...raceForm, location: e.target.value })} />
+                  <button style={{ ...styles.btnPrimary, alignSelf: 'flex-start' }} type="submit">Add Candidates →</button>
                 </form>
               )}
 
@@ -356,14 +369,11 @@ function DashboardsSection({ electionId }) {
 }
 
 const BALLOT_SIZES = [
-  { value: 'letter', label: 'Letter (1/page)' },
-  { value: 'half_letter', label: 'Half Letter (2/page)' },
   { value: 'quarter_letter', label: 'Quarter (4/page)' },
-  { value: 'eighth_letter', label: '1/8 Letter (8/page)' },
 ];
 
 function GenerateAllBallots({ electionId }) {
-  const [size, setSize] = useState('letter');
+  const [size, setSize] = useState('quarter_letter');
   const [generating, setGenerating] = useState(false);
   const [ballotList, setBallotList] = useState([]);
   const [error, setError] = useState(null);

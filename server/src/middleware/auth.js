@@ -58,6 +58,7 @@ function getSession(req) {
 function requireAuth(req, res, next) {
   const session = getSession(req);
   if (!session) {
+    console.log(`[Auth] 401 on ${req.method} ${req.originalUrl}`);
     return res.status(401).json({ error: 'Authentication required' });
   }
   req.session = session;
@@ -70,6 +71,7 @@ function requireAuth(req, res, next) {
 function requireSuperAdmin(req, res, next) {
   const session = getSession(req);
   if (!session || session.role !== 'super_admin') {
+    console.log(`[Auth] 401 SuperAdmin on ${req.method} ${req.originalUrl}`);
     return res.status(401).json({ error: 'Super Admin authentication required' });
   }
   req.session = session;

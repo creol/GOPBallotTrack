@@ -15,9 +15,9 @@ async function getComparison(roundId) {
   const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
   const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
 
-  // Get active candidates
+  // Get ALL candidates (including withdrawn — they still appear in results)
   const { rows: candidates } = await db.query(
-    "SELECT * FROM candidates WHERE race_id = $1 AND status = 'active' ORDER BY display_order",
+    "SELECT * FROM candidates WHERE race_id = $1 ORDER BY display_order",
     [race.id]
   );
 
@@ -64,8 +64,9 @@ async function computeResults(roundId) {
   const lastPass = passes[0];
 
   const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+  // Include ALL candidates (even withdrawn) so they appear in results
   const { rows: candidates } = await db.query(
-    "SELECT * FROM candidates WHERE race_id = $1 AND status = 'active' ORDER BY display_order",
+    "SELECT * FROM candidates WHERE race_id = $1 ORDER BY display_order",
     [round.race_id]
   );
 
@@ -76,7 +77,17 @@ async function computeResults(roundId) {
   );
   const total = parseInt(totalStr);
 
-  // Clear any existing results for this round
+  // Preserve existing outcomes before recomputing
+  const { rows: existingResults } = await db.query(
+    'SELECT candidate_id, outcome FROM round_results WHERE round_id = $1',
+    [roundId]
+  );
+  const savedOutcomes = {};
+  for (const er of existingResults) {
+    if (er.outcome) savedOutcomes[er.candidate_id] = er.outcome;
+  }
+
+  // Clear existing results for this round
   await db.query('DELETE FROM round_results WHERE round_id = $1', [roundId]);
 
   // Compute per-candidate results
@@ -88,11 +99,12 @@ async function computeResults(roundId) {
     );
     const voteCount = parseInt(voteStr);
     const percentage = total > 0 ? (voteCount / total) * 100 : 0;
+    const outcome = savedOutcomes[candidate.id] || null;
 
     const { rows: [result] } = await db.query(
-      `INSERT INTO round_results (round_id, candidate_id, vote_count, percentage)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [roundId, candidate.id, voteCount, percentage.toFixed(5)]
+      `INSERT INTO round_results (round_id, candidate_id, vote_count, percentage, outcome)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [roundId, candidate.id, voteCount, percentage.toFixed(5), outcome]
     );
     results.push({ ...result, candidate_name: candidate.name });
   }
@@ -162,13 +174,17 @@ async function getChairPreview(roundId) {
   const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
   const { rows: [election] } = await db.query('SELECT * FROM elections WHERE id = $1', [race.election_id]);
 
+  // Get ALL candidates with their results (LEFT JOIN so candidates without votes still appear)
   const { rows: results } = await db.query(
-    `SELECT rr.*, c.name as candidate_name
-     FROM round_results rr
-     JOIN candidates c ON c.id = rr.candidate_id
-     WHERE rr.round_id = $1
-     ORDER BY rr.vote_count DESC`,
-    [roundId]
+    `SELECT c.id as candidate_id, c.name as candidate_name, c.display_order, c.status as candidate_status,
+            COALESCE(rr.vote_count, 0) as vote_count,
+            COALESCE(rr.percentage, 0) as percentage,
+            rr.outcome, rr.id as result_id
+     FROM candidates c
+     LEFT JOIN round_results rr ON rr.candidate_id = c.id AND rr.round_id = $1
+     WHERE c.race_id = $2
+     ORDER BY COALESCE(rr.vote_count, 0) DESC, c.display_order`,
+    [roundId, race.id]
   );
 
   const { rows: serials } = await db.query(

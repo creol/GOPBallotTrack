@@ -80,8 +80,8 @@ app.use('/api', scansRouter);
 // Reviewed ballots — admin routes + public mobile photo upload (token-gated)
 app.use('/api', reviewedBallotsRouter);
 
-// Confirmation routes (any authenticated user)
-app.use('/api', requireAuth, confirmationRouter);
+// Confirmation routes (mounted at /api/admin to avoid blocking public routes)
+app.use('/api/admin', requireAuth, confirmationRouter);
 
 // Public API routes (no auth)
 app.use('/api/public', publicRouter);

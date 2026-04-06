@@ -61,6 +61,7 @@ const DEFAULT_CONFIG = {
   },
   sn: {
     show: true,
+    fontSize: 12,
   },
 };
 

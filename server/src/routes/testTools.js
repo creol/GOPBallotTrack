@@ -83,7 +83,10 @@ router.get('/elections/:id/export-json', async (req, res) => {
       })),
     };
 
-    res.setHeader('Content-Disposition', `attachment; filename="election-${electionId}-export.json"`);
+    const safeName = election.name.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}_${timestamp}.json"`);
     res.json(exportData);
   } catch (err) {
     console.error('Export election error:', err);
@@ -174,19 +177,17 @@ router.post('/import-election', async (req, res) => {
   }
 });
 
-// POST /api/admin/rounds/:id/generate-test-ballots — Generate filled ballot images from real ballot rendering
+// POST /api/admin/rounds/:id/generate-test-ballots — Generate a PDF of test ballots with random filled ovals
 router.post('/rounds/:id/generate-test-ballots', async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
-    const { count, bad_fill_percentage } = req.body;
+    const { count, size } = req.body;
     const numBallots = Math.min(parseInt(count) || 10, 500);
-    const badFillPct = Math.min(Math.max(parseInt(bad_fill_percentage) || 0, 0), 100);
 
-    const sharp = require('sharp');
-    const { execSync } = require('child_process');
+    const PDFDocument = require('pdfkit');
     const fs = require('fs');
     const path = require('path');
-    const { renderSingleBallotPdf } = require('../pdf/ballotGenerator');
+    const { SIZES } = require('../pdf/ballotGenerator');
 
     // Get round data
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
@@ -208,116 +209,96 @@ router.post('/rounds/:id/generate-test-ballots', async (req, res) => {
       return res.status(400).json({ error: 'No unused serial numbers available for this round' });
     }
 
-    // Load ballot spec for oval positions
-    const specPath = path.join(__dirname, '..', '..', '..', 'uploads', 'elections',
-      String(race.election_id), 'rounds', String(roundId), 'ballot-spec.json');
-    if (!fs.existsSync(specPath)) {
-      return res.status(400).json({ error: 'Ballot spec not found — generate ballot PDF first' });
-    }
-    const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+    const sizeKey = size || 'quarter_letter';
+    const ballotSize = SIZES[sizeKey];
+    if (!ballotSize) return res.status(400).json({ error: 'Invalid ballot size' });
 
-    const BALLOT_SIZES_PX = {
-      letter: { w: 2550, h: 3300 },
-      half_letter: { w: 1650, h: 2550 },
-      quarter_letter: { w: 1275, h: 1650 },
-      eighth_letter: { w: 825, h: 1275 },
-    };
-    const ballotDims = BALLOT_SIZES_PX[spec.ballot_size] || BALLOT_SIZES_PX.quarter_letter;
+    // We need renderBallot and loadDesignConfig — load them fresh to get the internal function
+    const ballotGen = require('../pdf/ballotGenerator');
+    const { loadDesignConfig, fetchBallotData, renderBallot } = ballotGen;
 
-    // Output directories
+    // Output directory
     const outDir = path.join(__dirname, '..', '..', '..', 'data', 'scans', 'test-ballots', `round-${roundId}`);
-    const tmpDir = path.join(outDir, 'tmp');
     fs.mkdirSync(outDir, { recursive: true });
-    fs.mkdirSync(tmpDir, { recursive: true });
 
+    const pdfPath = path.join(outDir, 'test-ballots.pdf');
     const actualCount = Math.min(numBallots, unusedSerials.length);
     const results = [];
 
-    for (let i = 0; i < actualCount; i++) {
-      const serial = unusedSerials[i];
-      const isBadFill = Math.random() * 100 < badFillPct;
-      const votedCandidate = candidates[Math.floor(Math.random() * candidates.length)];
+    const { perPage, cols, rows: gridRows } = ballotSize;
+    const isEighth = sizeKey === 'eighth_letter';
+    const cellW = isEighth ? (4.25 * 72) : ballotSize.width;
+    const cellH = isEighth ? (2.75 * 72) : ballotSize.height;
+    const LETTER_W = 8.5 * 72;
+    const LETTER_H = 11 * 72;
+    const gridW = cols * cellW;
+    const gridH = gridRows * cellH;
+    const padX = (LETTER_W - gridW) / 2;
+    const padY = (LETTER_H - gridH) / 2;
 
-      // 1. Render a real single-ballot PDF for this serial
-      const pdfFile = path.join(tmpDir, `${serial.serial_number}.pdf`);
-      await renderSingleBallotPdf({
-        roundId,
-        serialNumber: serial.serial_number,
-        outputPath: pdfFile,
-        sizeKey: spec.ballot_size,
-      });
+    // Fetch shared data
+    const data = await fetchBallotData(roundId);
+    const cfg = await loadDesignConfig(data.election.id, roundId);
 
-      // 2. Convert PDF to JPG using pdftoppm
-      const ppmPrefix = path.join(tmpDir, serial.serial_number);
-      try {
-        execSync(`pdftoppm -jpeg -r 300 -singlefile "${pdfFile}" "${ppmPrefix}"`, { timeout: 10000 });
-      } catch (err) {
-        console.error(`[TestBallots] pdftoppm failed for ${serial.serial_number}:`, err.message);
-        continue;
+    const doc = new PDFDocument({ size: 'LETTER', margin: 0, autoFirstPage: false });
+    const pdfStream = fs.createWriteStream(pdfPath);
+    doc.pipe(pdfStream);
+
+    if (sizeKey === 'letter') {
+      for (let i = 0; i < actualCount; i++) {
+        const serial = unusedSerials[i];
+        const votedCandidate = candidates[Math.floor(Math.random() * candidates.length)];
+        doc.addPage({ size: 'LETTER', margin: 0 });
+        await renderBallot(doc, 0, 0, ballotSize.width, ballotSize.height, {
+          ...data, serialNumber: serial.serial_number, sizeKey, logoPath: null, cfg,
+          filledCandidateId: votedCandidate.id, testMode: true,
+        });
+        results.push({ serial_number: serial.serial_number, voted_for: votedCandidate.name });
       }
-
-      const renderedJpg = `${ppmPrefix}.jpg`;
-      if (!fs.existsSync(renderedJpg)) continue;
-
-      // 3. Resize to exact spec dimensions and overlay filled oval
-      const composites = [];
-      for (const cand of spec.candidates) {
-        if (cand.candidate_id === votedCandidate.id) {
-          const oval = cand.oval;
-          let fillOpacity;
-          if (isBadFill) {
-            const badType = Math.random();
-            if (badType < 0.33) fillOpacity = 180;
-            else if (badType < 0.66) fillOpacity = 140;
-            else fillOpacity = 100;
-          } else {
-            fillOpacity = 30;
-          }
-
-          const ovalW = Math.round(oval.width * 0.55);
-          const ovalH = Math.round(oval.height * 0.6);
-          const ovalSvg = Buffer.from(
-            `<svg width="${ovalW}" height="${ovalH}">
-              <ellipse cx="${ovalW / 2}" cy="${ovalH / 2}" rx="${ovalW / 2 - 1}" ry="${ovalH / 2 - 1}"
-                fill="rgb(${fillOpacity},${fillOpacity},${fillOpacity})" />
-            </svg>`
-          );
-
-          composites.push({
-            input: ovalSvg,
-            left: Math.round(oval.x + (oval.width - ovalW) / 2),
-            top: Math.round(oval.y + (oval.height - ovalH) / 2),
-          });
+    } else {
+      let slotIndex = 0;
+      for (let i = 0; i < actualCount; i++) {
+        if (slotIndex % perPage === 0) {
+          doc.addPage({ size: 'LETTER', margin: 0 });
         }
+        const serial = unusedSerials[i];
+        const votedCandidate = candidates[Math.floor(Math.random() * candidates.length)];
+        const posOnPage = slotIndex % perPage;
+        const col = posOnPage % cols;
+        const row = Math.floor(posOnPage / cols);
+        const ox = padX + col * cellW;
+        const oy = padY + row * cellH;
+        const ballotW = isEighth ? cellW : ballotSize.width;
+        const ballotH = isEighth ? cellH : ballotSize.height;
+
+        await renderBallot(doc, ox, oy, ballotW, ballotH, {
+          ...data, serialNumber: serial.serial_number, sizeKey, logoPath: null, cfg,
+          filledCandidateId: votedCandidate.id, testMode: true,
+        });
+
+        if (perPage > 1) {
+          doc.save();
+          doc.lineWidth(0.25).strokeColor('#ccc');
+          doc.rect(ox, oy, ballotW, ballotH).stroke();
+          doc.restore();
+          doc.strokeColor('#000');
+        }
+
+        results.push({ serial_number: serial.serial_number, voted_for: votedCandidate.name });
+        slotIndex++;
       }
-
-      const outputPath = path.join(outDir, `${serial.serial_number}.jpg`);
-      await sharp(renderedJpg)
-        .resize(ballotDims.w, ballotDims.h)
-        .composite(composites)
-        .jpeg({ quality: 90 })
-        .toFile(outputPath);
-
-      // Clean up temp files
-      try { fs.unlinkSync(pdfFile); } catch {}
-      try { fs.unlinkSync(renderedJpg); } catch {}
-
-      results.push({
-        serial_number: serial.serial_number,
-        voted_for: votedCandidate.name,
-        bad_fill: isBadFill,
-      });
     }
 
-    // Clean up tmp dir
-    try { fs.rmdirSync(tmpDir); } catch {}
+    doc.end();
+    await new Promise((resolve, reject) => {
+      pdfStream.on('finish', resolve);
+      pdfStream.on('error', reject);
+    });
 
     res.json({
-      message: `Generated ${results.length} test ballot images`,
-      output_dir: outDir,
+      message: `Generated ${results.length} test ballots`,
       total: results.length,
-      bad_fills: results.filter(r => r.bad_fill).length,
-      preview_url: results.length > 0 ? `/api/admin/rounds/${roundId}/test-ballot-preview` : null,
+      pdf_url: `/api/admin/rounds/${roundId}/test-ballot-pdf`,
       ballots: results,
     });
   } catch (err) {
@@ -326,23 +307,19 @@ router.post('/rounds/:id/generate-test-ballots', async (req, res) => {
   }
 });
 
-// GET /api/admin/rounds/:id/test-ballot-preview — Preview a generated test ballot
-router.get('/rounds/:id/test-ballot-preview', (req, res) => {
+// GET /api/admin/rounds/:id/test-ballot-pdf — Download the test ballot PDF
+router.get('/rounds/:id/test-ballot-pdf', (req, res) => {
   const fs = require('fs');
   const path = require('path');
   const roundId = req.params.id;
-  const outDir = path.join(__dirname, '..', '..', '..', 'data', 'scans', 'test-ballots', `round-${roundId}`);
+  const pdfPath = path.join(__dirname, '..', '..', '..', 'data', 'scans', 'test-ballots', `round-${roundId}`, 'test-ballots.pdf');
 
-  if (!fs.existsSync(outDir)) {
+  if (!fs.existsSync(pdfPath)) {
     return res.status(404).json({ error: 'No test ballots generated yet' });
   }
 
-  const files = fs.readdirSync(outDir).filter(f => f.endsWith('.jpg'));
-  if (files.length === 0) {
-    return res.status(404).json({ error: 'No test ballot images found' });
-  }
-
-  res.sendFile(path.join(outDir, files[0]));
+  res.setHeader('Content-Type', 'application/pdf');
+  res.sendFile(pdfPath);
 });
 
 module.exports = router;
