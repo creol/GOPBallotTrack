@@ -53,9 +53,9 @@ router.get('/:electionId', async (req, res) => {
       );
       race.candidates = candidates;
 
-      // Get current (latest) round info — even if not published
+      // Get current (latest non-canceled) round info — even if not published
       const { rows: [currentRound] } = await db.query(
-        'SELECT id, round_number, status, paper_color FROM rounds WHERE race_id = $1 ORDER BY round_number DESC LIMIT 1',
+        "SELECT id, round_number, status, paper_color FROM rounds WHERE race_id = $1 AND status != 'canceled' ORDER BY round_number DESC LIMIT 1",
         [race.id]
       );
       race.current_round = currentRound || null;

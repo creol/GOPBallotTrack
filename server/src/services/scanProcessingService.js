@@ -6,6 +6,20 @@ const { findQRInImage, processScannedBallot } = require('./omrService');
 const UPLOADS_BASE = path.join(__dirname, '..', '..', '..', 'uploads');
 const SCAN_BASE = path.join(__dirname, '..', '..', '..', 'data', 'scans');
 
+/**
+ * Always save the image so it can be reviewed later, regardless of processing outcome.
+ * Returns the saved file path.
+ */
+function saveImageForReview(buffer, label, filePath) {
+  const flagDir = path.join(SCAN_BASE, 'flagged');
+  fs.mkdirSync(flagDir, { recursive: true });
+  const baseName = filePath ? path.basename(filePath, path.extname(filePath)) : 'upload';
+  const savedName = `${label}-${baseName}-${Date.now()}.jpg`;
+  const savedPath = path.join(flagDir, savedName);
+  fs.writeFileSync(savedPath, buffer);
+  return savedPath;
+}
+
 function loadBallotSpec(electionId, roundId) {
   const specPath = path.join(UPLOADS_BASE, 'elections', String(electionId), 'rounds', String(roundId), 'ballot-spec.json');
   try {
@@ -116,8 +130,20 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
 
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData.trim() : null;
   if (!serialNumber || serialNumber.length < 8) {
+    const savedPath = saveImageForReview(buffer, 'invalidqr', filePath);
+    if (assignedRoundId) {
+      try {
+        const pass = await getOrCreateActivePass(assignedRoundId);
+        await db.query(
+          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, 'invalid_qr', $4, $5)`,
+          [assignedRoundId, pass.id, scannerId || null, savedPath,
+           `Invalid QR data: ${qrResult.qrData}. Source: ${source}`]
+        );
+      } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
+    }
     if (io) io.emit('scan:error', { reason: 'invalid_qr', station: source });
-    return { success: false, error: `Invalid QR data: ${qrResult.qrData}` };
+    return { success: true, flagged: true, flag_reason: 'invalid_qr', error: `Invalid QR data: ${qrResult.qrData}` };
   }
 
   // Look up ballot serial
@@ -149,6 +175,16 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
 
       if (otherRounds.length > 0) {
         const wrong = otherRounds[0];
+        const savedPath = saveImageForReview(buffer, `wrongstation-${serialNumber}`, filePath);
+        try {
+          const pass = await getOrCreateActivePass(assignedRoundId);
+          await db.query(
+            `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, notes)
+             VALUES ($1, $2, $3, $4, 'wrong_station', $5, $6)`,
+            [assignedRoundId, pass.id, wrong.id, scannerId || null, savedPath,
+             `Belongs to ${wrong.race_name} Round ${wrong.round_number}. Source: ${source}`]
+          );
+        } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
         if (io) io.emit('scan:wrong_station', {
           serial_number: serialNumber,
           from_station: source,
@@ -156,7 +192,8 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
           target_round: wrong.round_number,
         });
         return {
-          success: false,
+          success: true,
+          flagged: true,
           type: 'wrong_station',
           message: `This ballot belongs to ${wrong.race_name} Round ${wrong.round_number}. Please scan it at that race's station.`,
           targetRace: wrong.race_name,
@@ -169,20 +206,31 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
         'SELECT id FROM ballot_serials WHERE serial_number = $1', [serialNumber]
       );
       if (anyBallot) {
-        // Exists but wrong round — flag it
+        // Exists but wrong round — flag it and save image
+        const savedPath = saveImageForReview(buffer, `wronground-${serialNumber}`, filePath);
         const pass = await getOrCreateActivePass(assignedRoundId);
         await db.query(
-          `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, notes)
-           VALUES ($1, $2, $3, $4, 'wrong_round', 'Serial not found in assigned round')`,
-          [assignedRoundId, pass.id, anyBallot.id, scannerId || null]
+          `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, $4, 'wrong_round', $5, 'Serial not found in assigned round')`,
+          [assignedRoundId, pass.id, anyBallot.id, scannerId || null, savedPath]
         );
         if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'wrong_round', station: source });
-        return { success: false, error: 'Serial number not found in assigned round' };
+        return { success: true, flagged: true, flag_reason: 'wrong_round', error: 'Serial number not found in assigned round' };
       }
 
-      // Completely unknown serial
+      // Completely unknown serial — still save the image
+      const savedPath = saveImageForReview(buffer, `unknown-${serialNumber}`, filePath);
+      try {
+        const pass = await getOrCreateActivePass(assignedRoundId);
+        await db.query(
+          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, 'unknown_sn', $4, $5)`,
+          [assignedRoundId, pass.id, scannerId || null, savedPath,
+           `Unrecognized serial number: ${serialNumber}. Source: ${source}`]
+        );
+      } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
       if (io) io.emit('scan:error', { reason: 'unknown_sn', serial_number: serialNumber, station: source });
-      return { success: false, error: 'Unrecognized serial number' };
+      return { success: true, flagged: true, flag_reason: 'unknown_sn', error: 'Unrecognized serial number' };
     }
   } else {
     // No assigned round — look up globally
@@ -198,15 +246,17 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   }
 
   if (!ballotInfo) {
+    const savedPath = saveImageForReview(buffer, `notfound-${serialNumber}`, filePath);
     if (io) io.emit('scan:error', { reason: 'invalid_sn', serial_number: serialNumber, station: source });
-    return { success: false, error: `Serial number ${serialNumber} not found` };
+    return { success: true, flagged: true, flag_reason: 'invalid_sn', error: `Serial number ${serialNumber} not found`, image_path: savedPath };
   }
 
   // Don't reject based on serial status — ballots are scanned multiple times across passes
   // The per-pass duplicate check below handles actual duplicates within a single pass
   if (ballotInfo.status === 'spoiled' || ballotInfo.status === 'damaged') {
+    const savedPath = saveImageForReview(buffer, `${ballotInfo.status}-${serialNumber}`, filePath);
     if (io) io.emit('scan:duplicate', { serial_number: serialNumber, station: source });
-    return { success: false, error: `Ballot ${serialNumber} is ${ballotInfo.status}` };
+    return { success: true, flagged: true, flag_reason: ballotInfo.status, error: `Ballot ${serialNumber} is ${ballotInfo.status}`, image_path: savedPath };
   }
 
   const roundId = ballotInfo.round_id;
@@ -222,21 +272,23 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     [pass.id, ballotInfo.id]
   );
   if (existingScan) {
+    const savedPath = saveImageForReview(buffer, `duplicate-${serialNumber}`, filePath);
     if (io) io.emit('scan:duplicate', { serial_number: serialNumber, station: source });
-    return { success: false, error: `Duplicate in pass ${pass.pass_number}` };
+    return { success: true, flagged: true, flag_reason: 'duplicate', error: `Duplicate in pass ${pass.pass_number}`, image_path: savedPath };
   }
 
   // Load ballot spec for OMR
   const ballotSpec = loadBallotSpec(electionId, roundId);
 
   if (!ballotSpec) {
+    const savedPath = saveImageForReview(buffer, `nospec-${serialNumber}`, filePath);
     await db.query(
-      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason)
-       VALUES ($1, $2, $3, $4, 'no_spec')`,
-      [roundId, pass.id, ballotInfo.id, scannerId || null]
+      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path)
+       VALUES ($1, $2, $3, $4, 'no_spec', $5)`,
+      [roundId, pass.id, ballotInfo.id, scannerId || null, savedPath]
     );
     if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'no_spec', station: source });
-    return { success: false, error: 'No ballot spec — cannot run OMR' };
+    return { success: true, flagged: true, flag_reason: 'no_spec', error: 'No ballot spec — cannot run OMR' };
   }
 
   // Run OMR

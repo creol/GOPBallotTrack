@@ -22,7 +22,7 @@ router.get('/passes/:id/ballots', async (req, res) => {
        JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
        JOIN candidates c ON c.id = s.candidate_id
        WHERE s.pass_id = $1
-       ORDER BY s.scanned_at`,
+       ORDER BY bs.serial_number`,
       [passId]
     );
     res.json(rows);

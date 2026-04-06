@@ -217,6 +217,23 @@ async function analyzeOvalFill(imageBuffer, cropX, cropY, cropW, cropH, imgWidth
 
     const rx = info.width / 2;
     const ry = info.height / 2;
+
+    // Adaptive threshold: compute mean pixel value, then use mean * 0.65
+    let pixelSum = 0;
+    let pixelCount = 0;
+    for (let py = 0; py < info.height; py++) {
+      for (let px = 0; px < info.width; px++) {
+        const relX = (px - rx) / rx;
+        const relY = (py - ry) / ry;
+        if (relX * relX + relY * relY <= 1) {
+          pixelSum += pixels[py * info.width + px];
+          pixelCount++;
+        }
+      }
+    }
+    const meanPixel = pixelCount > 0 ? pixelSum / pixelCount : 128;
+    const darkThreshold = Math.max(80, Math.min(160, Math.round(meanPixel * 0.65)));
+
     let darkCount = 0;
     let totalInOval = 0;
 
@@ -226,7 +243,7 @@ async function analyzeOvalFill(imageBuffer, cropX, cropY, cropW, cropH, imgWidth
         const relY = (py - ry) / ry;
         if (relX * relX + relY * relY <= 1) {
           totalInOval++;
-          if (pixels[py * info.width + px] < 128) {
+          if (pixels[py * info.width + px] < darkThreshold) {
             darkCount++;
           }
         }
@@ -305,9 +322,9 @@ async function processScannedBallot(imageBuffer, ballotSpec, preDecodedQR) {
     const ovalFullW = candidate.oval.width * scaleFromSpec;
     const ovalFullH = candidate.oval.height * scaleFromSpec;
 
-    // Shrink to inner 55% width, 60% height to exclude outline + adjacent text
-    const shrinkW = 0.55;
-    const shrinkH = 0.60;
+    // Shrink to inner 65% width, 70% height to exclude outline + adjacent text
+    const shrinkW = 0.65;
+    const shrinkH = 0.70;
     const ovalW = ovalFullW * shrinkW;
     const ovalH = ovalFullH * shrinkH;
 
@@ -369,8 +386,11 @@ async function processScannedBallot(imageBuffer, ballotSpec, preDecodedQR) {
     const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
     winner.is_marked = true;
     detectedVote = winner.candidate_id;
-    confidence = signalAboveBaseline;
-    console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ${signalRatio.toFixed(1)}x above 2nd)`);
+    // Normalized confidence: base from signal strength + boost from signal ratio + fill ratio
+    const baseConf = Math.min(signalAboveBaseline / 0.8, 1.0);
+    const ratioBoost = Math.min(signalRatio / 10, 1.0);
+    confidence = baseConf * 0.6 + ratioBoost * 0.3 + Math.min(highest.fill_ratio, 1.0) * 0.1;
+    console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ${signalRatio.toFixed(1)}x above 2nd, confidence=${confidence.toFixed(4)})`);
   } else if (signalAboveBaseline >= 0.05 && secondSignal >= 0.05 && signalRatio < 1.2) {
     // Two candidates with very similar signal above baseline — real overvote
     const markedOnes = sorted.filter(c => (c.fill_ratio - baseline) >= 0.04);
@@ -383,7 +403,9 @@ async function processScannedBallot(imageBuffer, ballotSpec, preDecodedQR) {
   } else {
     // Some signal but not conclusive
     flagReason = 'uncertain';
-    confidence = signalAboveBaseline;
+    const baseConf = Math.min(signalAboveBaseline / 0.8, 1.0);
+    const ratioBoost = Math.min(signalRatio / 10, 1.0);
+    confidence = baseConf * 0.6 + ratioBoost * 0.3 + Math.min(highest.fill_ratio, 1.0) * 0.1;
     const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
     winner.is_uncertain = true;
     console.log(`[OMR] Decision: UNCERTAIN — highest ${highest.name}@${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ratio=${signalRatio.toFixed(2)}`);
