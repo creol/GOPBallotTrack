@@ -179,6 +179,20 @@ function PassManager({ roundId, onUpdate }) {
     }
   };
 
+  const handleCancel = async (passId, passNumber, scanCount) => {
+    if (!confirm(`Cancel Pass ${passNumber} and delete all ${scanCount || 0} scans? This cannot be undone.`)) return;
+    setLoading(true);
+    try {
+      await api.delete(`/passes/${passId}`, { data: { deleted_reason: 'Canceled by operator' } });
+      fetchPasses();
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      alert('Failed to cancel pass: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCreate = async () => {
     try {
       await api.post(`/rounds/${roundId}/passes`);
@@ -211,17 +225,30 @@ function PassManager({ roundId, onUpdate }) {
             fontWeight: 600, fontSize: '0.85rem',
           }}>{p.scan_count || 0} scans</span>
           <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.85rem' }}>Active</span>
-          <button
-            style={{
-              marginLeft: 'auto', padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff',
-              border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
-              opacity: loading ? 0.6 : 1,
-            }}
-            onClick={() => handleComplete(p.id, p.pass_number)}
-            disabled={loading}
-          >
-            {loading ? 'Completing...' : 'Complete Pass'}
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+            <button
+              style={{
+                padding: '0.5rem 1rem', background: '#fee2e2', color: '#dc2626',
+                border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                opacity: loading ? 0.6 : 1,
+              }}
+              onClick={() => handleCancel(p.id, p.pass_number, p.scan_count)}
+              disabled={loading}
+            >
+              Cancel Pass
+            </button>
+            <button
+              style={{
+                padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff',
+                border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
+                opacity: loading ? 0.6 : 1,
+              }}
+              onClick={() => handleComplete(p.id, p.pass_number)}
+              disabled={loading}
+            >
+              {loading ? 'Completing...' : 'Complete Pass'}
+            </button>
+          </div>
         </div>
       ))}
 
