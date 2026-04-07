@@ -232,7 +232,7 @@ async function analyzeOvalFill(imageBuffer, cropX, cropY, cropW, cropH, imgWidth
       }
     }
     const meanPixel = pixelCount > 0 ? pixelSum / pixelCount : 128;
-    const darkThreshold = Math.max(80, Math.min(160, Math.round(meanPixel * 0.65)));
+    const darkThreshold = Math.max(100, Math.min(200, Math.round(meanPixel * 0.80)));
 
     let darkCount = 0;
     let totalInOval = 0;
@@ -376,13 +376,13 @@ async function processScannedBallot(imageBuffer, ballotSpec, preDecodedQR) {
     c.is_uncertain = false;
   }
 
-  if (highest.fill_ratio < 0.05 || signalAboveBaseline < 0.03) {
+  if (highest.fill_ratio < 0.03 || signalAboveBaseline < 0.008) {
     // No meaningful signal above baseline — blank ballot
     flagReason = 'no_mark';
     console.log(`[OMR] Decision: NO_MARK — no signal above baseline (highest=${highest.fill_ratio}, baseline=${baseline.toFixed(4)})`);
-  } else if (signalAboveBaseline >= 0.05 && signalRatio >= 1.4) {
+  } else if (signalAboveBaseline >= 0.02 && signalRatio >= 1.4) {
     // Clear winner: one candidate's signal is at least 1.4x the next
-    // This covers the common case where positional noise inflates one neighbor
+    // Low signal threshold (0.02) handles pencil marks which have fill ratios of 0.10-0.35
     const winner = candidateResults.find(c => c.candidate_id === highest.candidate_id);
     winner.is_marked = true;
     detectedVote = winner.candidate_id;
@@ -391,9 +391,9 @@ async function processScannedBallot(imageBuffer, ballotSpec, preDecodedQR) {
     const ratioBoost = Math.min(signalRatio / 10, 1.0);
     confidence = baseConf * 0.6 + ratioBoost * 0.3 + Math.min(highest.fill_ratio, 1.0) * 0.1;
     console.log(`[OMR] Decision: CLEAR VOTE — ${winner.name} (fill=${highest.fill_ratio}, signal=${signalAboveBaseline.toFixed(4)}, ${signalRatio.toFixed(1)}x above 2nd, confidence=${confidence.toFixed(4)})`);
-  } else if (signalAboveBaseline >= 0.05 && secondSignal >= 0.05 && signalRatio < 1.2) {
+  } else if (signalAboveBaseline >= 0.02 && secondSignal >= 0.02 && signalRatio < 1.2) {
     // Two candidates with very similar signal above baseline — real overvote
-    const markedOnes = sorted.filter(c => (c.fill_ratio - baseline) >= 0.04);
+    const markedOnes = sorted.filter(c => (c.fill_ratio - baseline) >= 0.02);
     for (const c of markedOnes) {
       const match = candidateResults.find(r => r.candidate_id === c.candidate_id);
       match.is_marked = true;

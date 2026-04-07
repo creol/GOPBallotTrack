@@ -27,7 +27,9 @@ async function getComparison(roundId) {
     const row = { candidate_id: candidate.id, candidate_name: candidate.name, counts: {} };
     for (const pass of passes) {
       const { rows: [{ count }] } = await db.query(
-        'SELECT COUNT(*) as count FROM scans WHERE pass_id = $1 AND candidate_id = $2',
+        `SELECT COUNT(*) as count FROM scans s
+         JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
+         WHERE s.pass_id = $1 AND s.candidate_id = $2 AND bs.status != 'spoiled'`,
         [pass.id, candidate.id]
       );
       row.counts[pass.pass_number] = parseInt(count);
@@ -70,9 +72,11 @@ async function computeResults(roundId) {
     [round.race_id]
   );
 
-  // Count total votes from last pass
+  // Count total votes from last pass (exclude spoiled ballots)
   const { rows: [{ count: totalStr }] } = await db.query(
-    'SELECT COUNT(*) as count FROM scans WHERE pass_id = $1',
+    `SELECT COUNT(*) as count FROM scans s
+     JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
+     WHERE s.pass_id = $1 AND bs.status != 'spoiled'`,
     [lastPass.id]
   );
   const total = parseInt(totalStr);
@@ -94,7 +98,9 @@ async function computeResults(roundId) {
   const results = [];
   for (const candidate of candidates) {
     const { rows: [{ count: voteStr }] } = await db.query(
-      'SELECT COUNT(*) as count FROM scans WHERE pass_id = $1 AND candidate_id = $2',
+      `SELECT COUNT(*) as count FROM scans s
+       JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
+       WHERE s.pass_id = $1 AND s.candidate_id = $2 AND bs.status != 'spoiled'`,
       [lastPass.id, candidate.id]
     );
     const voteCount = parseInt(voteStr);

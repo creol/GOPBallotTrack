@@ -203,11 +203,11 @@ router.get('/:electionId/rounds/:roundId', async (req, res) => {
     );
 
     const { rows: serials } = await db.query(
-      "SELECT serial_number FROM ballot_serials WHERE round_id = $1 AND status = 'counted' ORDER BY serial_number",
+      "SELECT serial_number, status FROM ballot_serials WHERE round_id = $1 AND status IN ('counted', 'spoiled') ORDER BY serial_number",
       [round.id]
     );
 
-    res.json({ round, race, results, serial_numbers: serials.map(s => s.serial_number) });
+    res.json({ round, race, results, serial_numbers: serials.map(s => s.serial_number), ballots: serials });
   } catch (err) {
     console.error('Public round detail error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -281,9 +281,9 @@ router.get('/:electionId/search', async (req, res) => {
 
     const row = rows[0];
 
-    // Get prev/next serial numbers for navigation
+    // Get prev/next serial numbers for navigation (include spoiled)
     const { rows: allSerials } = await db.query(
-      "SELECT serial_number FROM ballot_serials WHERE round_id = $1 AND status = 'counted' ORDER BY serial_number",
+      "SELECT serial_number FROM ballot_serials WHERE round_id = $1 AND status IN ('counted', 'spoiled') ORDER BY serial_number",
       [row.round_id]
     );
     const snList = allSerials.map(s => s.serial_number);

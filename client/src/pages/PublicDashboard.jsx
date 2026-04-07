@@ -310,8 +310,15 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
         {searching && <p style={{ color: '#9ca3af', fontSize: '0.8rem', margin: '0.25rem 0' }}>Searching...</p>}
         {snResults.length > 0 && snResults.map(r => (
           <Link key={r.serial_number} to={`/public/${electionId}/ballots/${r.serial_number}`}
-            style={mob.snResultCard}>
-            <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.serial_number}</span>
+            style={{ ...mob.snResultCard, ...(r.ballot_status === 'spoiled' ? { background: '#f3f4f6', borderColor: '#d1d5db' } : {}) }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.serial_number}</span>
+              {r.ballot_status === 'spoiled' && (
+                <span style={{ background: '#fee2e2', color: '#dc2626', padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700 }}>
+                  SPOILED — NOT COUNTED
+                </span>
+              )}
+            </div>
             <span style={{ color: '#666', fontSize: '0.8rem' }}>{r.race_name} — Round {r.round_number}</span>
           </Link>
         ))}

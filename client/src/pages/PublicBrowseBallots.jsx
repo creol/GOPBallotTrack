@@ -64,15 +64,15 @@ function RoundSNList({ electionId, roundId, raceName, roundNumber, isExpanded, o
     }
   }, [isExpanded, roundId, electionId]);
 
-  const sns = data?.serial_numbers || [];
-  const totalPages = Math.ceil(sns.length / PAGE_SIZE);
-  const pageSNs = sns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const ballots = data?.ballots || data?.serial_numbers?.map(sn => ({ serial_number: sn, status: 'counted' })) || [];
+  const totalPages = Math.ceil(ballots.length / PAGE_SIZE);
+  const pageBallots = ballots.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div style={s.roundSection}>
       <div style={s.roundHeader} onClick={onToggle}>
         <span style={{ fontWeight: 700 }}>{raceName} — Round {roundNumber}</span>
-        <span style={s.muted}>{isExpanded && data ? `${sns.length} ballots` : ''}</span>
+        <span style={s.muted}>{isExpanded && data ? `${ballots.length} ballots` : ''}</span>
         <span style={{ color: '#9ca3af' }}>{isExpanded ? '▼' : '▶'}</span>
       </div>
 
@@ -83,11 +83,16 @@ function RoundSNList({ electionId, roundId, raceName, roundNumber, isExpanded, o
           {data && (
             <>
               <div style={s.snGrid}>
-                {pageSNs.map(sn => (
-                  <Link key={sn} to={`/public/${electionId}/ballots/${sn}`} style={s.snChip}>
-                    {sn}
-                  </Link>
-                ))}
+                {pageBallots.map(b => {
+                  const sn = b.serial_number || b;
+                  const isSpoiled = b.status === 'spoiled';
+                  return (
+                    <Link key={sn} to={`/public/${electionId}/ballots/${sn}`}
+                      style={{ ...s.snChip, ...(isSpoiled ? { background: '#fee2e2', borderColor: '#fca5a5', color: '#dc2626', textDecoration: 'line-through' } : {}) }}>
+                      {sn}
+                    </Link>
+                  );
+                })}
               </div>
 
               {totalPages > 1 && (

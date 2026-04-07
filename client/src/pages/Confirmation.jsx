@@ -20,8 +20,9 @@ export default function Confirmation() {
   const [allPassBallots, setAllPassBallots] = useState({});
   const [comparePass1, setComparePass1] = useState(null);
   const [comparePass2, setComparePass2] = useState(null);
-  const [tableFilter, setTableFilter] = useState('all'); // all, mismatch, confDiff, corrected
+  const [tableFilter, setTableFilter] = useState('all'); // all, mismatch, confDiff, corrected, wrongRound
   const [tableSearch, setTableSearch] = useState('');
+  const [candidateFilter, setCandidateFilter] = useState('');
 
   const fetchComparison = async () => {
     try {
@@ -217,11 +218,15 @@ export default function Confirmation() {
           {showBallotTable && (() => {
             const selectedPasses = [comparePass1, comparePass2].filter(Boolean);
             const snMap = {};
+            const wrongRoundSNs = new Set();
+            const spoiledSNs = new Set();
             for (const [passNum, ballots] of Object.entries(allPassBallots)) {
               if (selectedPasses.length > 0 && !selectedPasses.includes(parseInt(passNum))) continue;
               for (const b of ballots) {
                 if (!snMap[b.serial_number]) snMap[b.serial_number] = {};
                 snMap[b.serial_number][passNum] = { candidate: b.candidate_name, confidence: b.omr_confidence, method: b.omr_method };
+                if (b.wrong_round) wrongRoundSNs.add(b.serial_number);
+                if (b.ballot_status === 'spoiled') spoiledSNs.add(b.serial_number);
               }
             }
             const passNums = selectedPasses.length > 0 ? selectedPasses : data.passes.map(p => p.pass_number);
@@ -235,7 +240,9 @@ export default function Confirmation() {
               const confDiff = confs.length >= 2 ? Math.abs(confs[0] - confs[1]) * 100 : 0;
               const significantDiff = confDiff > 20;
               const wasCorrected = passNums.some(n => row[n]?.method === 'manual_correction');
-              return { sn, row, votes, confs, sameResult, confDiff, significantDiff, wasCorrected };
+              const wrongRound = wrongRoundSNs.has(sn);
+              const spoiled = spoiledSNs.has(sn);
+              return { sn, row, votes, confs, sameResult, confDiff, significantDiff, wasCorrected, wrongRound, spoiled };
             });
 
             // Apply filters
@@ -243,13 +250,20 @@ export default function Confirmation() {
             if (tableSearch) {
               filtered = filtered.filter(r => r.sn.includes(tableSearch.toUpperCase()));
             }
+            if (candidateFilter) {
+              filtered = filtered.filter(r => r.votes.includes(candidateFilter));
+            }
             if (tableFilter === 'mismatch') filtered = filtered.filter(r => !r.sameResult);
             else if (tableFilter === 'confDiff') filtered = filtered.filter(r => r.significantDiff);
             else if (tableFilter === 'corrected') filtered = filtered.filter(r => r.wasCorrected);
+            else if (tableFilter === 'wrongRound') filtered = filtered.filter(r => r.wrongRound);
+            else if (tableFilter === 'spoiled') filtered = filtered.filter(r => r.spoiled);
 
             const mismatchCount = allRows.filter(r => !r.sameResult).length;
             const confDiffCount = allRows.filter(r => r.significantDiff).length;
             const correctedCount = allRows.filter(r => r.wasCorrected).length;
+            const wrongRoundCount = allRows.filter(r => r.wrongRound).length;
+            const spoiledCount = allRows.filter(r => r.spoiled).length;
 
             return (
               <div style={{ marginTop: '0.75rem' }}>
@@ -261,6 +275,16 @@ export default function Confirmation() {
                     value={tableSearch}
                     onChange={e => setTableSearch(e.target.value)}
                   />
+                  <select
+                    style={{ ...styles.input, fontSize: '0.82rem' }}
+                    value={candidateFilter}
+                    onChange={e => setCandidateFilter(e.target.value)}
+                  >
+                    <option value="">All Candidates</option>
+                    {data.candidates.map(c => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
                   <button style={{ ...styles.btnSmall, background: tableFilter === 'all' ? '#2563eb' : '#e5e7eb', color: tableFilter === 'all' ? '#fff' : '#374151' }}
                     onClick={() => setTableFilter('all')}>All ({allRows.length})</button>
                   <button style={{ ...styles.btnSmall, background: tableFilter === 'mismatch' ? '#dc2626' : '#e5e7eb', color: tableFilter === 'mismatch' ? '#fff' : '#374151' }}
@@ -269,6 +293,14 @@ export default function Confirmation() {
                     onClick={() => setTableFilter(tableFilter === 'confDiff' ? 'all' : 'confDiff')}>Conf. Diff ({confDiffCount})</button>
                   <button style={{ ...styles.btnSmall, background: tableFilter === 'corrected' ? '#3730a3' : '#e5e7eb', color: tableFilter === 'corrected' ? '#fff' : '#374151' }}
                     onClick={() => setTableFilter(tableFilter === 'corrected' ? 'all' : 'corrected')}>Corrected ({correctedCount})</button>
+                  {wrongRoundCount > 0 && (
+                    <button style={{ ...styles.btnSmall, background: tableFilter === 'wrongRound' ? '#dc2626' : '#fee2e2', color: tableFilter === 'wrongRound' ? '#fff' : '#dc2626', fontWeight: 700 }}
+                      onClick={() => setTableFilter(tableFilter === 'wrongRound' ? 'all' : 'wrongRound')}>Wrong Round ({wrongRoundCount})</button>
+                  )}
+                  {spoiledCount > 0 && (
+                    <button style={{ ...styles.btnSmall, background: tableFilter === 'spoiled' ? '#6b7280' : '#f3f4f6', color: tableFilter === 'spoiled' ? '#fff' : '#6b7280', fontWeight: 700 }}
+                      onClick={() => setTableFilter(tableFilter === 'spoiled' ? 'all' : 'spoiled')}>Spoiled ({spoiledCount})</button>
+                  )}
                 </div>
 
                 {/* Scrollable table window */}
@@ -291,7 +323,9 @@ export default function Confirmation() {
                   <tbody>
                     {filtered.map((r, i) => {
                       let rowBg = '';
-                      if (!r.sameResult) rowBg = '#fef2f2';
+                      if (r.spoiled) rowBg = '#f3f4f6';
+                      else if (r.wrongRound) rowBg = '#fef2f2';
+                      else if (!r.sameResult) rowBg = '#fef2f2';
                       else if (r.significantDiff) rowBg = '#fffbeb';
 
                       return (
@@ -328,7 +362,17 @@ export default function Confirmation() {
                                 }
                               }}
                             >{r.sn}</a>
-                            {r.wasCorrected && (
+                            {r.spoiled && (
+                              <span style={{ marginLeft: '0.35rem', background: '#f3f4f6', color: '#6b7280', padding: '1px 5px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, verticalAlign: 'middle', textDecoration: 'line-through' }}>
+                                SPOILED — NOT COUNTED
+                              </span>
+                            )}
+                            {r.wrongRound && !r.spoiled && (
+                              <span style={{ marginLeft: '0.35rem', background: '#fee2e2', color: '#dc2626', padding: '1px 5px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, verticalAlign: 'middle' }}>
+                                WRONG ROUND
+                              </span>
+                            )}
+                            {r.wasCorrected && !r.spoiled && (
                               <span style={{ marginLeft: '0.35rem', background: '#e0e7ff', color: '#3730a3', padding: '1px 5px', borderRadius: 3, fontSize: '0.6rem', fontWeight: 700, verticalAlign: 'middle' }}>
                                 CORRECTED
                               </span>
@@ -338,10 +382,10 @@ export default function Confirmation() {
                             const d = r.row[n];
                             return (
                               <React.Fragment key={n}>
-                                <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: !r.sameResult ? '#dc2626' : '#374151' }}>
+                                <td style={{ ...styles.td, fontWeight: 600, fontSize: '0.85rem', color: r.spoiled ? '#9ca3af' : !r.sameResult ? '#dc2626' : '#374151', textDecoration: r.spoiled ? 'line-through' : 'none' }}>
                                   {d?.candidate || '—'}
                                 </td>
-                                <td style={{ ...styles.td, fontSize: '0.8rem', color: d?.confidence > 0.5 ? '#16a34a' : d?.confidence > 0.2 ? '#f59e0b' : '#dc2626' }}>
+                                <td style={{ ...styles.td, fontSize: '0.8rem', color: r.spoiled ? '#9ca3af' : d?.confidence > 0.5 ? '#16a34a' : d?.confidence > 0.2 ? '#f59e0b' : '#dc2626', textDecoration: r.spoiled ? 'line-through' : 'none' }}>
                                   {d?.confidence != null ? `${(d.confidence * 100).toFixed(1)}%` : '—'}
                                 </td>
                               </React.Fragment>
@@ -445,10 +489,44 @@ export default function Confirmation() {
                   {statusText}
                 </div>
 
+                {/* Wrong round warning */}
+                {b.wrong_round && (
+                  <div style={{ background: '#fef2f2', color: '#dc2626', padding: '0.5rem 1rem', fontWeight: 700, fontSize: '0.9rem', textAlign: 'center', borderBottom: '1px solid #fca5a5' }}>
+                    WRONG ROUND — This ballot does not belong to this round
+                  </div>
+                )}
+
                 {/* SN */}
-                <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #e5e7eb' }}>
-                  <span style={styles.reviewLabel}>Serial Number</span>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.2rem', marginLeft: '0.5rem' }}>{b.serial_number}</span>
+                <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <span style={styles.reviewLabel}>Serial Number</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.2rem', marginLeft: '0.5rem' }}>{b.serial_number}</span>
+                  </div>
+                  <button
+                    style={{ padding: '0.35rem 0.75rem', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                    onClick={async () => {
+                      if (!confirm(`SPOIL ballot ${b.serial_number}? This will remove it from all passes and mark the serial as spoiled. This cannot be undone.`)) return;
+                      let name = judgeName;
+                      if (!name) {
+                        name = prompt('Enter your name to log this spoil:');
+                        if (!name) return;
+                        setJudgeName(name);
+                      }
+                      const reason = prompt('Reason for spoiling (optional):');
+                      try {
+                        await api.put(`/admin/scans/${b.scan_id}/spoil`, {
+                          spoiled_by: name,
+                          reason: reason || null,
+                        });
+                        handleReviewPass(reviewPassId);
+                        fetchComparison();
+                      } catch (err) {
+                        alert('Failed to spoil: ' + (err.response?.data?.error || err.message));
+                      }
+                    }}
+                  >
+                    Spoil Ballot
+                  </button>
                 </div>
 
                 {/* Per-pass comparison with change vote */}

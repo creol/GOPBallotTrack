@@ -40,11 +40,22 @@ export default function PublicBallotViewer() {
       <div style={styles.info}>
         <h2 style={{ margin: '0 0 0.25rem' }}>Ballot {data.serial_number}</h2>
         <p style={styles.muted}>{data.race_name} — Round {data.round_number}</p>
-        <span style={styles.statusChip}>
-          {data.ballot_status === 'counted' ? 'Counted' : data.ballot_status}
-        </span>
-        {data.voted_for && (
-          <p style={styles.votedFor}>Voted for: <strong>{data.voted_for}</strong></p>
+        {data.ballot_status === 'spoiled' ? (
+          <>
+            <span style={styles.spoiledChip}>SPOILED — NOT COUNTED</span>
+            {data.voted_for && (
+              <p style={{ fontSize: '1rem', margin: '0.75rem 0 0', color: '#9ca3af', textDecoration: 'line-through' }}>
+                Voted for: <strong>{data.voted_for}</strong>
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <span style={styles.statusChip}>Counted</span>
+            {data.voted_for && (
+              <p style={styles.votedFor}>Voted for: <strong>{data.voted_for}</strong></p>
+            )}
+          </>
         )}
       </div>
 
@@ -92,6 +103,7 @@ const styles = {
   backLink: { color: '#2563eb', textDecoration: 'none', display: 'inline-block', marginBottom: '1rem' },
   info: { marginBottom: '1rem' },
   statusChip: { display: 'inline-block', background: '#dcfce7', color: '#166534', padding: '2px 10px', borderRadius: 12, fontSize: '0.8rem', fontWeight: 600 },
+  spoiledChip: { display: 'inline-block', background: '#fee2e2', color: '#dc2626', padding: '4px 12px', borderRadius: 12, fontSize: '0.85rem', fontWeight: 700 },
   votedFor: { fontSize: '1.1rem', margin: '0.75rem 0 0', color: '#1e293b' },
   ballotImage: { width: '100%', borderRadius: 8, border: '1px solid #e5e7eb' },
   noImage: { background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '2rem', textAlign: 'center' },

@@ -14,10 +14,15 @@ const router = Router();
 router.get('/passes/:id/ballots', async (req, res) => {
   try {
     const passId = parseInt(req.params.id);
+    // Get the round_id for this pass so client can detect wrong-round ballots
+    const { rows: [passInfo] } = await db.query('SELECT round_id FROM passes WHERE id = $1', [passId]);
+    const passRoundId = passInfo?.round_id;
+
     const { rows } = await db.query(
       `SELECT s.id as scan_id, s.ballot_serial_id, s.candidate_id, s.image_path,
               s.omr_confidence, s.omr_method, s.scanned_at,
-              bs.serial_number, c.name as candidate_name
+              bs.serial_number, bs.round_id as ballot_round_id, bs.status as ballot_status,
+              c.name as candidate_name
        FROM scans s
        JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
        JOIN candidates c ON c.id = s.candidate_id
@@ -25,9 +30,51 @@ router.get('/passes/:id/ballots', async (req, res) => {
        ORDER BY bs.serial_number`,
       [passId]
     );
+
+    // Tag each ballot with whether it belongs to this round
+    for (const row of rows) {
+      row.wrong_round = passRoundId && row.ballot_round_id !== passRoundId;
+    }
     res.json(rows);
   } catch (err) {
     console.error('List pass ballots error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/scans/:id/spoil — Spoil a ballot (remove scan, mark serial as spoiled)
+router.put('/scans/:id/spoil', async (req, res) => {
+  try {
+    const { spoiled_by, reason } = req.body;
+    if (!spoiled_by) return res.status(400).json({ error: 'spoiled_by (your name) is required' });
+
+    const { rows: [scan] } = await db.query(
+      `SELECT s.*, bs.serial_number, bs.round_id
+       FROM scans s
+       JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
+       WHERE s.id = $1`,
+      [req.params.id]
+    );
+    if (!scan) return res.status(404).json({ error: 'Scan not found' });
+
+    // Mark the serial as spoiled
+    await db.query("UPDATE ballot_serials SET status = 'spoiled' WHERE id = $1", [scan.ballot_serial_id]);
+
+    // Delete the scan from all passes for this ballot serial
+    await db.query('DELETE FROM scans WHERE ballot_serial_id = $1', [scan.ballot_serial_id]);
+
+    // Log the spoil in vote_changes
+    try {
+      await db.query(
+        `INSERT INTO vote_changes (scan_id, old_candidate_id, new_candidate_id, changed_by, reason)
+         VALUES ($1, $2, NULL, $3, $4)`,
+        [parseInt(req.params.id), scan.candidate_id, spoiled_by, `SPOILED: ${reason || 'No reason given'}`]
+      );
+    } catch {}
+
+    res.json({ message: `Ballot ${scan.serial_number} spoiled`, serial_number: scan.serial_number });
+  } catch (err) {
+    console.error('Spoil ballot error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
