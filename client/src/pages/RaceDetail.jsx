@@ -22,6 +22,8 @@ export default function RaceDetail() {
   const [editingCandidate, setEditingCandidate] = useState(null);
   const [editCandidateName, setEditCandidateName] = useState('');
   const [showRegenWarning, setShowRegenWarning] = useState(false);
+  const [editingRoundColor, setEditingRoundColor] = useState(null); // round id being edited
+  const [editRoundColorValue, setEditRoundColorValue] = useState('');
   const [withdrawTarget, setWithdrawTarget] = useState(null);
   const [withdrawPin, setWithdrawPin] = useState('');
   const [withdrawError, setWithdrawError] = useState(null);
@@ -98,6 +100,13 @@ export default function RaceDetail() {
     if (!paperColor.trim()) return;
     await api.post(`/admin/races/${raceId}/rounds`, { paper_color: paperColor });
     setPaperColor('');
+    fetchAll();
+  };
+
+  const handleUpdateRoundColor = async (roundId) => {
+    if (!editRoundColorValue.trim()) return;
+    await api.put(`/admin/rounds/${roundId}`, { paper_color: editRoundColorValue.trim() });
+    setEditingRoundColor(null);
     fetchAll();
   };
 
@@ -266,13 +275,41 @@ export default function RaceDetail() {
 
               {rounds.length === 0 && <p style={styles.muted}>No rounds yet.</p>}
               {rounds.map(round => (
-                <Link
-                  key={round.id}
-                  to={`/admin/elections/${electionId}/races/${raceId}/rounds/${round.id}`}
-                  style={styles.roundCard}
-                >
-                  <span style={{ fontWeight: 600 }}>Round {round.round_number}</span>
-                  <span style={styles.muted}>Paper: {round.paper_color}</span>
+                <div key={round.id} style={styles.roundCard}>
+                  <Link
+                    to={`/admin/elections/${electionId}/races/${raceId}/rounds/${round.id}`}
+                    style={{ fontWeight: 600, color: 'inherit', textDecoration: 'none' }}
+                  >
+                    Round {round.round_number}
+                  </Link>
+                  {editingRoundColor === round.id ? (
+                    <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }} onClick={e => e.preventDefault()}>
+                      <input
+                        style={{ ...styles.input, width: 120, padding: '0.25rem 0.4rem', fontSize: '0.82rem' }}
+                        value={editRoundColorValue}
+                        onChange={e => setEditRoundColorValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleUpdateRoundColor(round.id);
+                          if (e.key === 'Escape') setEditingRoundColor(null);
+                        }}
+                        autoFocus
+                      />
+                      <button style={styles.btnSmall} onClick={() => handleUpdateRoundColor(round.id)}>Save</button>
+                      <button style={styles.btnSmall} onClick={() => setEditingRoundColor(null)}>Cancel</button>
+                    </span>
+                  ) : (
+                    <span
+                      style={{ ...styles.muted, cursor: 'pointer', borderBottom: '1px dashed #999' }}
+                      title="Click to edit paper color"
+                      onClick={e => {
+                        e.preventDefault();
+                        setEditingRoundColor(round.id);
+                        setEditRoundColorValue(round.paper_color || '');
+                      }}
+                    >
+                      Paper: {round.paper_color || '(none)'}
+                    </span>
+                  )}
                   {statusLabel[round.status] && (
                     <span style={{ ...styles.statusBadge, background: statusColor[round.status] || '#999' }}>
                       {statusLabel[round.status]}
@@ -281,7 +318,7 @@ export default function RaceDetail() {
                   {!round.ballot_pdf_generated_at && round.status !== 'canceled' && (
                     <span style={styles.noBallotsBadge}>Ballots not generated</span>
                   )}
-                </Link>
+                </div>
               ))}
 
               <h3 style={{ marginTop: '1rem', fontSize: '0.95rem' }}>Add Additional Round</h3>

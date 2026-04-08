@@ -43,6 +43,25 @@ router.post('/races/:id/rounds', async (req, res) => {
   }
 });
 
+// PUT /api/admin/rounds/:id — Update round (paper_color)
+router.put('/rounds/:id', async (req, res) => {
+  try {
+    const { paper_color } = req.body;
+    if (!paper_color || !paper_color.trim()) return res.status(400).json({ error: 'paper_color is required' });
+
+    const { rows: [round] } = await db.query(
+      'UPDATE rounds SET paper_color = $1 WHERE id = $2 RETURNING *',
+      [paper_color.trim(), req.params.id]
+    );
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+
+    res.json(round);
+  } catch (err) {
+    console.error('Update round error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/admin/rounds/:id — Get round detail with passes and results
 router.get('/rounds/:id', async (req, res) => {
   try {
