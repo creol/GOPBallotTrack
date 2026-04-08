@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.104';
+const AGENT_VERSION = '0.105';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -147,7 +147,13 @@ async function uploadFile(filePath) {
       });
 
       const sn = response.data.serial_number || null;
-      logSuccess(`Uploaded ${filename} — ${response.data.message || 'OK'}`, sn);
+      const msg = response.data.message || response.data.error || 'OK';
+      const level = response.data.flagged ? 'warn' : 'success';
+      if (response.data.flagged) {
+        logError(`Uploaded ${filename} — FLAGGED: ${msg}`, sn);
+      } else {
+        logSuccess(`Uploaded ${filename} — ${msg}`, sn);
+      }
 
       // Move to processed folder
       const dest = path.join(processedDir, `${Date.now()}-${filename}`);
