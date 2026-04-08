@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { key: 'scanners', label: 'Scanners' },
   { key: 'export', label: 'Export' },
   { key: 'dashboards', label: 'Dashboards' },
+  { key: 'logs', label: 'Scan Logs' },
 ];
 
 export default function ElectionDetail() {
@@ -206,6 +207,16 @@ export default function ElectionDetail() {
           {activeSection === 'export' && <ExportSection electionId={id} />}
 
           {activeSection === 'dashboards' && <DashboardsSection electionId={id} />}
+
+          {activeSection === 'logs' && (
+            <div>
+              <h2>Scan Logs</h2>
+              <p style={{ color: '#6b7280', marginBottom: '1rem' }}>View agent and server scan processing logs for this election.</p>
+              <Link to={`/admin/elections/${id}/logs`} style={{ display: 'inline-block', padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', borderRadius: 6, textDecoration: 'none', fontSize: '0.9rem' }}>
+                Open Log Viewer
+              </Link>
+            </div>
+          )}
     </ElectionLayout>
   );
 }

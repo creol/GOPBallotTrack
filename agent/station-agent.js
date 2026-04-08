@@ -38,20 +38,53 @@ fs.mkdirSync(failedDir, { recursive: true });
 
 const EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp']);
 
+// --- Log buffer: collects logs and sends to server periodically ---
+let logBuffer = [];
+let currentRoundId = null;
+const LOG_FLUSH_INTERVAL = 5000; // flush every 5 seconds
+
 function timestamp() {
   return new Date().toISOString().replace('T', ' ').split('.')[0];
 }
 
-function log(msg) {
+function bufferLog(level, msg, serialNumber) {
+  logBuffer.push({
+    level,
+    message: msg,
+    serialNumber: serialNumber || null,
+    roundId: currentRoundId,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+async function flushLogs() {
+  if (logBuffer.length === 0) return;
+  const batch = logBuffer.splice(0, logBuffer.length);
+  try {
+    await axios.post(`${serverUrl}/api/stations/${stationId}/logs`, { logs: batch }, { timeout: 5000 });
+  } catch {
+    // Put them back if send fails — they'll retry next flush
+    logBuffer.unshift(...batch);
+    // Cap buffer at 1000 to prevent memory leaks
+    if (logBuffer.length > 1000) logBuffer = logBuffer.slice(-500);
+  }
+}
+
+setInterval(flushLogs, LOG_FLUSH_INTERVAL);
+
+function log(msg, serialNumber) {
   console.log(`[${timestamp()}] ${msg}`);
+  bufferLog('info', msg, serialNumber);
 }
 
-function logError(msg) {
+function logError(msg, serialNumber) {
   console.error(`[${timestamp()}] ERROR: ${msg}`);
+  bufferLog('error', msg, serialNumber);
 }
 
-function logSuccess(msg) {
+function logSuccess(msg, serialNumber) {
   console.log(`[${timestamp()}] \x1b[32m${msg}\x1b[0m`);
+  bufferLog('success', msg, serialNumber);
 }
 
 /**
@@ -61,6 +94,7 @@ async function ensureAssignment() {
   try {
     const { data: assignment } = await axios.get(`${serverUrl}/api/stations/${stationId}/assignment`);
     if (assignment.assigned) {
+      currentRoundId = assignment.roundId;
       logSuccess(`Assigned to round ${assignment.roundId}`);
       return assignment.roundId;
     }
@@ -77,6 +111,7 @@ async function ensureAssignment() {
     if (rounds.length === 1) {
       const round = rounds[0];
       await axios.post(`${serverUrl}/api/stations/${stationId}/assign`, { roundId: round.round_id });
+      currentRoundId = round.round_id;
       logSuccess(`Auto-assigned to: ${round.race_name} — Round ${round.round_number} (${round.paper_color})`);
       return round.round_id;
     }
@@ -109,7 +144,8 @@ async function uploadFile(filePath) {
         maxContentLength: 50 * 1024 * 1024, // 50MB
       });
 
-      logSuccess(`Uploaded ${filename} — ${response.data.message || 'OK'}`);
+      const sn = response.data.serial_number || null;
+      logSuccess(`Uploaded ${filename} — ${response.data.message || 'OK'}`, sn);
 
       // Move to processed folder
       const dest = path.join(processedDir, `${Date.now()}-${filename}`);
@@ -228,7 +264,8 @@ watcher.on('error', (err) => logError(`Watcher error: ${err.message}`));
 watcher.on('ready', () => log('Watching for new ballot images...'));
 
 // Handle shutdown gracefully
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   log('Shutting down...');
+  await flushLogs();
   watcher.close().then(() => process.exit(0));
 });

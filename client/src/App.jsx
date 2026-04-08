@@ -20,6 +20,7 @@ import PublicBrowseBallots from './pages/PublicBrowseBallots';
 import UserManagement from './pages/UserManagement';
 import ControlCenter from './pages/ControlCenter';
 import StationSetup from './pages/StationSetup';
+import ScanLogs from './pages/ScanLogs';
 
 function ProtectedRoute({ children, auth, requiredRoles }) {
   if (!auth.checked) return null;
@@ -96,6 +97,9 @@ export default function App() {
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId/review" element={
           <ProtectedRoute auth={auth}><BallotReviewQueue /></ProtectedRoute>
+        } />
+        <Route path="/admin/elections/:id/logs" element={
+          <ProtectedRoute auth={auth}><ScanLogs /></ProtectedRoute>
         } />
         <Route path="/admin/rounds/:roundId/boxes" element={
           <ProtectedRoute auth={auth}><BallotBoxDetail /></ProtectedRoute>

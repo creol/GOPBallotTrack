@@ -25,6 +25,7 @@ const adminUsersRouter = require('./routes/adminUsers');
 const controlCenterRouter = require('./routes/controlCenter');
 const testToolsRouter = require('./routes/testTools');
 const stationsRouter = require('./routes/stations');
+const scanLogsRouter = require('./routes/scanLogs');
 const reviewedBallotsRouter = require('./routes/reviewedBallots');
 const { startWatchers } = require('./middleware/scanWatcher');
 
@@ -53,6 +54,7 @@ app.use('/api/auth', authRouter);
 
 // Station endpoints (no auth — trusted LAN, must be before auth-protected routes)
 app.use('/api', stationsRouter);
+app.use('/api', scanLogsRouter); // Agent log upload (no auth) + admin log views (auth applied in router)
 
 // Admin API routes (requireAuth — any authenticated admin user)
 app.use('/api/admin/elections', requireAuth, electionsRouter);

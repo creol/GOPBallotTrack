@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db');
 const { findQRInImage, processScannedBallot } = require('./omrService');
+const { writeLog } = require('./scanLogService');
 
 const UPLOADS_BASE = path.join(__dirname, '..', '..', '..', 'uploads');
 const SCAN_BASE = path.join(__dirname, '..', '..', '..', 'data', 'scans');
@@ -72,7 +73,18 @@ async function getOrCreateActivePass(roundId) {
 async function processBallot({ imageBuffer, filePath, stationId, roundId: assignedRoundId, scannerId, io }) {
   const source = stationId || 'unknown';
   const t0 = Date.now();
-  const log = (msg) => console.log(`[Scan:${source}] ${msg} (+${Date.now() - t0}ms)`);
+  let _logElectionId = null;
+  let _logSerialNumber = null;
+  const log = (msg, level = 'info') => {
+    const fullMsg = `${msg} (+${Date.now() - t0}ms)`;
+    console.log(`[Scan:${source}] ${fullMsg}`);
+    writeLog({
+      electionId: _logElectionId, source: 'server:scan', level,
+      message: fullMsg, serialNumber: _logSerialNumber,
+      roundId: assignedRoundId || null, stationId: source,
+      metadata: { elapsed_ms: Date.now() - t0 },
+    });
+  };
 
   // Read image if buffer not provided
   let buffer = imageBuffer;
@@ -129,6 +141,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   }
 
   const serialNumber = typeof qrResult.qrData === 'string' ? qrResult.qrData.trim() : null;
+  _logSerialNumber = serialNumber;
   if (!serialNumber || serialNumber.length < 8) {
     const savedPath = saveImageForReview(buffer, 'invalidqr', filePath);
     if (assignedRoundId) {
@@ -262,6 +275,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   const roundId = ballotInfo.round_id;
   const raceId = ballotInfo.race_id;
   const electionId = ballotInfo.election_id;
+  _logElectionId = electionId;
 
   // Get or create active pass
   const pass = await getOrCreateActivePass(roundId);
@@ -363,7 +377,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     confidence: omrResult.confidence,
   });
 
-  log(`DONE SN=${serialNumber} → ${candidateName} total=${Date.now() - t0}ms`);
+  log(`DONE SN=${serialNumber} → ${candidateName} total=${Date.now() - t0}ms`, 'success');
   return {
     success: true,
     serial_number: serialNumber,
