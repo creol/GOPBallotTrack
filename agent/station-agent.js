@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.102';
+const AGENT_VERSION = '0.104';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -212,10 +212,49 @@ if (!fs.existsSync(watchFolder)) {
   fs.mkdirSync(watchFolder, { recursive: true });
 }
 
-// Test server connection, then auto-assign to a round if possible
+/**
+ * Check for a newer agent version on the server.
+ * If found, download the new station-agent.js, overwrite ourselves, and restart.
+ */
+async function checkForUpdate() {
+  try {
+    const { data } = await axios.get(`${serverUrl}/api/stations/agent-version`, { timeout: 5000 });
+    if (!data.version) return;
+
+    if (data.version !== AGENT_VERSION) {
+      log(`Update available: ${AGENT_VERSION} → ${data.version}`);
+      const { data: newCode } = await axios.get(`${serverUrl}/api/stations/agent-source`, {
+        timeout: 10000, responseType: 'text',
+      });
+
+      const selfPath = path.resolve(__filename || __dirname + '/station-agent.js');
+      fs.writeFileSync(selfPath, newCode, 'utf8');
+      logSuccess(`Updated to v${data.version} — restarting...`);
+      await flushLogs();
+
+      // Restart: spawn a new process and exit
+      const { spawn } = require('child_process');
+      const child = spawn(process.execPath, [selfPath], {
+        cwd: __dirname,
+        stdio: 'inherit',
+        detached: true,
+      });
+      child.unref();
+      process.exit(0);
+    } else {
+      log(`Agent is up to date (v${AGENT_VERSION})`);
+    }
+  } catch (err) {
+    // Don't block startup if update check fails
+    log(`Update check skipped: ${err.message}`);
+  }
+}
+
+// Startup sequence: health check → update check → assignment → watch
 axios.get(`${serverUrl}/api/health`)
-  .then(res => {
+  .then(async (res) => {
     logSuccess(`Server connection OK: ${res.data.status}`);
+    await checkForUpdate();
     return ensureAssignment();
   })
   .then(roundId => {

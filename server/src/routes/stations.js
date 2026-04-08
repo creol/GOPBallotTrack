@@ -6,6 +6,8 @@ const archiver = require('archiver');
 const db = require('../db');
 const { processBallot } = require('../services/scanProcessingService');
 
+const { APP_VERSION } = require('../version');
+
 const router = Router();
 
 // In-memory station assignments (reset on server restart)
@@ -137,6 +139,21 @@ router.get('/stations/download-bundle', (req, res) => {
   archive.finalize();
 });
 
+// GET /api/stations/agent-version — Current agent version (for auto-update check)
+router.get('/stations/agent-version', (req, res) => {
+  res.json({ version: APP_VERSION });
+});
+
+// GET /api/stations/agent-source — Download latest station-agent.js source
+router.get('/stations/agent-source', (req, res) => {
+  const agentPath = path.join(__dirname, '..', '..', '..', 'agent', 'station-agent.js');
+  if (!fs.existsSync(agentPath)) {
+    return res.status(404).json({ error: 'Agent source not found' });
+  }
+  res.setHeader('Content-Type', 'text/plain');
+  res.sendFile(path.resolve(agentPath));
+});
+
 // GET /api/stations/active-rounds — All rounds available for station assignment
 router.get('/stations/active-rounds', async (req, res) => {
   try {
@@ -148,6 +165,7 @@ router.get('/stations/active-rounds', async (req, res) => {
        JOIN races ra ON r.race_id = ra.id
        JOIN elections e ON ra.election_id = e.id
        WHERE r.status IN ('voting_open', 'voting_closed', 'tallying')
+         AND e.status = 'active'
        ORDER BY e.name, ra.display_order, r.round_number`
     );
     res.json(rows);

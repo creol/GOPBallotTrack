@@ -120,7 +120,9 @@ export default function App() {
         } />
 
         {/* Station setup + Scanner routes — no auth */}
-        <Route path="/station-setup" element={<StationSetup />} />
+        <Route path="/station-setup" element={
+          <ProtectedRoute auth={auth}><StationSetup /></ProtectedRoute>
+        } />
         <Route path="/scan/:roundId" element={<Scanner />} />
 
         {/* Public routes — no auth */}

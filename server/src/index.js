@@ -8,6 +8,7 @@ const cookieParser = require('cookie-parser');
 const { runMigrations } = require('./migrate');
 const { seed } = require('./seed');
 const { requireAuth, requireSuperAdmin, requireRaceAccess } = require('./middleware/auth');
+const { APP_VERSION } = require('./version');
 const authRouter = require('./routes/auth');
 const electionsRouter = require('./routes/elections');
 const racesRouter = require('./routes/races');
@@ -43,7 +44,7 @@ app.use('/data/scans', express.static(path.join(__dirname, '..', '..', 'data', '
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: APP_VERSION, timestamp: new Date().toISOString() });
 });
 
 // Make io accessible to routes
