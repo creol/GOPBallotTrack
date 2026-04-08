@@ -115,6 +115,9 @@ export default function ElectionSidebar({ electionId }) {
       <Link to={`${basePath}?section=dashboards`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
         Dashboards
       </Link>
+      <Link to={`${basePath}/logs`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
+        Scan Logs
+      </Link>
     </nav>
   );
 }

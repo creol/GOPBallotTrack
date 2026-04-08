@@ -99,8 +99,9 @@ export default function StationSetup() {
   };
 
   return (
-    <div style={s.wrapper}>
-      <AppHeader title="Station Setup" />
+    <div style={s.outerWrapper}>
+      <div style={s.headerBar}><AppHeader title="Station Setup" /></div>
+      <div style={s.wrapper}>
       <div style={s.card}>
         <h1 style={s.title}>Station Setup</h1>
 
@@ -237,11 +238,14 @@ export default function StationSetup() {
         )}
       </div>
     </div>
+    </div>
   );
 }
 
 const s = {
-  wrapper: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif' },
+  outerWrapper: { minHeight: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif' },
+  headerBar: { maxWidth: 520, margin: '0 auto', padding: '1rem 1rem 0' },
+  wrapper: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 60px)' },
   card: { background: '#fff', borderRadius: 12, padding: '2.5rem', width: '100%', maxWidth: 520, boxShadow: '0 4px 24px rgba(0,0,0,0.08)' },
   title: { margin: '0 0 0.25rem', textAlign: 'center', fontSize: '1.75rem' },
   subtitle: { color: '#666', textAlign: 'center', margin: '0 0 1.5rem', fontSize: '0.9rem' },
