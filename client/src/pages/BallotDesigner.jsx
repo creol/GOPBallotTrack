@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import AppHeader from '../components/AppHeader';
 
 export default function BallotDesigner() {
   const { id: electionId } = useParams();
@@ -123,6 +124,7 @@ export default function BallotDesigner() {
 
   return (
     <div style={s.container}>
+      <AppHeader title="Ballot Designer" />
       <Link to={`/admin/elections/${electionId}?section=ballots`} style={s.backLink}>&larr; Back to Ballot Generation</Link>
       <div style={s.header}>
         <h1>Ballot Designer</h1>

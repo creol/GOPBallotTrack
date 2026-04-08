@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { io as socketIO } from 'socket.io-client';
 import api from '../api/client';
 import DashboardPreview from '../components/DashboardPreview';
+import AppHeader from '../components/AppHeader';
 
 const STATUS_COLORS = {
   pending_needs_action: { bg: '#fef3c7', color: '#92400e', label: 'Needs Action' },
@@ -83,6 +84,7 @@ export default function ControlCenter() {
 
   return (
     <div style={s.container}>
+      <AppHeader title="Control Center" />
       <Link to="/admin" style={s.backLink}>&larr; Back to Dashboard</Link>
       <h1>Control Center</h1>
       <p style={s.muted}>Manage voting, tallying, and result publication for all races.</p>

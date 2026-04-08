@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import api from '../api/client';
+import AppHeader from '../components/AppHeader';
 
 export default function SpoiledBallot() {
   const { roundId } = useParams();
@@ -83,6 +84,7 @@ export default function SpoiledBallot() {
 
   return (
     <div style={styles.container}>
+      <AppHeader title="Spoiled Ballot" />
       <Link to={`/scan/${roundId}`} style={styles.backLink}>&larr; Back to Scanner</Link>
       <h2>Report Spoiled Ballot</h2>
       <p style={styles.muted}>{round.race?.name} — Round {round.round_number}</p>

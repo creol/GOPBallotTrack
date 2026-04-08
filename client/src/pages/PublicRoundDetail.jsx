@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import { VersionTag } from '../components/AppHeader';
 
 export default function PublicRoundDetail() {
   const { electionId, roundId } = useParams();
@@ -20,6 +21,7 @@ export default function PublicRoundDetail() {
 
   return (
     <div style={styles.container}>
+      <VersionTag />
       <Link to={`/public/${electionId}`} style={styles.backLink}>&larr; Back to Dashboard</Link>
 
       <h1>{data.race.name} — Round {data.round.round_number}</h1>

@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { QRCodeSVG } from 'qrcode.react';
 import api from '../api/client';
 import { formatRaceSchedule } from '../utils/dateFormat';
+import { VersionTag } from '../components/AppHeader';
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -73,9 +74,9 @@ export default function PublicDashboard() {
     </div>
   );
 
-  if (isTvMode) return <TVMode election={election} connected={connected} />;
+  if (isTvMode) return <><TVMode election={election} connected={connected} /><VersionTag /></>;
   return (
-    <MobileMode
+    <><MobileMode
       election={election}
       electionId={electionId}
       searchSN={searchSN}
@@ -84,7 +85,7 @@ export default function PublicDashboard() {
       handleSearch={handleSearch}
       expandedRace={expandedRace}
       setExpandedRace={setExpandedRace}
-    />
+    /><VersionTag /></>
   );
 }
 

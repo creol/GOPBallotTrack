@@ -1,10 +1,12 @@
 import { useNavigate } from 'react-router-dom';
+import AppHeader from '../components/AppHeader';
 
 export default function JudgeLanding({ onLogout }) {
   const navigate = useNavigate();
 
   return (
     <div style={styles.wrapper}>
+      <AppHeader title="Election Judge" />
       <div style={styles.card}>
         <h1 style={styles.title}>Election Event Judge</h1>
         <p style={styles.description}>

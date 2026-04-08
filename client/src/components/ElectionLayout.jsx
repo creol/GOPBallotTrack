@@ -3,6 +3,7 @@ import { useParams, Link, useLocation } from 'react-router-dom';
 import api from '../api/client';
 import ElectionSidebar from './ElectionSidebar';
 import Breadcrumb from './Breadcrumb';
+import AppHeader from './AppHeader';
 
 export default function ElectionLayout({ children, breadcrumbs, electionId: propElectionId }) {
   const params = useParams();
@@ -21,6 +22,7 @@ export default function ElectionLayout({ children, breadcrumbs, electionId: prop
 
   return (
     <div style={s.container}>
+      <AppHeader title="BallotTrack" />
       {breadcrumbs && <Breadcrumb items={breadcrumbs} />}
 
       {/* Mobile nav — visible only on small screens */}

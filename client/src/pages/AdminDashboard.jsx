@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { formatDate } from '../utils/dateFormat';
+import AppHeader from '../components/AppHeader';
 
-export default function AdminDashboard({ onLogout, auth }) {
+export default function AdminDashboard({ auth }) {
   const [elections, setElections] = useState([]);
   const [showArchived, setShowArchived] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -68,14 +69,7 @@ export default function AdminDashboard({ onLogout, auth }) {
 
   return (
     <div style={s.container}>
-      <div style={s.topBar}>
-        <h1 style={{ margin: 0, fontSize: '1.4rem' }}>BallotTrack</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={s.userInfo}>{auth?.name}</span>
-          <span style={s.roleBadge}>{auth?.role === 'super_admin' ? 'Super Admin' : 'Race Admin'}</span>
-          {onLogout && <button style={s.btnSmall} onClick={onLogout}>Logout</button>}
-        </div>
-      </div>
+      <AppHeader title="BallotTrack" />
 
       <div style={s.layout} data-admin-layout>
         {/* Sidebar */}

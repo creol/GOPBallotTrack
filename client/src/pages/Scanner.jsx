@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { io } from 'socket.io-client';
 import api from '../api/client';
+import AppHeader from '../components/AppHeader';
 
 export default function Scanner() {
   const { roundId } = useParams();
@@ -160,6 +161,7 @@ export default function Scanner() {
 
   return (
     <div style={styles.container}>
+      <AppHeader title="Scanner" />
       <div style={styles.topBar}>
         <div>
           <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 6, padding: '0.4rem 0.75rem', marginBottom: '0.35rem', fontSize: '0.82rem', color: '#1e40af', fontWeight: 600 }}>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { VersionTag } from '../components/AppHeader';
 
 export default function Login({ onLogin }) {
   const [name, setName] = useState('');
@@ -86,6 +87,7 @@ export default function Login({ onLogin }) {
 
   return (
     <div style={styles.wrapper}>
+      <VersionTag />
       <div style={styles.card}>
         <h1 style={styles.title}>BallotTrack</h1>
         <p style={styles.subtitle}>Sign in to continue</p>

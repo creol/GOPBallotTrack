@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import AppHeader from '../components/AppHeader';
 
 const FLAG_COLORS = {
   no_mark: { bg: '#fef3c7', color: '#92400e', label: 'No Mark' },
@@ -51,6 +52,7 @@ export default function FlaggedReview() {
 
   return (
     <div style={s.container}>
+      <AppHeader title="Flagged Review" />
       <Link to={`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}`} style={s.backLink}>
         &larr; Back to Round
       </Link>

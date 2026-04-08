@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import api from './api/client';
+import { AuthProvider } from './context/AuthContext';
 import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
 import ElectionDetail from './pages/ElectionDetail';
@@ -63,6 +64,7 @@ export default function App() {
     : <Login onLogin={handleLogin} />;
 
   return (
+    <AuthProvider auth={auth} onLogout={handleLogout}>
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to={scannerUser ? '/station-setup' : '/admin'} replace />} />
@@ -124,5 +126,6 @@ export default function App() {
         <Route path="/public/:electionId/ballots/:serialNumber" element={<PublicBallotViewer />} />
       </Routes>
     </BrowserRouter>
+    </AuthProvider>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import api from '../api/client';
+import AppHeader from '../components/AppHeader';
 
 let stationCounter = 0;
 
@@ -99,6 +100,7 @@ export default function StationSetup() {
 
   return (
     <div style={s.wrapper}>
+      <AppHeader title="Station Setup" />
       <div style={s.card}>
         <h1 style={s.title}>Station Setup</h1>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import AppHeader from '../components/AppHeader';
 
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
@@ -87,6 +88,7 @@ export default function UserManagement() {
 
   return (
     <div style={s.container}>
+      <AppHeader title="User Management" />
       <Link to="/admin" style={s.backLink}>&larr; Back to Dashboard</Link>
 
       <div style={s.header}>

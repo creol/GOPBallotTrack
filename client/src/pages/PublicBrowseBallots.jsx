@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
+import { VersionTag } from '../components/AppHeader';
 
 const PAGE_SIZE = 50;
 
@@ -30,6 +31,7 @@ export default function PublicBrowseBallots() {
 
   return (
     <div style={s.container}>
+      <VersionTag />
       <Link to={`/public/${electionId}`} style={s.backLink}>&larr; Back to Dashboard</Link>
       <h1>Browse All Ballots</h1>
       <p style={s.muted}>{election.name}</p>

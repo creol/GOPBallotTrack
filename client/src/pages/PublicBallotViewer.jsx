@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { VersionTag } from '../components/AppHeader';
 
 export default function PublicBallotViewer() {
   const { electionId, serialNumber } = useParams();
@@ -33,6 +34,7 @@ export default function PublicBallotViewer() {
 
   return (
     <div style={styles.container}>
+      <VersionTag />
       <Link to={`/public/${electionId}/rounds/${data.round_id}`} style={styles.backLink}>
         &larr; Back to results
       </Link>
