@@ -9,6 +9,8 @@
  * Config: edit config.json in the same directory
  */
 
+const AGENT_VERSION = '0.102';
+
 const chokidar = require('chokidar');
 const axios = require('axios');
 const FormData = require('form-data');
@@ -197,7 +199,7 @@ function queueFile(filePath) {
 
 // Start watching
 log('='.repeat(60));
-log(`BallotTrack Station Agent`);
+log(`BallotTrack Station Agent v${AGENT_VERSION}`);
 log(`Station ID:   ${stationId}`);
 log(`Server:       ${serverUrl}`);
 log(`Watch folder: ${watchFolder}`);
