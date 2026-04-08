@@ -23,6 +23,12 @@ export default function Confirmation() {
   const [tableFilter, setTableFilter] = useState('all'); // all, mismatch, confDiff, corrected, wrongRound
   const [tableSearch, setTableSearch] = useState('');
   const [candidateFilter, setCandidateFilter] = useState('');
+  const [reconData, setReconData] = useState(null);
+  const [reconFilter, setReconFilter] = useState('disagree');
+  const [reconIndex, setReconIndex] = useState(0);
+  const [showRecon, setShowRecon] = useState(false);
+  const [autoReconciling, setAutoReconciling] = useState(false);
+  const [reconSubmitting, setReconSubmitting] = useState(false);
 
   const fetchComparison = async () => {
     try {
@@ -41,6 +47,118 @@ export default function Confirmation() {
   };
 
   useEffect(() => { fetchComparison(); }, [roundId]);
+
+  // Keyboard shortcuts for reconciliation review
+  useEffect(() => {
+    if (!showRecon || !reconData) return;
+    const filtered = getFilteredReconBallots(reconData);
+    const ballot = filtered[reconIndex];
+
+    const handler = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (!ballot || ballot.reconciliation) return;
+
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (reconData.passes.length >= 1 && ballot.status !== 'agree') {
+            handleReconcile(ballot, 'accept_pass', reconData.passes[0].id);
+          }
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (reconData.passes.length >= 2 && ballot.status !== 'agree') {
+            handleReconcile(ballot, 'accept_pass', reconData.passes[1].id);
+          }
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          if (ballot.status !== 'agree') {
+            handleReconcile(ballot, 'needs_physical_review', null);
+          }
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setReconIndex(prev => Math.min(filtered.length - 1, prev + 1));
+          break;
+        case '[':
+          e.preventDefault();
+          setReconIndex(prev => Math.max(0, prev - 1));
+          break;
+        case ']':
+          e.preventDefault();
+          setReconIndex(prev => Math.min(filtered.length - 1, prev + 1));
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showRecon, reconData, reconIndex, reconFilter, judgeName]);
+
+  const fetchReconciliation = async () => {
+    try {
+      const { data: rd } = await api.get(`/admin/rounds/${roundId}/ballot-reconciliation`);
+      setReconData(rd);
+    } catch (err) {
+      console.error('Failed to load reconciliation data:', err);
+    }
+  };
+
+  const handleToggleRecon = async () => {
+    if (showRecon) { setShowRecon(false); return; }
+    await fetchReconciliation();
+    setShowRecon(true);
+    setReconIndex(0);
+  };
+
+  const handleAutoReconcile = async () => {
+    setAutoReconciling(true);
+    try {
+      await api.post(`/admin/rounds/${roundId}/auto-reconcile`, { reviewed_by: judgeName || 'auto' });
+      await fetchReconciliation();
+      setReconFilter('disagree');
+      setReconIndex(0);
+    } catch (err) {
+      alert('Auto-reconcile failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setAutoReconciling(false);
+    }
+  };
+
+  const handleReconcile = async (ballot, decision, acceptedPassId) => {
+    if (!judgeName.trim()) { setError('Please enter your name first'); return; }
+    setReconSubmitting(true);
+    try {
+      await api.post(`/admin/rounds/${roundId}/reconcile`, {
+        ballot_serial_id: ballot.ballot_serial_id,
+        decision,
+        accepted_pass_id: acceptedPassId || null,
+        reviewed_by: judgeName,
+      });
+      await fetchReconciliation();
+      fetchComparison();
+      // Auto-advance to next unreconciled
+      setReconIndex(prev => {
+        const filtered = getFilteredReconBallots(reconData);
+        return Math.min(prev + 1, Math.max(0, filtered.length - 1));
+      });
+    } catch (err) {
+      alert('Reconcile failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReconSubmitting(false);
+    }
+  };
+
+  const getFilteredReconBallots = (rd) => {
+    if (!rd) return [];
+    let list = rd.ballots;
+    if (reconFilter === 'disagree') list = list.filter(b => b.status === 'disagree');
+    else if (reconFilter === 'unreconciled') list = list.filter(b => !b.reconciliation);
+    else if (reconFilter === 'reconciled') list = list.filter(b => b.reconciliation);
+    else if (reconFilter === 'missing') list = list.filter(b => b.status === 'missing_in_pass');
+    return list;
+  };
 
   const handleToggleBallotTable = async () => {
     if (showBallotTable) { setShowBallotTable(false); return; }
@@ -595,6 +713,208 @@ export default function Confirmation() {
                   <img src={imgSrc} alt={`Ballot ${b.serial_number}`} style={styles.reviewImage} />
                 ) : (
                   <div style={styles.reviewNoImage}>No image available</div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Ballot Reconciliation Panel */}
+      {data && data.passes.length >= 2 && (
+        <div style={styles.section}>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button style={styles.btnPrimary} onClick={handleToggleRecon}>
+              {showRecon ? 'Hide Reconciliation' : 'Reconcile Ballots (Side-by-Side)'}
+            </button>
+          </div>
+
+          {showRecon && reconData && (() => {
+            const filtered = getFilteredReconBallots(reconData);
+            const s = reconData.summary;
+            const ballot = filtered[reconIndex];
+            const passNums = reconData.passes.map(p => p.pass_number);
+
+            const getImageSrc = (imgPath) => {
+              if (!imgPath) return null;
+              return `/data/scans/${imgPath.replace(/^\/app\/data\/scans\//, '').replace(/^.*[\/\\]data[\/\\]scans[\/\\]/, '')}`;
+            };
+
+            return (
+              <div style={{ marginTop: '0.75rem' }}>
+                {/* Summary Stats */}
+                <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  {[
+                    { label: 'All', key: 'all', count: s.total, bg: '#f3f4f6', color: '#374151' },
+                    { label: 'Agree', key: 'agree', count: s.agree, bg: '#dcfce7', color: '#166534' },
+                    { label: 'Disagree', key: 'disagree', count: s.disagree, bg: '#fee2e2', color: '#dc2626' },
+                    { label: 'Missing', key: 'missing', count: s.missing, bg: '#fef3c7', color: '#92400e' },
+                    { label: 'Reconciled', key: 'reconciled', count: s.reconciled, bg: '#dbeafe', color: '#1e40af' },
+                    { label: 'Remaining', key: 'unreconciled', count: s.unreconciled, bg: '#fce7f3', color: '#9d174d' },
+                  ].map(item => (
+                    <button
+                      key={item.key}
+                      style={{
+                        padding: '0.35rem 0.75rem', border: 'none', borderRadius: 4, cursor: 'pointer',
+                        fontSize: '0.82rem', fontWeight: reconFilter === item.key ? 700 : 500,
+                        background: reconFilter === item.key ? item.color : item.bg,
+                        color: reconFilter === item.key ? '#fff' : item.color,
+                      }}
+                      onClick={() => { setReconFilter(item.key); setReconIndex(0); }}
+                    >
+                      {item.label} ({item.count})
+                    </button>
+                  ))}
+                </div>
+
+                {/* Auto-Reconcile */}
+                {s.agree > 0 && s.reconciled < s.total && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <button
+                      style={{ ...styles.btnConfirm, fontSize: '0.9rem', padding: '0.5rem 1rem', opacity: autoReconciling ? 0.6 : 1 }}
+                      onClick={handleAutoReconcile}
+                      disabled={autoReconciling}
+                    >
+                      {autoReconciling ? 'Processing...' : `Auto-Confirm Matching Ballots (${s.agree} of ${s.total} agree)`}
+                    </button>
+                  </div>
+                )}
+
+                {/* Ballot Review Card */}
+                {filtered.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280', background: '#f9fafb', borderRadius: 8 }}>
+                    {reconFilter === 'disagree' ? 'No disagreements found.' :
+                     reconFilter === 'unreconciled' ? 'All ballots have been reconciled.' :
+                     'No ballots match this filter.'}
+                  </div>
+                ) : ballot && (
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                    {/* Navigation */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 1rem', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                      <button style={styles.btnNav} onClick={() => setReconIndex(Math.max(0, reconIndex - 1))} disabled={reconIndex === 0}>
+                        &larr; Prev
+                      </button>
+                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                        {reconIndex + 1} of {filtered.length}
+                        <span style={{ color: '#6b7280', fontWeight: 400, marginLeft: '0.5rem' }}>
+                          ({reconFilter === 'all' ? 'all' : reconFilter})
+                        </span>
+                      </span>
+                      <button style={styles.btnNav} onClick={() => setReconIndex(Math.min(filtered.length - 1, reconIndex + 1))} disabled={reconIndex >= filtered.length - 1}>
+                        Next &rarr;
+                      </button>
+                    </div>
+
+                    {/* Status + SN */}
+                    <div style={{
+                      padding: '0.5rem 1rem',
+                      background: ballot.status === 'disagree' ? '#fef2f2' : ballot.status === 'missing_in_pass' ? '#fef3c7' : '#f0fdf4',
+                      borderBottom: '1px solid #e5e7eb',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    }}>
+                      <div>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '1.1rem', marginRight: '0.75rem' }}>
+                          {ballot.serial_number}
+                        </span>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: '0.75rem',
+                          background: ballot.status === 'disagree' ? '#fee2e2' : ballot.status === 'missing_in_pass' ? '#fef3c7' : '#dcfce7',
+                          color: ballot.status === 'disagree' ? '#dc2626' : ballot.status === 'missing_in_pass' ? '#92400e' : '#166534',
+                        }}>
+                          {ballot.status === 'disagree' ? 'DISAGREE' : ballot.status === 'missing_in_pass' ? 'MISSING IN PASS' : 'AGREE'}
+                        </span>
+                      </div>
+                      {ballot.reconciliation && (
+                        <span style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af' }}>
+                          Reconciled: {ballot.reconciliation.decision.replace(/_/g, ' ')}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Decision Buttons */}
+                    {!ballot.reconciliation && ballot.status !== 'agree' && (
+                      <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap', background: '#fafafa' }}>
+                        {reconData.passes.map((p, i) => (
+                          <button
+                            key={p.id}
+                            style={{
+                              padding: '0.5rem 1.25rem', border: 'none', borderRadius: 4, cursor: 'pointer',
+                              fontWeight: 600, fontSize: '0.9rem',
+                              background: i === 0 ? '#2563eb' : i === 1 ? '#7c3aed' : '#0891b2',
+                              color: '#fff',
+                              opacity: reconSubmitting ? 0.6 : 1,
+                            }}
+                            onClick={() => handleReconcile(ballot, 'accept_pass', p.id)}
+                            disabled={reconSubmitting}
+                          >
+                            {i === 0 ? '\u2190 ' : ''}{i === reconData.passes.length - 1 ? '' : ''}Pass {p.pass_number} Correct{i === reconData.passes.length - 1 ? ' \u2192' : ''}
+                          </button>
+                        ))}
+                        <button
+                          style={{
+                            padding: '0.5rem 1.25rem', border: 'none', borderRadius: 4, cursor: 'pointer',
+                            fontWeight: 600, fontSize: '0.9rem', background: '#f59e0b', color: '#fff',
+                            opacity: reconSubmitting ? 0.6 : 1,
+                          }}
+                          onClick={() => handleReconcile(ballot, 'needs_physical_review', null)}
+                          disabled={reconSubmitting}
+                        >
+                          &darr; Needs Physical Review
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Side-by-side pass images */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
+                      {passNums.map(pn => {
+                        const pd = ballot.passes[pn];
+                        const confColor = pd?.omr_confidence > 0.5 ? '#16a34a' : pd?.omr_confidence > 0.2 ? '#f59e0b' : '#dc2626';
+                        const imgSrc = pd ? getImageSrc(pd.image_path) : null;
+                        return (
+                          <div key={pn} style={{ flex: 1, borderRight: '1px solid #e5e7eb', minWidth: 0 }}>
+                            {/* Pass header */}
+                            <div style={{ padding: '0.5rem 0.75rem', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase' }}>
+                                Pass {pn}
+                              </div>
+                              {pd ? (
+                                <>
+                                  <div style={{ fontWeight: 700, fontSize: '1rem', color: ballot.status === 'disagree' ? '#dc2626' : '#1d4ed8', marginTop: '0.15rem' }}>
+                                    {pd.candidate_name}
+                                  </div>
+                                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: confColor }}>
+                                    OMR Confidence: {pd.omr_confidence != null ? `${(pd.omr_confidence * 100).toFixed(1)}%` : 'manual'}
+                                  </div>
+                                  <div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>
+                                    Method: {pd.omr_method || '—'}
+                                  </div>
+                                </>
+                              ) : (
+                                <div style={{ color: '#9ca3af', marginTop: '0.15rem' }}>Not scanned in this pass</div>
+                              )}
+                            </div>
+                            {/* Pass image */}
+                            {imgSrc ? (
+                              <img
+                                src={imgSrc}
+                                alt={`Pass ${pn} - ${ballot.serial_number}`}
+                                style={{ width: '100%', maxHeight: 500, objectFit: 'contain', display: 'block' }}
+                              />
+                            ) : (
+                              <div style={{ padding: '3rem 1rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.9rem' }}>
+                                No image available
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Shortcut legend */}
+                    <div style={{ padding: '0.35rem 1rem', background: '#f9fafb', fontSize: '0.72rem', color: '#9ca3af', textAlign: 'center' }}>
+                      Shortcuts: [&larr;] Pass 1 correct &nbsp;|&nbsp; [&rarr;] Pass 2 correct &nbsp;|&nbsp; [&darr;] Physical review &nbsp;|&nbsp; [&uarr;] Skip &nbsp;|&nbsp; [&#91;] Prev &nbsp;|&nbsp; [&#93;] Next
+                    </div>
+                  </div>
                 )}
               </div>
             );

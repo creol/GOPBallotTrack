@@ -5,6 +5,9 @@ const {
   releaseRound,
   getChairPreview,
   getChairDecision,
+  getBallotReconciliation,
+  autoReconcile,
+  recordReconciliation,
 } = require('../services/confirmationService');
 const db = require('../db');
 
@@ -139,6 +142,52 @@ router.put('/rounds/:id/candidate-outcomes', async (req, res) => {
   } catch (err) {
     console.error('Save candidate outcomes error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/rounds/:id/ballot-reconciliation — Per-ballot cross-pass comparison with images
+router.get('/rounds/:id/ballot-reconciliation', async (req, res) => {
+  try {
+    const data = await getBallotReconciliation(parseInt(req.params.id));
+    res.json(data);
+  } catch (err) {
+    console.error('Ballot reconciliation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/rounds/:id/auto-reconcile — Auto-confirm all agreeing ballots
+router.post('/rounds/:id/auto-reconcile', async (req, res) => {
+  try {
+    const { reviewed_by } = req.body;
+    const result = await autoReconcile(parseInt(req.params.id), reviewed_by);
+    res.json(result);
+  } catch (err) {
+    console.error('Auto-reconcile error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/rounds/:id/reconcile — Submit a single ballot reconciliation decision
+router.post('/rounds/:id/reconcile', async (req, res) => {
+  try {
+    const { ballot_serial_id, decision, accepted_pass_id, reviewed_by, notes } = req.body;
+    if (!ballot_serial_id) return res.status(400).json({ error: 'ballot_serial_id is required' });
+    if (!decision) return res.status(400).json({ error: 'decision is required' });
+    if (!reviewed_by) return res.status(400).json({ error: 'reviewed_by is required' });
+
+    const recon = await recordReconciliation({
+      roundId: parseInt(req.params.id),
+      ballotSerialId: ballot_serial_id,
+      decision,
+      acceptedPassId: accepted_pass_id,
+      reviewedBy: reviewed_by,
+      notes,
+    });
+    res.json(recon);
+  } catch (err) {
+    console.error('Reconcile error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

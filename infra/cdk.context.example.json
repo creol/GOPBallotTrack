@@ -1,0 +1,8 @@
+{
+  "awsAccountId": "123456789012",
+  "awsRegion": "us-west-2",
+  "allowedSshCidr": "203.0.113.1/32",
+  "domainName": "ballottrack.example.com",
+  "githubRepo": "yourorg/ballottrack",
+  "devStartApiKey": "generate-with: openssl rand -hex 32"
+}

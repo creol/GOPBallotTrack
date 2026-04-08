@@ -7,3 +7,6 @@ uploads/*
 .DS_Store
 data/
 installers/
+*.pem
+ballottrack-dev-manual
+ballottrack-dev-manual.pub

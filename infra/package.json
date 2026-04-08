@@ -1,0 +1,21 @@
+{
+  "name": "ballottrack-infra",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "aws-cdk": "^2.170.0",
+    "esbuild": "^0.24.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.9.3"
+  }
+}

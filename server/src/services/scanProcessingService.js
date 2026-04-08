@@ -330,10 +330,10 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     };
   }
 
-  // Clear vote — save and record
+  // Clear vote — save and record (include pass number so Pass 2 doesn't overwrite Pass 1)
   const destBase = path.join(SCAN_BASE, 'processed',
     String(electionId), race.name.toLowerCase().replace(/\s+/g, '-'),
-    `round-${roundRow.round_number}`
+    `round-${roundRow.round_number}`, `pass-${pass.pass_number}`
   );
   fs.mkdirSync(destBase, { recursive: true });
   const processedPath = path.join(destBase, `${serialNumber}.jpg`);

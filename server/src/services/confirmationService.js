@@ -229,4 +229,206 @@ async function getChairDecision(roundId) {
   };
 }
 
-module.exports = { getComparison, computeResults, confirmRound, releaseRound, getChairPreview, getChairDecision };
+/**
+ * Get ballot-level reconciliation data across all complete passes for a round.
+ * Returns per-ballot data with each pass's scan info and reconciliation status.
+ */
+async function getBallotReconciliation(roundId) {
+  const { rows: passes } = await db.query(
+    "SELECT * FROM passes WHERE round_id = $1 AND status = 'complete' ORDER BY pass_number",
+    [roundId]
+  );
+
+  const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+  const { rows: candidates } = await db.query(
+    'SELECT * FROM candidates WHERE race_id = $1 ORDER BY display_order',
+    [round.race_id]
+  );
+
+  // Get all scans across all complete passes for this round
+  const { rows: scans } = await db.query(
+    `SELECT s.id as scan_id, s.pass_id, s.ballot_serial_id, s.candidate_id,
+            s.image_path, s.omr_confidence, s.omr_method, s.scanned_at,
+            bs.serial_number, bs.status as ballot_status,
+            c.name as candidate_name,
+            p.pass_number
+     FROM scans s
+     JOIN ballot_serials bs ON bs.id = s.ballot_serial_id
+     JOIN candidates c ON c.id = s.candidate_id
+     JOIN passes p ON p.id = s.pass_id
+     WHERE p.round_id = $1 AND p.status = 'complete'
+     ORDER BY bs.serial_number, p.pass_number`,
+    [roundId]
+  );
+
+  // Get existing reconciliation decisions
+  const { rows: recons } = await db.query(
+    'SELECT * FROM ballot_reconciliations WHERE round_id = $1 ORDER BY created_at DESC',
+    [roundId]
+  );
+  // Map: ballot_serial_id -> latest reconciliation
+  const reconMap = {};
+  for (const r of recons) {
+    if (!reconMap[r.ballot_serial_id]) reconMap[r.ballot_serial_id] = r;
+  }
+
+  // Group scans by serial number
+  const ballotMap = {};
+  for (const s of scans) {
+    if (!ballotMap[s.serial_number]) {
+      ballotMap[s.serial_number] = {
+        serial_number: s.serial_number,
+        ballot_serial_id: s.ballot_serial_id,
+        ballot_status: s.ballot_status,
+        passes: {},
+      };
+    }
+    ballotMap[s.serial_number].passes[s.pass_number] = {
+      scan_id: s.scan_id,
+      pass_id: s.pass_id,
+      candidate_id: s.candidate_id,
+      candidate_name: s.candidate_name,
+      image_path: s.image_path,
+      omr_confidence: s.omr_confidence != null ? parseFloat(s.omr_confidence) : null,
+      omr_method: s.omr_method,
+    };
+  }
+
+  // Build ballot array with status
+  const passNumbers = passes.map(p => p.pass_number);
+  const ballots = Object.values(ballotMap).map(b => {
+    const passVotes = passNumbers.map(pn => b.passes[pn]?.candidate_id).filter(v => v != null);
+    const presentInAll = passNumbers.every(pn => b.passes[pn]);
+    let status;
+    if (!presentInAll) {
+      status = 'missing_in_pass';
+    } else if (new Set(passVotes).size <= 1) {
+      status = 'agree';
+    } else {
+      status = 'disagree';
+    }
+    const recon = reconMap[b.ballot_serial_id] || null;
+    return { ...b, status, reconciliation: recon };
+  });
+
+  ballots.sort((a, b) => a.serial_number.localeCompare(b.serial_number));
+
+  const summary = {
+    total: ballots.length,
+    agree: ballots.filter(b => b.status === 'agree').length,
+    disagree: ballots.filter(b => b.status === 'disagree').length,
+    missing: ballots.filter(b => b.status === 'missing_in_pass').length,
+    reconciled: ballots.filter(b => b.reconciliation != null).length,
+    unreconciled: ballots.filter(b => b.reconciliation == null).length,
+  };
+
+  return { passes, candidates, ballots, summary };
+}
+
+/**
+ * Auto-reconcile all ballots where every complete pass agrees on the same candidate.
+ */
+async function autoReconcile(roundId, reviewedBy) {
+  // Find ballot_serial_ids that appear in all complete passes with the same candidate
+  // and don't already have a reconciliation decision
+  const { rows: agreeing } = await db.query(
+    `SELECT s.ballot_serial_id
+     FROM scans s
+     JOIN passes p ON p.id = s.pass_id
+     WHERE p.round_id = $1 AND p.status = 'complete'
+       AND s.ballot_serial_id NOT IN (
+         SELECT ballot_serial_id FROM ballot_reconciliations WHERE round_id = $1
+       )
+     GROUP BY s.ballot_serial_id
+     HAVING COUNT(DISTINCT p.id) = (
+       SELECT COUNT(*) FROM passes WHERE round_id = $1 AND status = 'complete'
+     )
+     AND COUNT(DISTINCT s.candidate_id) = 1`,
+    [roundId]
+  );
+
+  if (agreeing.length > 0) {
+    const values = agreeing.map((_, i) => `($1, $${i + 2}, 'pass_agree_auto', $${agreeing.length + 2})`).join(', ');
+    const params = [roundId, ...agreeing.map(a => a.ballot_serial_id), reviewedBy || null];
+    await db.query(
+      `INSERT INTO ballot_reconciliations (round_id, ballot_serial_id, decision, reviewed_by)
+       VALUES ${values}`,
+      params
+    );
+  }
+
+  // Count remaining disagreements
+  const { rows: [{ count: remainingStr }] } = await db.query(
+    `SELECT COUNT(DISTINCT s.ballot_serial_id) as count
+     FROM scans s
+     JOIN passes p ON p.id = s.pass_id
+     WHERE p.round_id = $1 AND p.status = 'complete'
+       AND s.ballot_serial_id NOT IN (
+         SELECT ballot_serial_id FROM ballot_reconciliations WHERE round_id = $1
+       )`,
+    [roundId]
+  );
+
+  return { auto_reconciled: agreeing.length, remaining: parseInt(remainingStr) };
+}
+
+/**
+ * Record a reconciliation decision for a single ballot.
+ * If accepting a specific pass, update the scan to match that pass's vote.
+ */
+async function recordReconciliation({ roundId, ballotSerialId, decision, acceptedPassId, reviewedBy, notes }) {
+  const { rows: [recon] } = await db.query(
+    `INSERT INTO ballot_reconciliations (round_id, ballot_serial_id, decision, accepted_pass_id, reviewed_by, notes)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [roundId, ballotSerialId, decision, acceptedPassId || null, reviewedBy, notes || null]
+  );
+
+  // If accepting a specific pass, ensure the latest pass's scan matches the accepted pass's vote
+  if (decision === 'accept_pass' && acceptedPassId) {
+    const { rows: [acceptedScan] } = await db.query(
+      'SELECT candidate_id FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2',
+      [acceptedPassId, ballotSerialId]
+    );
+
+    if (acceptedScan) {
+      // Get the latest pass for this round
+      const { rows: [latestPass] } = await db.query(
+        "SELECT * FROM passes WHERE round_id = $1 AND status = 'complete' ORDER BY pass_number DESC LIMIT 1",
+        [roundId]
+      );
+
+      if (latestPass) {
+        const { rows: [latestScan] } = await db.query(
+          'SELECT * FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2',
+          [latestPass.id, ballotSerialId]
+        );
+
+        if (latestScan && latestScan.candidate_id !== acceptedScan.candidate_id) {
+          // Update the latest scan to match the accepted pass
+          await db.query(
+            `UPDATE scans SET candidate_id = $1, omr_method = 'manual_correction'
+             WHERE id = $2`,
+            [acceptedScan.candidate_id, latestScan.id]
+          );
+
+          // Log the change
+          try {
+            await db.query(
+              `INSERT INTO vote_changes (scan_id, old_candidate_id, new_candidate_id, changed_by, reason)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [latestScan.id, latestScan.candidate_id, acceptedScan.candidate_id,
+               reviewedBy, `Reconciliation: accepted Pass ${acceptedPassId} result`]
+            );
+          } catch (e) { /* vote_changes may not exist */ }
+        }
+      }
+    }
+  }
+
+  return recon;
+}
+
+module.exports = {
+  getComparison, computeResults, confirmRound, releaseRound, getChairPreview, getChairDecision,
+  getBallotReconciliation, autoReconcile, recordReconciliation,
+};
