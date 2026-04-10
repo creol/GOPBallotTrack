@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.109';
+const AGENT_VERSION = '0.110';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -141,12 +141,16 @@ async function ensureAssignment() {
   }
 }
 
+let uploadBusy = false;
+
 /**
  * Upload a file to the server with retry logic.
  */
 async function uploadFile(filePath) {
+  uploadBusy = true;
   const filename = path.basename(filePath);
   log(`New file detected: ${filename}`);
+  try {
 
   for (let attempt = 1; attempt <= retryAttempts; attempt++) {
     try {
@@ -208,6 +212,9 @@ async function uploadFile(filePath) {
       }
     }
   }
+  } finally {
+    uploadBusy = false;
+  }
 }
 
 // Processing queue to handle files sequentially
@@ -242,6 +249,10 @@ async function checkForUpdate() {
     if (!data.version) return;
 
     if (data.version !== AGENT_VERSION) {
+      if (uploadBusy) {
+        log(`Update available (${AGENT_VERSION} → ${data.version}) — deferred, upload in progress`);
+        return;
+      }
       log(`Update available: ${AGENT_VERSION} → ${data.version}`);
       const { data: newCode } = await axios.get(`${serverUrl}/api/stations/agent-source`, {
         timeout: 10000, responseType: 'text',
@@ -288,14 +299,11 @@ axios.get(`${serverUrl}/api/health`)
   })
   .catch(err => logError(`Cannot reach server: ${err.message}`));
 
-// Snapshot existing files to skip them
-const existingFiles = new Set();
+// Process any files already in watch folder on startup (may be leftovers from interrupted uploads)
 try {
-  for (const f of fs.readdirSync(watchFolder)) {
-    existingFiles.add(path.join(watchFolder, f));
-  }
-  if (existingFiles.size > 0) {
-    log(`Skipping ${existingFiles.size} pre-existing file(s)`);
+  const existing = fs.readdirSync(watchFolder);
+  if (existing.length > 0) {
+    log(`Found ${existing.length} file(s) in watch folder — will process them`);
   }
 } catch {}
 
@@ -309,11 +317,6 @@ const watcher = chokidar.watch(watchFolder, {
 });
 
 watcher.on('add', (filePath) => {
-  // Skip pre-existing files
-  if (existingFiles.has(filePath)) {
-    existingFiles.delete(filePath);
-    return;
-  }
 
   const ext = path.extname(filePath).toLowerCase();
   if (!EXTENSIONS.has(ext)) return;
