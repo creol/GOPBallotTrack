@@ -278,11 +278,21 @@ async function applyOutcome(reviewId, outcome, candidateId, replacementSerialId,
         [replacementSerialId]
       );
     }
-  } else if (outcome === 'spoiled' || outcome === 'rejected') {
+  } else if (outcome === 'spoiled') {
     await db.query(
       "UPDATE ballot_serials SET status = 'spoiled' WHERE id = $1",
       [review.original_serial_id]
     );
+  } else if (outcome === 'rejected') {
+    // Rejected = ignore this ballot in the current round, but do NOT change
+    // ballot_serials.status so it can still be scanned in its correct round.
+    // Delete any wrong_round_pending scan record created for this ballot.
+    if (review.pass_id && review.original_serial_id) {
+      await db.query(
+        "DELETE FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2 AND omr_method = 'wrong_round_pending'",
+        [review.pass_id, review.original_serial_id]
+      );
+    }
   }
 }
 

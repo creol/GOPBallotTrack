@@ -29,6 +29,7 @@ export default function Confirmation() {
   const [showRecon, setShowRecon] = useState(false);
   const [autoReconciling, setAutoReconciling] = useState(false);
   const [reconSubmitting, setReconSubmitting] = useState(false);
+  const [bulkRejecting, setBulkRejecting] = useState(false);
 
   const fetchComparison = async () => {
     try {
@@ -412,8 +413,36 @@ export default function Confirmation() {
                   <button style={{ ...styles.btnSmall, background: tableFilter === 'corrected' ? '#3730a3' : '#e5e7eb', color: tableFilter === 'corrected' ? '#fff' : '#374151' }}
                     onClick={() => setTableFilter(tableFilter === 'corrected' ? 'all' : 'corrected')}>Corrected ({correctedCount})</button>
                   {wrongRoundCount > 0 && (
-                    <button style={{ ...styles.btnSmall, background: tableFilter === 'wrongRound' ? '#dc2626' : '#fee2e2', color: tableFilter === 'wrongRound' ? '#fff' : '#dc2626', fontWeight: 700 }}
-                      onClick={() => setTableFilter(tableFilter === 'wrongRound' ? 'all' : 'wrongRound')}>Wrong Round ({wrongRoundCount})</button>
+                    <>
+                      <button style={{ ...styles.btnSmall, background: tableFilter === 'wrongRound' ? '#dc2626' : '#fee2e2', color: tableFilter === 'wrongRound' ? '#fff' : '#dc2626', fontWeight: 700 }}
+                        onClick={() => setTableFilter(tableFilter === 'wrongRound' ? 'all' : 'wrongRound')}>Wrong Round ({wrongRoundCount})</button>
+                      <button
+                        style={{ ...styles.btnSmall, background: '#dc2626', color: '#fff', fontWeight: 700, opacity: bulkRejecting ? 0.6 : 1 }}
+                        disabled={bulkRejecting}
+                        onClick={async () => {
+                          if (!confirm(`Reject all ${wrongRoundCount} wrong-round ballots?\n\nTheir scan records will be removed from this round, but the ballots will remain available to scan in their correct round.`)) return;
+                          let name = judgeName;
+                          if (!name) {
+                            name = prompt('Enter your name to log this action:');
+                            if (!name) return;
+                            setJudgeName(name);
+                          }
+                          setBulkRejecting(true);
+                          try {
+                            const { data: result } = await api.post(`/admin/rounds/${roundId}/reject-wrong-round`, { rejected_by: name });
+                            alert(`${result.count} wrong-round ballots rejected, ${result.scans_removed} scan records removed. These ballots can now be scanned in their correct round.`);
+                            fetchComparison();
+                            if (showBallotTable) handleToggleBallotTable();
+                          } catch (err) {
+                            alert('Failed: ' + (err.response?.data?.error || err.message));
+                          } finally {
+                            setBulkRejecting(false);
+                          }
+                        }}
+                      >
+                        {bulkRejecting ? 'Rejecting...' : `Reject All Wrong Round (${wrongRoundCount})`}
+                      </button>
+                    </>
                   )}
                   {spoiledCount > 0 && (
                     <button style={{ ...styles.btnSmall, background: tableFilter === 'spoiled' ? '#6b7280' : '#f3f4f6', color: tableFilter === 'spoiled' ? '#fff' : '#6b7280', fontWeight: 700 }}

@@ -191,6 +191,53 @@ router.post('/rounds/:id/reconcile', async (req, res) => {
   }
 });
 
+// POST /api/rounds/:id/reject-wrong-round — Bulk reject all wrong-round ballots
+router.post('/rounds/:id/reject-wrong-round', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rejected_by } = req.body;
+    if (!rejected_by) return res.status(400).json({ error: 'rejected_by is required' });
+
+    // Find all unresolved wrong_round reviewed_ballots for this round
+    const { rows: reviews } = await db.query(
+      `SELECT rb.id, rb.original_serial_id, rb.pass_id
+       FROM reviewed_ballots rb
+       WHERE rb.round_id = $1
+         AND rb.flag_reason = 'wrong_round'
+         AND rb.outcome IS NULL`,
+      [roundId]
+    );
+
+    if (reviews.length === 0) {
+      return res.json({ message: 'No unresolved wrong-round ballots found', count: 0, scans_removed: 0 });
+    }
+
+    let deletedScans = 0;
+    for (const review of reviews) {
+      await db.query(
+        `UPDATE reviewed_ballots SET outcome = 'rejected', reviewed_by = $1, reviewed_at = NOW()
+         WHERE id = $2`,
+        [rejected_by, review.id]
+      );
+      if (review.pass_id && review.original_serial_id) {
+        const { rowCount } = await db.query(
+          "DELETE FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2 AND omr_method = 'wrong_round_pending'",
+          [review.pass_id, review.original_serial_id]
+        );
+        deletedScans += rowCount;
+      }
+    }
+
+    const io = req.app.get('io');
+    if (io) io.emit('scan:bulk_rejected', { round_id: roundId, count: reviews.length });
+
+    res.json({ message: `Rejected ${reviews.length} wrong-round ballots`, count: reviews.length, scans_removed: deletedScans });
+  } catch (err) {
+    console.error('Bulk reject wrong-round error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/rounds/:id/comparison — Compare all passes side-by-side
 router.get('/rounds/:id/comparison', async (req, res) => {
   try {

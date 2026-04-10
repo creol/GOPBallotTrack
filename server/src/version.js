@@ -1,1 +1,1 @@
-module.exports = { APP_VERSION: '0.117' };
+module.exports = { APP_VERSION: '0.118' };

@@ -433,4 +433,24 @@ router.get('/rounds/:id/calibration-pdf', async (req, res) => {
   }
 });
 
+// PUT /api/admin/ballot-serials/:id/reset — Reset a ballot serial status back to 'unused'
+router.put('/ballot-serials/:id/reset', async (req, res) => {
+  try {
+    const { reset_by } = req.body;
+    if (!reset_by) return res.status(400).json({ error: 'reset_by (your name) is required' });
+
+    const { rows: [bs] } = await db.query('SELECT * FROM ballot_serials WHERE id = $1', [req.params.id]);
+    if (!bs) return res.status(404).json({ error: 'Ballot serial not found' });
+
+    const oldStatus = bs.status;
+    await db.query("UPDATE ballot_serials SET status = 'unused' WHERE id = $1", [req.params.id]);
+
+    console.log(`[BallotReset] ${bs.serial_number} reset from '${oldStatus}' to 'unused' by ${reset_by}`);
+    res.json({ message: `Ballot ${bs.serial_number} reset from '${oldStatus}' to 'unused'`, serial_number: bs.serial_number });
+  } catch (err) {
+    console.error('Ballot reset error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
