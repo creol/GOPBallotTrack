@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.110';
+const AGENT_VERSION = '0.111';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -109,7 +109,7 @@ function logSuccess(msg, serialNumber) {
 async function ensureAssignment() {
   try {
     const { data: assignment } = await axios.get(`${serverUrl}/api/stations/${stationId}/assignment`);
-    if (assignment.assigned) {
+    if (assignment.assigned && assignment.roundId) {
       currentRoundId = assignment.roundId;
       logSuccess(`Assigned to round ${assignment.roundId}`);
       return assignment.roundId;
@@ -119,8 +119,9 @@ async function ensureAssignment() {
     const { data: rounds } = await axios.get(`${serverUrl}/api/stations/active-rounds`);
 
     if (rounds.length === 0) {
-      logError('No rounds are currently in tallying status.');
-      log(`Assign manually at: ${serverUrl}/station-setup`);
+      log('No rounds are open for scanning yet.');
+      log('This station will be assigned automatically when you select a round at Station Setup.');
+      log(`Station Setup: ${serverUrl}/station-setup`);
       return null;
     }
 
@@ -132,8 +133,8 @@ async function ensureAssignment() {
       return round.round_id;
     }
 
-    logError(`Found ${rounds.length} active rounds — cannot auto-assign.`);
-    log(`Assign manually at: ${serverUrl}/station-setup`);
+    log(`Found ${rounds.length} active rounds — select one at Station Setup.`);
+    log(`Station Setup: ${serverUrl}/station-setup`);
     return null;
   } catch (err) {
     logError(`Assignment check failed: ${err.message}`);
@@ -293,8 +294,9 @@ axios.get(`${serverUrl}/api/health`)
       log(`Uploads will be processed for round ${roundId}`);
       log(`Scanner page: ${serverUrl}/scan/${roundId}`);
     } else {
-      log('WARNING: Not assigned — uploads will fail until assigned.');
-      log(`Visit: ${serverUrl}/station-setup`);
+      log('Waiting for round assignment. Select a round at Station Setup and this');
+      log('station will begin processing scanned ballots automatically.');
+      log(`Station Setup: ${serverUrl}/station-setup`);
     }
   })
   .catch(err => logError(`Cannot reach server: ${err.message}`));
