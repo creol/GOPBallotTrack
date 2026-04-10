@@ -453,4 +453,38 @@ router.put('/ballot-serials/:id/reset', async (req, res) => {
   }
 });
 
+// PUT /api/admin/rounds/:id/reset-spoiled — Bulk reset all spoiled ballots in a round back to 'unused'
+router.put('/rounds/:id/reset-spoiled', async (req, res) => {
+  try {
+    const { reset_by } = req.body;
+    if (!reset_by) return res.status(400).json({ error: 'reset_by (your name) is required' });
+
+    const roundId = parseInt(req.params.id);
+    const { rows } = await db.query(
+      "SELECT id, serial_number FROM ballot_serials WHERE round_id = $1 AND status = 'spoiled'",
+      [roundId]
+    );
+
+    if (rows.length === 0) {
+      return res.json({ message: 'No spoiled ballots found in this round', count: 0 });
+    }
+
+    const ids = rows.map(r => r.id);
+    await db.query(
+      "UPDATE ballot_serials SET status = 'unused' WHERE id = ANY($1::int[])",
+      [ids]
+    );
+
+    console.log(`[BallotReset] Reset ${rows.length} spoiled ballots in round ${roundId} to 'unused' by ${reset_by}`);
+    res.json({
+      message: `Reset ${rows.length} spoiled ballots to 'unused'`,
+      count: rows.length,
+      serials: rows.map(r => r.serial_number),
+    });
+  } catch (err) {
+    console.error('Bulk ballot reset error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
