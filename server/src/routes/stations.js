@@ -120,6 +120,9 @@ router.get('/stations/download-bundle', (req, res) => {
   archive.file(path.join(agentDir, 'setup.js'), { name: 'setup.js' });
   archive.file(path.join(agentDir, 'package.json'), { name: 'package.json' });
   archive.file(path.join(agentDir, 'README.md'), { name: 'README.md' });
+  if (fs.existsSync(path.join(agentDir, 'start-agent.bat'))) {
+    archive.file(path.join(agentDir, 'start-agent.bat'), { name: 'start-agent.bat' });
+  }
 
   // Pre-installed node_modules
   const nodeModulesDir = path.join(agentDir, 'node_modules');

@@ -159,7 +159,7 @@ echo   STEP 5 of 5:  Creating desktop shortcut
 echo  -------------------------------------------
 echo.
 
-:: Copy the launcher bat into the install dir
+:: Copy the launcher bat into the install dir (with auto-restart loop)
 > "%INSTALL_DIR%\start-agent.bat" (
     echo @echo off
     echo setlocal
@@ -173,6 +173,16 @@ echo.
     echo     echo.
     echo     echo  ERROR: config.json not found
     echo     echo  Please run the station installer first.
+    echo     echo.
+    echo     pause
+    echo     exit /b 1
+    echo ^)
+    echo.
+    echo if not exist node.exe ^(
+    echo     color 4F
+    echo     echo.
+    echo     echo  ERROR: node.exe not found
+    echo     echo  Please run the station installer again.
     echo     echo.
     echo     pause
     echo     exit /b 1
@@ -192,10 +202,19 @@ echo.
     echo echo  =============================================
     echo echo.
     echo.
+    echo :start
     echo node.exe station-agent.js
+    echo set EXIT_CODE=%%ERRORLEVEL%%
+    echo.
+    echo if %%EXIT_CODE%% EQU 0 ^(
+    echo     echo.
+    echo     echo  Agent exited for update — restarting in 2 seconds...
+    echo     timeout /t 2 /nobreak ^>nul
+    echo     goto start
+    echo ^)
     echo.
     echo echo.
-    echo echo  Agent has stopped.
+    echo echo  Agent has stopped ^(exit code: %%EXIT_CODE%%^).
     echo echo  Press any key to close this window.
     echo pause ^>nul
 )
