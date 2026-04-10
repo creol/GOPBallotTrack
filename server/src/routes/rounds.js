@@ -186,4 +186,20 @@ router.get('/rounds/:id/box-counts', async (req, res) => {
   }
 });
 
+// GET /api/rounds/:id/ballot-serials-summary — Count ballot serials by status
+router.get('/rounds/:id/ballot-serials-summary', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT status, COUNT(*) as count FROM ballot_serials WHERE round_id = $1 GROUP BY status',
+      [req.params.id]
+    );
+    const summary = {};
+    for (const r of rows) summary[r.status] = parseInt(r.count);
+    res.json(summary);
+  } catch (err) {
+    console.error('Ballot serials summary error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

@@ -8,6 +8,8 @@ export default function RoundDetail() {
   const [round, setRound] = useState(null);
   const [error, setError] = useState(null);
   const [flaggedCount, setFlaggedCount] = useState(0);
+  const [spoiledCount, setSpoiledCount] = useState(0);
+  const [resettingSpoiled, setResettingSpoiled] = useState(false);
 
   const fetchRound = async () => {
     const { data } = await api.get(`/admin/rounds/${roundId}`);
@@ -21,7 +23,31 @@ export default function RoundDetail() {
     } catch {}
   };
 
-  useEffect(() => { fetchRound(); fetchFlaggedCount(); }, [roundId]);
+  const fetchSpoiledCount = async () => {
+    try {
+      const { data } = await api.get(`/admin/rounds/${roundId}/ballot-serials-summary`);
+      setSpoiledCount(data.spoiled || 0);
+    } catch {}
+  };
+
+  const handleResetSpoiled = async () => {
+    const name = prompt('Enter your name to log this action:');
+    if (!name) return;
+    if (!confirm(`Reset all ${spoiledCount} spoiled ballots in this round back to unused? They will be available to scan again.`)) return;
+    setResettingSpoiled(true);
+    try {
+      const { data } = await api.put(`/admin/rounds/${roundId}/reset-spoiled`, { reset_by: name });
+      alert(`${data.count} ballots reset to unused.`);
+      fetchSpoiledCount();
+      fetchRound();
+    } catch (err) {
+      alert('Reset failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setResettingSpoiled(false);
+    }
+  };
+
+  useEffect(() => { fetchRound(); fetchFlaggedCount(); fetchSpoiledCount(); }, [roundId]);
 
   if (!round) return <div style={styles.container}><p>Loading...</p></div>;
 
@@ -136,8 +162,17 @@ export default function RoundDetail() {
       </div>
 
       {/* Additional Links */}
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'center' }}>
         <Link to={`/admin/rounds/${roundId}/boxes`} style={styles.btnLink}>Ballot Box Breakdown</Link>
+        {spoiledCount > 0 && (
+          <button
+            style={{ padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, opacity: resettingSpoiled ? 0.6 : 1 }}
+            onClick={handleResetSpoiled}
+            disabled={resettingSpoiled}
+          >
+            {resettingSpoiled ? 'Resetting...' : `Reset ${spoiledCount} Spoiled Ballot${spoiledCount === 1 ? '' : 's'} to Unused`}
+          </button>
+        )}
       </div>
 
       {/* Pass Management */}
