@@ -155,7 +155,7 @@ function TVMode({ election, connected }) {
               {/* Voting Closed banner */}
               {race.status_label === 'Voting Closed' && (
                 <div style={{ ...tv.votingBanner, background: '#f59e0b' }}>
-                  VOTING CLOSED — Ballots Being Collected
+                  VOTING CLOSED
                 </div>
               )}
 

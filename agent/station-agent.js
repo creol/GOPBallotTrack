@@ -72,7 +72,14 @@ async function flushLogs() {
   }
 }
 
-setInterval(flushLogs, LOG_FLUSH_INTERVAL);
+setInterval(async () => {
+  await flushLogs();
+  // Send heartbeat so server/scanner UI knows agent is alive
+  try {
+    await axios.post(`${serverUrl}/api/stations/${stationId}/heartbeat`,
+      { roundId: currentRoundId }, { timeout: 3000 });
+  } catch {}
+}, LOG_FLUSH_INTERVAL);
 
 function log(msg, serialNumber) {
   console.log(`[${timestamp()}] ${msg}`);

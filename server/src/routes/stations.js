@@ -189,6 +189,26 @@ router.post('/stations/:stationId/assign', (req, res) => {
   res.json({ success: true, stationId: req.params.stationId, roundId: parseInt(roundId) });
 });
 
+// POST /api/stations/:stationId/heartbeat — Agent heartbeat
+router.post('/stations/:stationId/heartbeat', (req, res) => {
+  const existing = stationAssignments.get(req.params.stationId) || {};
+  stationAssignments.set(req.params.stationId, {
+    ...existing,
+    lastHeartbeat: Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+// GET /api/stations/:stationId/heartbeat — Check if agent is alive
+router.get('/stations/:stationId/heartbeat', (req, res) => {
+  const assignment = stationAssignments.get(req.params.stationId);
+  if (!assignment || !assignment.lastHeartbeat) {
+    return res.json({ alive: false });
+  }
+  const alive = Date.now() - assignment.lastHeartbeat < 15000;
+  res.json({ alive, lastSeen: new Date(assignment.lastHeartbeat).toISOString(), roundId: assignment.roundId });
+});
+
 // GET /api/stations/:stationId/assignment — Get current assignment
 router.get('/stations/:stationId/assignment', (req, res) => {
   const assignment = stationAssignments.get(req.params.stationId);

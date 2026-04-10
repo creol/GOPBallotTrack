@@ -54,22 +54,16 @@ router.get('/:electionId', async (req, res) => {
       race.candidates = candidates;
 
       // Get current active round — prioritize in-progress statuses, then fall back to latest non-canceled
-      const { rows: [currentActiveRound] } = await db.query(
+      const { rows: activeRounds } = await db.query(
         `SELECT id, round_number, status, paper_color FROM rounds
-         WHERE race_id = $1 AND status IN ('voting_open', 'voting_closed', 'tallying', 'ready', 'pending_needs_action')
-         ORDER BY round_number DESC LIMIT 1`,
+         WHERE race_id = $1 AND status != 'canceled'
+         ORDER BY round_number DESC`,
         [race.id]
       );
-      if (currentActiveRound) {
-        race.current_round = currentActiveRound;
-      } else {
-        // No active round — show the latest finalized one
-        const { rows: [latestRound] } = await db.query(
-          "SELECT id, round_number, status, paper_color FROM rounds WHERE race_id = $1 AND status != 'canceled' ORDER BY round_number DESC LIMIT 1",
-          [race.id]
-        );
-        race.current_round = latestRound || null;
-      }
+      const inProgressRound = activeRounds.find(r =>
+        ['voting_open', 'voting_closed', 'tallying'].includes(r.status)
+      );
+      race.current_round = inProgressRound || activeRounds[0] || null;
 
       // Get eliminated candidates
       const { rows: withdrawnCandidates } = await db.query(

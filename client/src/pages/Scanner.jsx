@@ -22,6 +22,7 @@ export default function Scanner() {
   const [scanning, setScanning] = useState(false);
   const [feedback, setFeedback] = useState(null); // { type: 'success'|'error', message }
   const [submitting, setSubmitting] = useState(false);
+  const [agentAlive, setAgentAlive] = useState(null); // null = checking, true/false
 
   const scannerRef = useRef(null);
   const html5QrRef = useRef(null);
@@ -65,6 +66,23 @@ export default function Scanner() {
     socket.on('pass:complete', () => fetchRoundData());
     return () => socket.disconnect();
   }, [fetchRoundData]);
+
+  // Poll agent heartbeat every 10 seconds
+  useEffect(() => {
+    const stationId = sessionStorage.getItem('stationId');
+    if (!stationId) { setAgentAlive(false); return; }
+    const checkHeartbeat = async () => {
+      try {
+        const { data } = await api.get(`/stations/${stationId}/heartbeat`);
+        setAgentAlive(data.alive);
+      } catch {
+        setAgentAlive(false);
+      }
+    };
+    checkHeartbeat();
+    const interval = setInterval(checkHeartbeat, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Start QR camera
   const startScanner = async () => {
@@ -162,21 +180,55 @@ export default function Scanner() {
   return (
     <div style={styles.container}>
       <AppHeader title="Scanner" />
-      <div style={styles.topBar}>
-        <div>
-          <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 6, padding: '0.4rem 0.75rem', marginBottom: '0.35rem', fontSize: '0.82rem', color: '#1e40af', fontWeight: 600 }}>
-            Scanning for: {round.race?.name || 'Race'} — Round {round.round_number} ({round.paper_color})
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <Link to="/station-setup" style={styles.backLink}>Change</Link>
-          {round.race?.election_id && (
-            <Link to={`/admin/elections/${round.race.election_id}/races/${round.race_id}/rounds/${roundId}`} style={styles.backLink}>
-              Back to Round
-            </Link>
-          )}
-        </div>
+
+      {/* Large centered race/round header */}
+      <div style={{
+        background: '#1e3a5f', color: '#fff', borderRadius: 8,
+        padding: '1.1rem 1.5rem', marginBottom: '0.5rem',
+        textAlign: 'center', fontSize: '1.5rem', fontWeight: 800,
+        letterSpacing: '0.02em', lineHeight: 1.3,
+      }}>
+        Scanning for: {round.race?.name || 'Race'} — Round {round.round_number} ({round.paper_color})
       </div>
+      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'center', marginBottom: '0.5rem' }}>
+        <Link to="/station-setup" style={styles.backLink}>Change</Link>
+        {round.race?.election_id && (
+          <Link to={`/admin/elections/${round.race.election_id}/races/${round.race_id}/rounds/${roundId}`} style={styles.backLink}>
+            Back to Round
+          </Link>
+        )}
+        {agentAlive === true && (
+          <span style={{ fontSize: '0.8rem', color: '#16a34a', fontWeight: 600 }}>
+            ● Agent Connected
+          </span>
+        )}
+      </div>
+
+      {/* Agent not running warning */}
+      {agentAlive === false && (
+        <div style={{
+          background: '#dc2626', color: '#fff', borderRadius: 8,
+          padding: '1rem 1.25rem', marginBottom: '0.75rem',
+          border: '2px solid #991b1b',
+        }}>
+          <div style={{ fontWeight: 800, fontSize: '1.1rem', marginBottom: '0.5rem' }}>
+            WARNING: Scan Agent Not Detected
+          </div>
+          <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
+            The scanning agent is not running on this station. Ballots placed in the scanner will NOT be processed.
+          </p>
+          <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>
+            To start: <strong>Double-click the "BallotTrack Scanner" shortcut on the Desktop.</strong>
+          </p>
+          <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.9 }}>
+            No shortcut?{' '}
+            <Link to="/station-setup" style={{ color: '#fff', textDecoration: 'underline', fontWeight: 600 }}>
+              Go to Station Setup
+            </Link>{' '}
+            to download and install the agent.
+          </p>
+        </div>
+      )}
 
       {/* Pass Controls */}
       <div style={styles.passBar}>

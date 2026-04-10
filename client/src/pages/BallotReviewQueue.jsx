@@ -8,6 +8,9 @@ const FLAG_COLORS = {
   overvote: { bg: '#fee2e2', color: '#dc2626', label: 'Overvote' },
   uncertain: { bg: '#ffedd5', color: '#c2410c', label: 'Uncertain' },
   qr_not_found: { bg: '#f3f4f6', color: '#6b7280', label: 'QR Not Found' },
+  wrong_round: { bg: '#fef2f2', color: '#dc2626', label: 'Wrong Round' },
+  wrong_station: { bg: '#fef2f2', color: '#991b1b', label: 'Wrong Station' },
+  unknown_sn: { bg: '#f3f4f6', color: '#6b7280', label: 'Unknown Serial' },
 };
 
 export default function BallotReviewQueue() {
@@ -46,7 +49,7 @@ export default function BallotReviewQueue() {
 
   useEffect(() => { fetchReviews(); fetchCandidates(); }, [roundId, raceId, showResolved]);
 
-  const handleReview = async (reviewId, outcome, candidateId, replacementSerialId, notes) => {
+  const handleReview = async (reviewId, outcome, candidateId, replacementSerialId, notes, pinData) => {
     if (!reviewerName.trim()) {
       alert('Enter your name first');
       return;
@@ -58,6 +61,7 @@ export default function BallotReviewQueue() {
         replacement_serial_id: replacementSerialId || undefined,
         notes: notes || undefined,
         reviewed_by: reviewerName,
+        ...(pinData || {}),
       });
       fetchReviews();
     } catch (err) {
@@ -134,9 +138,20 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
   const [selectedCandidate, setSelectedCandidate] = useState('');
   const [showRemade, setShowRemade] = useState(false);
   const [replacementSN, setReplacementSN] = useState('');
+  const [adminPin, setAdminPin] = useState('');
+  const [adminUserId, setAdminUserId] = useState('');
+  const [adminUsers, setAdminUsers] = useState([]);
+  const isWrongRound = item.flag_reason === 'wrong_round';
   const flag = FLAG_COLORS[item.flag_reason] || FLAG_COLORS.uncertain;
   const scores = item.omr_scores || [];
   const maxFill = Math.max(...scores.map(s => s.fill_ratio || 0), 0.01);
+
+  // Fetch admin users for wrong-round PIN verification
+  useEffect(() => {
+    if (isWrongRound && adminUsers.length === 0) {
+      api.get('/admin/users').then(({ data }) => setAdminUsers(data || [])).catch(() => {});
+    }
+  }, [isWrongRound]);
 
   return (
     <div style={s.card}>
@@ -181,12 +196,43 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
       <input style={{ ...s.input, width: '100%', marginTop: '0.5rem', boxSizing: 'border-box' }}
         placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} />
 
+      {/* Wrong-round warning + PIN requirement */}
+      {isWrongRound && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '0.75rem', marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+          <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: '0.35rem' }}>
+            Wrong Round Ballot
+          </div>
+          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#7f1d1d' }}>
+            {item.notes || 'This ballot belongs to a different round.'}
+            {' '}Admin PIN is required to count this ballot.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <select style={s.input} value={adminUserId} onChange={e => setAdminUserId(e.target.value)}>
+              <option value="">Select admin...</option>
+              {adminUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+            </select>
+            <input style={{ ...s.input, width: 120 }} type="password" placeholder="Admin PIN"
+              value={adminPin} onChange={e => setAdminPin(e.target.value)} />
+          </div>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div style={s.actions}>
         {/* Count for candidate */}
         {candidates.map(c => (
           <button key={c.id} style={s.btnCount}
-            onClick={() => onReview(item.id, 'counted', c.id, null, notes)}>
+            onClick={() => {
+              if (isWrongRound) {
+                if (!adminUserId || !adminPin) {
+                  alert('Admin PIN verification is required to count a wrong-round ballot');
+                  return;
+                }
+                onReview(item.id, 'counted', c.id, null, notes, { admin_user_id: parseInt(adminUserId), pin: adminPin });
+              } else {
+                onReview(item.id, 'counted', c.id, null, notes);
+              }
+            }}>
             Count for {c.name}
           </button>
         ))}

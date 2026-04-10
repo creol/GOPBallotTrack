@@ -198,6 +198,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
              `Belongs to ${wrong.race_name} Round ${wrong.round_number}. Source: ${source}`]
           );
         } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
+        log(`WRONG STATION SN=${serialNumber} — belongs to ${wrong.race_name} Round ${wrong.round_number}`, 'warn');
         if (io) io.emit('scan:wrong_station', {
           serial_number: serialNumber,
           from_station: source,
@@ -208,27 +209,74 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
           success: true,
           flagged: true,
           type: 'wrong_station',
-          message: `This ballot belongs to ${wrong.race_name} Round ${wrong.round_number}. Please scan it at that race's station.`,
+          message: `[Wrong Station] Ballot ${serialNumber} belongs to ${wrong.race_name} Round ${wrong.round_number}. Please scan at that race's station.`,
           targetRace: wrong.race_name,
           targetRound: wrong.round_number,
         };
       }
 
-      // Not found in any tallying round — add to review queue
+      // Not found in any tallying round — check if serial exists at all
       const { rows: [anyBallot] } = await db.query(
-        'SELECT id FROM ballot_serials WHERE serial_number = $1', [serialNumber]
+        `SELECT bs.id, bs.round_id, r.race_id, r.round_number, ra.name as race_name
+         FROM ballot_serials bs
+         JOIN rounds r ON bs.round_id = r.id
+         JOIN races ra ON r.race_id = ra.id
+         WHERE bs.serial_number = $1`,
+        [serialNumber]
       );
       if (anyBallot) {
         // Exists but wrong round — flag it and save image
         const savedPath = saveImageForReview(buffer, `wronground-${serialNumber}`, filePath);
         const pass = await getOrCreateActivePass(assignedRoundId);
+
+        // Check if same race (different round) — keep visible in confirmation UI
+        const { rows: [assignedRound] } = await db.query('SELECT race_id FROM rounds WHERE id = $1', [assignedRoundId]);
+        const sameRace = assignedRound && anyBallot.race_id === assignedRound.race_id;
+        const noteText = sameRace
+          ? `Same race (${anyBallot.race_name}), from Round ${anyBallot.round_number}. Needs admin approval to count.`
+          : 'Serial not found in assigned round';
+
         await db.query(
           `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, notes)
-           VALUES ($1, $2, $3, $4, 'wrong_round', $5, 'Serial not found in assigned round')`,
-          [assignedRoundId, pass.id, anyBallot.id, scannerId || null, savedPath]
+           VALUES ($1, $2, $3, $4, 'wrong_round', $5, $6)`,
+          [assignedRoundId, pass.id, anyBallot.id, scannerId || null, savedPath, noteText]
         );
-        if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'wrong_round', station: source });
-        return { success: true, flagged: true, flag_reason: 'wrong_round', serial_number: serialNumber, message: `Flagged: ${serialNumber} not in assigned round`, error: 'Serial number not found in assigned round' };
+
+        // If same race, also create a scan record so ballot is visible in confirmation/comparison
+        if (sameRace) {
+          // Run OMR to detect the vote — try ballot spec from original round first, then assigned round
+          const { rows: [origRace] } = await db.query(
+            'SELECT rc.election_id FROM races rc JOIN rounds r ON r.race_id = rc.id WHERE r.id = $1',
+            [anyBallot.round_id]
+          );
+          const eid = origRace?.election_id;
+          const ballotSpec = (eid && loadBallotSpec(eid, anyBallot.round_id)) || (eid && loadBallotSpec(eid, assignedRoundId));
+          let candidateId = null;
+          let omrConf = null;
+          if (ballotSpec) {
+            try {
+              const omrResult = await processScannedBallot(buffer, ballotSpec, qrResult);
+              candidateId = omrResult.detected_vote || null;
+              omrConf = omrResult.confidence;
+            } catch {}
+          }
+          await db.query(
+            `INSERT INTO scans (pass_id, ballot_serial_id, candidate_id, scanner_id, scanned_by, image_path, omr_confidence, omr_method)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'wrong_round_pending')`,
+            [pass.id, anyBallot.id, candidateId, scannerId || null,
+             `Station:${source}`, savedPath, omrConf]
+          );
+        }
+
+        log(`WRONG ROUND SN=${serialNumber} — belongs to ${anyBallot.race_name} Round ${anyBallot.round_number}${sameRace ? ' (same race)' : ''}`, 'warn');
+        if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'wrong_round', station: source, same_race: sameRace });
+        return {
+          success: true, flagged: true, flag_reason: 'wrong_round', serial_number: serialNumber,
+          same_race: sameRace,
+          original_race: anyBallot.race_name,
+          original_round: anyBallot.round_number,
+          message: `[Wrong Round] Ballot ${serialNumber} from ${anyBallot.race_name} R${anyBallot.round_number}${sameRace ? ' — same race, needs admin approval' : ' — flagged for review'}`,
+        };
       }
 
       // Completely unknown serial — still save the image
@@ -242,8 +290,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
            `Unrecognized serial number: ${serialNumber}. Source: ${source}`]
         );
       } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
+      log(`UNKNOWN SERIAL SN=${serialNumber} — not found in any round`, 'error');
       if (io) io.emit('scan:error', { reason: 'unknown_sn', serial_number: serialNumber, station: source });
-      return { success: true, flagged: true, flag_reason: 'unknown_sn', serial_number: serialNumber, message: `Flagged: unrecognized serial ${serialNumber}`, error: 'Unrecognized serial number' };
+      return { success: true, flagged: true, flag_reason: 'unknown_sn', serial_number: serialNumber, message: `[Unknown] Serial ${serialNumber} not found in any round — flagged for review`, error: 'Unrecognized serial number' };
     }
   } else {
     // No assigned round — look up globally
@@ -301,6 +350,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
        VALUES ($1, $2, $3, $4, 'no_spec', $5)`,
       [roundId, pass.id, ballotInfo.id, scannerId || null, savedPath]
     );
+    log(`NO SPEC SN=${serialNumber} — ballot spec not found`, 'warn');
     if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'no_spec', station: source });
     return { success: true, flagged: true, flag_reason: 'no_spec', serial_number: serialNumber, message: `Flagged: ${serialNumber} no ballot spec for OMR`, error: 'No ballot spec — cannot run OMR' };
   }
@@ -335,12 +385,15 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
       candidates: omrResult.candidates,
     });
 
+    log(`FLAGGED SN=${serialNumber} reason=${omrResult.flag_reason}`, 'warn');
     return {
       success: true,
       flagged: true,
       serial_number: serialNumber,
       flag_reason: omrResult.flag_reason,
-      message: `Ballot ${serialNumber} flagged: ${omrResult.flag_reason}`,
+      race_name: race.name,
+      round_number: roundRow.round_number,
+      message: `[${race.name} R${roundRow.round_number}] Ballot ${serialNumber} flagged: ${omrResult.flag_reason}`,
     };
   }
 
@@ -377,7 +430,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     confidence: omrResult.confidence,
   });
 
-  log(`DONE SN=${serialNumber} → ${candidateName} total=${Date.now() - t0}ms`, 'success');
+  log(`DONE [${race.name} R${roundRow.round_number}] SN=${serialNumber} → ${candidateName} total=${Date.now() - t0}ms`, 'success');
   return {
     success: true,
     serial_number: serialNumber,
@@ -385,7 +438,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     confidence: omrResult.confidence,
     pass_number: pass.pass_number,
     count: parseInt(count),
-    message: `Ballot ${serialNumber} → ${candidateName} (${(omrResult.confidence * 100).toFixed(1)}%)`,
+    race_name: race.name,
+    round_number: roundRow.round_number,
+    message: `[${race.name} R${roundRow.round_number}] Ballot ${serialNumber} → ${candidateName} (${(omrResult.confidence * 100).toFixed(1)}%)`,
   };
 }
 

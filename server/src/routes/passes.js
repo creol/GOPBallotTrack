@@ -36,6 +36,19 @@ router.post('/rounds/:id/passes', async (req, res) => {
 
     // Auto-set round to tallying if pending_needs_action or ready
     if (['pending_needs_action', 'ready'].includes(round.status)) {
+      // Gate: previous round must be finalized+published or canceled
+      if (round.round_number > 1) {
+        const { rows: [prevRound] } = await db.query(
+          'SELECT * FROM rounds WHERE race_id = $1 AND round_number = $2 ORDER BY round_number DESC LIMIT 1',
+          [round.race_id, round.round_number - 1]
+        );
+        if (prevRound && prevRound.status !== 'canceled' &&
+            !(prevRound.status === 'round_finalized' && prevRound.published_at)) {
+          return res.status(400).json({
+            error: `Cannot start scanning — previous round (Round ${prevRound.round_number}) must be finalized and published first.`
+          });
+        }
+      }
       await db.query("UPDATE rounds SET status = 'tallying' WHERE id = $1", [roundId]);
     }
 

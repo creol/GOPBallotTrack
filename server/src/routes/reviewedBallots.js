@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
 const db = require('../db');
+const { verifyPin } = require('../middleware/auth');
 
 const router = Router();
 
@@ -104,6 +105,18 @@ router.put('/reviewed-ballots/:id', upload.single('photo'), async (req, res) => 
 
     if (outcome === 'counted' && !candidate_id) {
       return res.status(400).json({ error: 'candidate_id is required when outcome is counted' });
+    }
+
+    // Wrong-round ballots require admin PIN to count
+    if (outcome === 'counted' && existing.flag_reason === 'wrong_round') {
+      const { pin, admin_user_id } = req.body;
+      if (!pin || !admin_user_id) {
+        return res.status(400).json({ error: 'Admin PIN verification is required to count a wrong-round ballot. Provide admin_user_id and pin.' });
+      }
+      const pinValid = await verifyPin(admin_user_id, pin);
+      if (!pinValid) {
+        return res.status(403).json({ error: 'Invalid admin PIN' });
+      }
     }
 
     if (outcome === 'remade' && !replacement_serial_id) {
