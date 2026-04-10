@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.111';
+const AGENT_VERSION = '0.112';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -264,14 +264,7 @@ async function checkForUpdate() {
       logSuccess(`Updated to v${data.version} — restarting...`);
       await flushLogs();
 
-      // Restart: spawn a new process and exit
-      const { spawn } = require('child_process');
-      const child = spawn(process.execPath, [selfPath], {
-        cwd: __dirname,
-        stdio: 'inherit',
-        detached: true,
-      });
-      child.unref();
+      // Exit with code 0 — the start-agent.bat wrapper will auto-restart us
       process.exit(0);
     } else {
       log(`Agent is up to date (v${AGENT_VERSION})`);

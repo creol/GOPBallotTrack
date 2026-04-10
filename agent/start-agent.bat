@@ -45,9 +45,18 @@ echo   Format: JPEG    Resolution: 300 DPI
 echo  =============================================
 echo.
 
+:start
 node.exe station-agent.js
+set EXIT_CODE=%ERRORLEVEL%
+
+if %EXIT_CODE% EQU 0 (
+    echo.
+    echo  Agent exited for update — restarting in 2 seconds...
+    timeout /t 2 /nobreak >nul
+    goto start
+)
 
 echo.
-echo  Agent has stopped.
+echo  Agent has stopped (exit code: %EXIT_CODE%).
 echo  Press any key to close this window.
 pause >nul
