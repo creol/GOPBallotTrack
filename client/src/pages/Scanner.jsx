@@ -4,6 +4,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { io } from 'socket.io-client';
 import api from '../api/client';
 import AppHeader from '../components/AppHeader';
+import { APP_VERSION } from '../version';
 
 export default function Scanner() {
   const { roundId } = useParams();
@@ -246,16 +247,25 @@ export default function Scanner() {
         </div>
       )}
 
-      {agentAlive === true && agentCountdown === 0 && (
-        <div style={{
-          background: '#f0fdf4', color: '#166534', borderRadius: 8,
-          padding: '0.6rem 1.25rem', marginBottom: '0.75rem',
-          border: '1px solid #86efac', textAlign: 'center',
-          fontSize: '0.95rem', fontWeight: 600,
-        }}>
-          Scan Agent Connected{agentVersion ? ` — v${agentVersion}` : ''}
-        </div>
-      )}
+      {agentAlive === true && agentCountdown === 0 && (() => {
+        const versionMismatch = agentVersion && agentVersion !== APP_VERSION;
+        return (
+          <div style={{
+            background: versionMismatch ? '#fef3c7' : '#f0fdf4',
+            color: versionMismatch ? '#92400e' : '#166534',
+            borderRadius: 8,
+            padding: '0.6rem 1.25rem', marginBottom: '0.75rem',
+            border: `1px solid ${versionMismatch ? '#f59e0b' : '#86efac'}`,
+            textAlign: 'center',
+            fontSize: '0.95rem', fontWeight: 600,
+          }}>
+            {versionMismatch
+              ? `Agent Connected (v${agentVersion}) — updating to v${APP_VERSION}, will restart automatically...`
+              : `Scan Agent Connected — v${agentVersion || APP_VERSION}`
+            }
+          </div>
+        );
+      })()}
 
       {agentAlive === false && agentCountdown === 0 && (
         <div style={{

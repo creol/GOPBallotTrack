@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.108';
+const AGENT_VERSION = '0.109';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -80,6 +80,13 @@ setInterval(async () => {
       { roundId: currentRoundId, agentVersion: AGENT_VERSION }, { timeout: 3000 });
   } catch {}
 }, LOG_FLUSH_INTERVAL);
+
+// Check for updates every 60 seconds while running (not just at startup)
+setInterval(async () => {
+  try {
+    await checkForUpdate();
+  } catch {}
+}, 60000);
 
 function log(msg, serialNumber) {
   console.log(`[${timestamp()}] ${msg}`);
