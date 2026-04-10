@@ -77,7 +77,7 @@ setInterval(async () => {
   // Send heartbeat so server/scanner UI knows agent is alive
   try {
     await axios.post(`${serverUrl}/api/stations/${stationId}/heartbeat`,
-      { roundId: currentRoundId }, { timeout: 3000 });
+      { roundId: currentRoundId, agentVersion: AGENT_VERSION }, { timeout: 3000 });
   } catch {}
 }, LOG_FLUSH_INTERVAL);
 

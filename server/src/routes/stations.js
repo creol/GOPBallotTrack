@@ -195,6 +195,7 @@ router.post('/stations/:stationId/heartbeat', (req, res) => {
   stationAssignments.set(req.params.stationId, {
     ...existing,
     lastHeartbeat: Date.now(),
+    agentVersion: req.body.agentVersion || existing.agentVersion || null,
   });
   res.json({ ok: true });
 });
@@ -206,7 +207,7 @@ router.get('/stations/:stationId/heartbeat', (req, res) => {
     return res.json({ alive: false });
   }
   const alive = Date.now() - assignment.lastHeartbeat < 15000;
-  res.json({ alive, lastSeen: new Date(assignment.lastHeartbeat).toISOString(), roundId: assignment.roundId });
+  res.json({ alive, lastSeen: new Date(assignment.lastHeartbeat).toISOString(), roundId: assignment.roundId, agentVersion: assignment.agentVersion || null });
 });
 
 // GET /api/stations/:stationId/assignment — Get current assignment

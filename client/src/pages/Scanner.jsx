@@ -23,6 +23,8 @@ export default function Scanner() {
   const [feedback, setFeedback] = useState(null); // { type: 'success'|'error', message }
   const [submitting, setSubmitting] = useState(false);
   const [agentAlive, setAgentAlive] = useState(null); // null = checking, true/false
+  const [agentVersion, setAgentVersion] = useState(null);
+  const [agentCountdown, setAgentCountdown] = useState(10); // seconds to wait before showing warning
 
   const scannerRef = useRef(null);
   const html5QrRef = useRef(null);
@@ -67,21 +69,49 @@ export default function Scanner() {
     return () => socket.disconnect();
   }, [fetchRoundData]);
 
-  // Poll agent heartbeat every 10 seconds
+  // Poll agent heartbeat — initial countdown grace period, then periodic checks
   useEffect(() => {
     const stationId = sessionStorage.getItem('stationId');
-    if (!stationId) { setAgentAlive(false); return; }
+    if (!stationId) { setAgentAlive(false); setAgentCountdown(0); return; }
+
+    let countdownTimer = null;
+    let pollTimer = null;
+    let resolved = false;
+
     const checkHeartbeat = async () => {
       try {
         const { data } = await api.get(`/stations/${stationId}/heartbeat`);
         setAgentAlive(data.alive);
+        if (data.agentVersion) setAgentVersion(data.agentVersion);
+        if (data.alive) { resolved = true; setAgentCountdown(0); }
+        return data.alive;
       } catch {
         setAgentAlive(false);
+        return false;
       }
     };
+
+    // Check immediately
     checkHeartbeat();
-    const interval = setInterval(checkHeartbeat, 10000);
-    return () => clearInterval(interval);
+
+    // Countdown timer — ticks every second during initial grace period
+    countdownTimer = setInterval(() => {
+      setAgentCountdown(prev => {
+        if (prev <= 1 || resolved) {
+          clearInterval(countdownTimer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Poll every 5 seconds during countdown, then every 10 seconds after
+    pollTimer = setInterval(checkHeartbeat, 5000);
+
+    return () => {
+      clearInterval(countdownTimer);
+      clearInterval(pollTimer);
+    };
   }, []);
 
   // Start QR camera
@@ -199,13 +229,35 @@ export default function Scanner() {
         )}
         {agentAlive === true && (
           <span style={{ fontSize: '0.8rem', color: '#16a34a', fontWeight: 600 }}>
-            ● Agent Connected
+            ● Agent Connected{agentVersion ? ` (v${agentVersion})` : ''}
           </span>
         )}
       </div>
 
-      {/* Agent not running warning */}
-      {agentAlive === false && (
+      {/* Agent status: countdown → connected → warning */}
+      {agentCountdown > 0 && agentAlive !== true && (
+        <div style={{
+          background: '#eff6ff', color: '#1e40af', borderRadius: 8,
+          padding: '0.75rem 1.25rem', marginBottom: '0.75rem',
+          border: '1px solid #93c5fd', textAlign: 'center',
+          fontSize: '0.95rem', fontWeight: 600,
+        }}>
+          Checking scan agent status... ({agentCountdown}s)
+        </div>
+      )}
+
+      {agentAlive === true && agentCountdown === 0 && (
+        <div style={{
+          background: '#f0fdf4', color: '#166534', borderRadius: 8,
+          padding: '0.6rem 1.25rem', marginBottom: '0.75rem',
+          border: '1px solid #86efac', textAlign: 'center',
+          fontSize: '0.95rem', fontWeight: 600,
+        }}>
+          Scan Agent Connected{agentVersion ? ` — v${agentVersion}` : ''}
+        </div>
+      )}
+
+      {agentAlive === false && agentCountdown === 0 && (
         <div style={{
           background: '#dc2626', color: '#fff', borderRadius: 8,
           padding: '1rem 1.25rem', marginBottom: '0.75rem',
