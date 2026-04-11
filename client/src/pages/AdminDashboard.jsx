@@ -40,8 +40,12 @@ export default function AdminDashboard({ auth }) {
       ? 'PERMANENTLY delete this election event and ALL its data (races, rounds, ballots, scans)? This cannot be undone.'
       : 'Are you sure you want to delete this election event?';
     if (!confirm(msg)) return;
-    await api.delete(`/admin/elections/${id}${hard ? '?hard=true' : ''}`);
-    fetchElections();
+    try {
+      await api.delete(`/admin/elections/${id}${hard ? '?hard=true' : ''}`);
+      fetchElections();
+    } catch (err) {
+      alert('Delete failed: ' + (err.response?.data?.error || err.message));
+    }
   };
 
   const handleImport = async (e) => {
