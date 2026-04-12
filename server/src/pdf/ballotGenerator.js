@@ -112,11 +112,14 @@ function getScale(sizeKey, cfg) {
   const spacingMult = cfg.candidates.spacing === 'compact' ? 0.8 : cfg.candidates.spacing === 'spacious' ? 1.3 : 1;
   const ovalMult = cfg.candidates.ovalSize === 'small' ? 0.75 : cfg.candidates.ovalSize === 'large' ? 1.25 : 1;
 
+  // Scale factor: shrink config font sizes proportionally for smaller ballot sizes
+  const scale = isSmall ? 0.625 : isQuarter ? 0.75 : isHalf ? 0.875 : 1;
+
   return {
-    titleSize:    isSmall ? 10 : isQuarter ? 12 : isHalf ? 14 : cfg.header.electionNameSize,
-    subtitleSize: isSmall ? 8  : isQuarter ? 10 : isHalf ? 12 : cfg.header.raceNameSize,
-    bodySize:     isSmall ? 7  : isQuarter ? 9  : isHalf ? 10 : cfg.candidates.fontSize,
-    footerSize:   isSmall ? 5.5 : isQuarter ? 6.5 : isHalf ? 7 : cfg.instructions.fontSize,
+    titleSize:    Math.round(cfg.header.electionNameSize * scale * 10) / 10,
+    subtitleSize: Math.round(cfg.header.raceNameSize * scale * 10) / 10,
+    bodySize:     Math.round(cfg.candidates.fontSize * scale * 10) / 10,
+    footerSize:   Math.round(cfg.instructions.fontSize * scale * 10) / 10,
     ovalRx:       (isSmall ? 6 : isQuarter ? 7 : 9) * ovalMult,
     ovalRy:       (isSmall ? 4 : isQuarter ? 5 : 6) * ovalMult,
     lineHeight:   (isSmall ? 14 : isQuarter ? 18 : 24) * spacingMult,
