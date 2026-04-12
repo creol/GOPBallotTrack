@@ -176,19 +176,22 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
   // === HEADER ===
   if (cfg.header.show) {
     if (cfg.logo.show && resolvedLogo && fs.existsSync(resolvedLogo)) {
-      const logoW = Math.min(cfg.logo.maxWidth, bw * 0.15);
+      const logoW = Math.min(cfg.logo.maxWidth, contentWidth);
+      // Open the image once to read its natural dimensions
+      const imgObj = doc.openImage(resolvedLogo);
+      const logoH = logoW * (imgObj.height / imgObj.width);
       const logoX = cfg.logo.position === 'top-right' ? ox + bw - margin - logoW
         : cfg.logo.position === 'top-center' ? ox + (bw - logoW) / 2
         : left;
-      doc.image(resolvedLogo, logoX, y, { width: logoW, height: logoW });
+      doc.image(imgObj, logoX, y, { width: logoW });
       if (cfg.logo.position !== 'top-center') {
         const textX = cfg.logo.position === 'top-left' ? left + logoW + 6 : left;
         const textW = cfg.logo.position === 'top-left' ? contentWidth - logoW - 6 : contentWidth - logoW - 6;
         doc.fontSize(sc.titleSize).font('Helvetica-Bold');
         doc.text(election.name, textX, y, { width: textW });
-        y += logoW + 4;
+        y += logoH + 4;
       } else {
-        y += logoW + 4;
+        y += logoH + 4;
         doc.fontSize(sc.titleSize).font('Helvetica-Bold');
         doc.text(election.name, left, y, { width: contentWidth, align: 'center' });
         y += sc.titleSize + 6;

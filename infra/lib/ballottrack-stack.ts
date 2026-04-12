@@ -10,7 +10,6 @@ import { StorageConstruct } from './constructs/storage';
 import { CdnConstruct } from './constructs/cdn';
 import { DnsConstruct } from './constructs/dns';
 import { EcrConstruct } from './constructs/ecr';
-import { SchedulerConstruct } from './constructs/scheduler';
 import { DevStartConstruct } from './constructs/devstart';
 
 export interface BallotTrackStackProps extends cdk.StackProps {
@@ -77,13 +76,8 @@ export class BallotTrackStack extends cdk.Stack {
     // 8. Secrets & config — SSM Parameter Store + Secrets Manager
     this.createSecretsAndConfig(envName, cdn, storage, database);
 
-    // 9. Scheduler — dev only: auto-stop evenings & weekends
+    // 9. Dev Start Lambda + API Gateway (dev only)
     if (envName === 'dev') {
-      new SchedulerConstruct(this, 'Scheduler', {
-        ec2Instance: compute.instance,
-      });
-
-      // 10. Dev Start Lambda + API Gateway
       new DevStartConstruct(this, 'DevStart', {
         ec2Instance: compute.instance,
         dbInstance: database.dbInstance,
