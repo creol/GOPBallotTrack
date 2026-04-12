@@ -142,6 +142,27 @@ function ptToPx(pt) {
 }
 
 /**
+ * Render custom title lines in place of the election name.
+ * Returns the updated y position.
+ */
+function renderCustomTitleLines(doc, cfg, sc, x, y, width, align) {
+  const lines = cfg.header.customLines || [];
+  const sizes = cfg.header.customLineSizes || [];
+  for (let i = 0; i < 3; i++) {
+    const text = (lines[i] || '').trim();
+    if (!text) continue;
+    const fontSize = sizes[i] || cfg.header.electionNameSize || sc.titleSize;
+    doc.fontSize(fontSize).font('Helvetica-Bold');
+    const opts = { width };
+    if (align) opts.align = align;
+    doc.text(text, x, y, opts);
+    y += fontSize + 3;
+  }
+  y += 3; // spacing after custom lines
+  return y;
+}
+
+/**
  * Render one ballot within a region and return OMR zone positions.
  * ox, oy = origin offset on the page. bw, bh = ballot dimensions.
  * Returns { qr: {x,y,w,h in pts}, ovals: [{candidateId, cx, cy, rx, ry in pts}] }
@@ -187,19 +208,31 @@ async function renderBallot(doc, ox, oy, bw, bh, { election, race, round, candid
       if (cfg.logo.position !== 'top-center') {
         const textX = cfg.logo.position === 'top-left' ? left + logoW + 6 : left;
         const textW = cfg.logo.position === 'top-left' ? contentWidth - logoW - 6 : contentWidth - logoW - 6;
-        doc.fontSize(sc.titleSize).font('Helvetica-Bold');
-        doc.text(election.name, textX, y, { width: textW });
-        y += logoH + 4;
+        if (cfg.header.customTitle && cfg.header.customLines) {
+          y = renderCustomTitleLines(doc, cfg, sc, textX, y, textW);
+        } else {
+          doc.fontSize(sc.titleSize).font('Helvetica-Bold');
+          doc.text(election.name, textX, y, { width: textW });
+        }
+        y = Math.max(y, oy + margin + logoH) + 4;
       } else {
         y += logoH + 4;
+        if (cfg.header.customTitle && cfg.header.customLines) {
+          y = renderCustomTitleLines(doc, cfg, sc, left, y, contentWidth, 'center');
+        } else {
+          doc.fontSize(sc.titleSize).font('Helvetica-Bold');
+          doc.text(election.name, left, y, { width: contentWidth, align: 'center' });
+          y += sc.titleSize + 6;
+        }
+      }
+    } else {
+      if (cfg.header.customTitle && cfg.header.customLines) {
+        y = renderCustomTitleLines(doc, cfg, sc, left, y, contentWidth, 'center');
+      } else {
         doc.fontSize(sc.titleSize).font('Helvetica-Bold');
         doc.text(election.name, left, y, { width: contentWidth, align: 'center' });
         y += sc.titleSize + 6;
       }
-    } else {
-      doc.fontSize(sc.titleSize).font('Helvetica-Bold');
-      doc.text(election.name, left, y, { width: contentWidth, align: 'center' });
-      y += sc.titleSize + 6;
     }
 
     doc.fontSize(sc.subtitleSize).font('Helvetica-Bold');

@@ -25,6 +25,9 @@ const DEFAULT_CONFIG = {
     electionNameSize: 16,
     raceNameSize: 14,
     roundInfoSize: 10,
+    customTitle: false,
+    customLines: ['', '', ''],
+    customLineSizes: [0, 0, 0],
   },
   logo: {
     show: false,

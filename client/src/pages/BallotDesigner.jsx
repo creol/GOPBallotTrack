@@ -144,7 +144,45 @@ export default function BallotDesigner() {
           <Section title="Header">
             <Toggle label="Show header" value={config.header.show} onChange={v => updateField('header', 'show', v)} />
             {config.header.show && <>
-              <NumberField label="Election event name font size" value={config.header.electionNameSize} onChange={v => updateField('header', 'electionNameSize', v)} />
+              <Toggle label="Custom title (replace election name)" value={config.header.customTitle || false} onChange={v => updateField('header', 'customTitle', v)} />
+              {config.header.customTitle ? <>
+                {[0, 1, 2].map(i => {
+                  const lines = config.header.customLines || ['', '', ''];
+                  const sizes = config.header.customLineSizes || [0, 0, 0];
+                  return (
+                    <div key={i} style={{ marginBottom: '0.4rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <input
+                          style={{ ...s.input, flex: 1 }}
+                          type="text"
+                          placeholder={`Line ${i + 1}${i === 0 ? '' : ' (optional)'}`}
+                          value={lines[i] || ''}
+                          onChange={e => {
+                            const updated = [...lines];
+                            updated[i] = e.target.value;
+                            updateField('header', 'customLines', updated);
+                          }}
+                        />
+                        <input
+                          style={{ ...s.input, width: 50 }}
+                          type="number"
+                          title="Font size (0 = default)"
+                          placeholder="Size"
+                          value={sizes[i] || 0}
+                          onChange={e => {
+                            const updated = [...sizes];
+                            updated[i] = parseInt(e.target.value) || 0;
+                            updateField('header', 'customLineSizes', updated);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+                <p style={s.muted}>Enter text for each line. Size 0 = default election name size.</p>
+              </> : <>
+                <NumberField label="Election event name font size" value={config.header.electionNameSize} onChange={v => updateField('header', 'electionNameSize', v)} />
+              </>}
               <NumberField label="Race name font size" value={config.header.raceNameSize} onChange={v => updateField('header', 'raceNameSize', v)} />
               <NumberField label="Round info font size" value={config.header.roundInfoSize} onChange={v => updateField('header', 'roundInfoSize', v)} />
             </>}
