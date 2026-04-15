@@ -54,18 +54,23 @@ export default function StationSetup() {
     } catch {}
   };
 
-  // Initial load + polling
+  // Initial load + real-time updates
   useEffect(() => {
     checkConnection();
     fetchActiveRounds();
     checkAgent();
 
-    // Poll agent status frequently — 1.5s while unknown/disconnected, 5s once connected
-    const agentTimer = setInterval(() => checkAgent(), 1500);
-
-    // WebSocket for real-time round updates
     const socket = io();
     socket.on('status:changed', () => fetchActiveRounds());
+    // Instant agent detection via WebSocket — no polling needed
+    socket.on('agent:heartbeat', (data) => {
+      const id = sessionStorage.getItem('stationId');
+      if (data.stationId === id) setAgentAlive(true);
+    });
+
+    // Fallback poll every 10s in case agent was already running before page loaded
+    const agentTimer = setInterval(checkAgent, 10000);
+
     return () => {
       clearInterval(agentTimer);
       socket.disconnect();

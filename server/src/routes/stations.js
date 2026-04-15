@@ -200,6 +200,9 @@ router.post('/stations/:stationId/heartbeat', (req, res) => {
     lastHeartbeat: Date.now(),
     agentVersion: req.body.agentVersion || existing.agentVersion || null,
   });
+  // Notify any listening browser pages instantly
+  const io = req.app.get('io');
+  io.emit('agent:heartbeat', { stationId: req.params.stationId, agentVersion: req.body.agentVersion || null });
   res.json({ ok: true });
 });
 
