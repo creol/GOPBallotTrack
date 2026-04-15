@@ -358,12 +358,21 @@ router.post('/race/:id/reverse-finalize', async (req, res) => {
       [raceId]
     );
 
+    // Restore canceled rounds back to ready so they can be used again
+    const { rows: canceledRounds } = await db.query(
+      "SELECT id FROM rounds WHERE race_id = $1 AND status = 'canceled'",
+      [raceId]
+    );
+    for (const r of canceledRounds) {
+      await transitionStatus('round', r.id, 'ready', `${req.session?.name || 'admin'} [REVERSE: ${notes}]`);
+    }
+
     await transitionStatus('race', raceId, 'in_progress', `${req.session?.name || 'admin'} [REVERSE: ${notes}]`);
 
     const io = req.app.get('io');
     if (io) io.emit('status:changed', { type: 'race', id: raceId, status: 'in_progress' });
 
-    res.json({ message: 'Race finalization reversed — race is back in progress', race_id: raceId });
+    res.json({ message: `Race finalization reversed — race is back in progress, ${canceledRounds.length} canceled round(s) restored`, race_id: raceId });
   } catch (err) {
     console.error('Reverse finalize race error:', err);
     res.status(500).json({ error: 'Internal server error' });
