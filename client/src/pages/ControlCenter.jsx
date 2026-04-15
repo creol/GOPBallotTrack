@@ -94,19 +94,40 @@ export default function ControlCenter() {
       {electionList.length === 0 && <p style={s.muted}>No election events found.</p>}
 
       {electionList.map(election => (
-        <div key={election.id} style={s.electionSection}>
-          <h2 style={s.electionTitle}>{election.name}</h2>
+        <ElectionSection
+          key={election.id}
+          election={election}
+          onAction={handleAction}
+          onActionWithNotes={handleWithNotes}
+          actionLoading={actionLoading}
+          defaultExpanded={electionList.length === 1}
+        />
+      ))}
+    </div>
+  );
+}
 
-          {election.races.map(race => (
-            <RacePanel
-              key={race.race_id}
-              race={race}
-              onAction={handleAction}
-              onActionWithNotes={handleWithNotes}
-              actionLoading={actionLoading}
-            />
-          ))}
+function ElectionSection({ election, onAction, onActionWithNotes, actionLoading, defaultExpanded }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  return (
+    <div style={s.electionSection}>
+      <div style={s.electionHeader} onClick={() => setExpanded(!expanded)}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.85rem', color: '#9ca3af' }}>{expanded ? '▾' : '▸'}</span>
+          <h2 style={{ margin: 0, fontSize: '1.3rem' }}>{election.name}</h2>
         </div>
+        <span style={s.electionCount}>{election.races.length} race{election.races.length !== 1 ? 's' : ''}</span>
+      </div>
+
+      {expanded && election.races.map(race => (
+        <RacePanel
+          key={race.race_id}
+          race={race}
+          onAction={onAction}
+          onActionWithNotes={onActionWithNotes}
+          actionLoading={actionLoading}
+        />
       ))}
     </div>
   );
@@ -261,7 +282,8 @@ const s = {
   muted: { color: '#666', fontSize: '0.85rem' },
   errorBanner: { background: '#fee2e2', color: '#dc2626', padding: '0.75rem', borderRadius: 8, marginBottom: '1rem', fontWeight: 600 },
   electionSection: { marginBottom: '2rem' },
-  electionTitle: { margin: '0 0 0.75rem', fontSize: '1.3rem', paddingBottom: '0.5rem', borderBottom: '2px solid #e5e7eb' },
+  electionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', paddingBottom: '0.5rem', marginBottom: '0.75rem', borderBottom: '2px solid #e5e7eb', userSelect: 'none' },
+  electionCount: { color: '#9ca3af', fontSize: '0.85rem', fontWeight: 500 },
   raceCard: { border: '1px solid #e5e7eb', borderRadius: 10, padding: '1rem', marginBottom: '0.75rem', background: '#fff' },
   raceHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   roundCard: { borderLeft: '4px solid #d1d5db', padding: '0.75rem', marginBottom: '0.5rem', background: '#f9fafb', borderRadius: '0 6px 6px 0' },
