@@ -60,8 +60,8 @@ export default function StationSetup() {
     fetchActiveRounds();
     checkAgent();
 
-    // Poll agent status every 5s
-    const agentTimer = setInterval(checkAgent, 5000);
+    // Poll agent status frequently — 1.5s while unknown/disconnected, 5s once connected
+    const agentTimer = setInterval(() => checkAgent(), 1500);
 
     // WebSocket for real-time round updates
     const socket = io();
