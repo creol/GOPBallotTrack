@@ -300,7 +300,7 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
       <h1 style={mob.title}>{election.name}</h1>
 
       {/* Instant SN Search — only show if any race has search enabled */}
-      {election.races.some(r => r.public_search_enabled !== false) && (
+      {election.races.some(r => r.public_search_enabled === true) && (
         <div style={{ marginBottom: '1rem' }}>
           <input
             style={mob.searchInput}

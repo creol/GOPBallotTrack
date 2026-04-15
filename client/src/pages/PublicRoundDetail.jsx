@@ -46,10 +46,10 @@ export default function PublicRoundDetail() {
       </div>
 
       {/* Ballot SNs — only show if browse or search is enabled for this race */}
-      {(data.race.public_browse_enabled || data.race.public_search_enabled !== false) && (
+      {(data.race.public_browse_enabled || data.race.public_search_enabled === true) && (
         <div style={styles.section}>
           <h2>Ballots ({data.serial_numbers.length})</h2>
-          {(data.race.public_search_enabled !== false) && (
+          {(data.race.public_search_enabled === true) && (
             <input
               style={styles.filterInput}
               placeholder="Filter serial numbers..."
@@ -72,7 +72,7 @@ export default function PublicRoundDetail() {
             </div>
           )}
 
-          {!data.race.public_browse_enabled && data.race.public_search_enabled !== false && (
+          {!data.race.public_browse_enabled && data.race.public_search_enabled === true && (
             <p style={styles.muted}>Use the search bar above to look up a specific ballot by serial number.</p>
           )}
 

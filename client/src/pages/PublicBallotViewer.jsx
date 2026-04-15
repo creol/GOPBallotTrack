@@ -77,7 +77,7 @@ export default function PublicBallotViewer() {
       )}
 
       {/* Prev / Next navigation — hidden when browse is disabled */}
-      {data.public_browse_enabled !== false && (
+      {data.public_browse_enabled === true && (
         <div style={styles.nav}>
           <button
             style={{ ...styles.navBtn, opacity: data.prev_sn ? 1 : 0.3 }}
