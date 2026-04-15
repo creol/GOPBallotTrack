@@ -111,10 +111,10 @@ export default function StationSetup() {
 
   return (
     <div style={s.outerWrapper}>
-      <div style={s.headerBar}><AppHeader title="Station Setup" /></div>
+      <div style={s.headerBar}><AppHeader title="Scanning Station" /></div>
       <div style={s.wrapper}>
         <div style={s.card}>
-          <h1 style={s.title}>Station Setup</h1>
+          <h1 style={s.title}>Scanning Station</h1>
 
           {/* Station ID - compact inline display */}
           <div style={s.idRow}>

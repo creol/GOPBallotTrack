@@ -285,7 +285,7 @@ export default function Scanner() {
           <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.9 }}>
             No shortcut?{' '}
             <Link to="/station-setup" style={{ color: '#fff', textDecoration: 'underline', fontWeight: 600 }}>
-              Go to Station Setup
+              Go to Scanning Station
             </Link>{' '}
             to download and install the agent.
           </p>
