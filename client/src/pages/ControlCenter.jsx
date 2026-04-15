@@ -174,6 +174,17 @@ function RacePanel({ race, onAction, onActionWithNotes, actionLoading }) {
               </button>
             </div>
           )}
+          {race.race_status === 'results_finalized' && (
+            <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+              <button
+                style={s.btnSmall}
+                onClick={() => onActionWithNotes(`/admin/control-center/race/${race.race_id}/reverse-finalize`, 'Reason for reversing race finalization (required):')}
+                disabled={actionLoading}
+              >
+                Reverse Race Finalization
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -262,6 +273,9 @@ function RoundPanel({ round, raceId, raceName, electionName, onAction, onActionW
           <>
             <button style={s.btnSmall} onClick={() => onActionWithNotes(`/admin/control-center/round/${round.id}/recount`, 'Reason for recount (required):')} disabled={actionLoading}>
               Issue Recount
+            </button>
+            <button style={s.btnSmall} onClick={() => onActionWithNotes(`/admin/control-center/round/${round.id}/reverse-finalize`, 'Reason for reversing finalization (required):')} disabled={actionLoading}>
+              Reverse Finalization
             </button>
             <button style={s.btnDangerSmall} onClick={() => {
               if (!confirm(`VOID Round ${round.round_number}? This will cancel ONLY this round. Other rounds will not be affected. This cannot be undone.`)) return;

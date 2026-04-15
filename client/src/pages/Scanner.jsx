@@ -5,9 +5,12 @@ import { io } from 'socket.io-client';
 import api from '../api/client';
 import AppHeader from '../components/AppHeader';
 import { APP_VERSION } from '../version';
+import { useAuth } from '../context/AuthContext';
 
 export default function Scanner() {
   const { roundId } = useParams();
+  const { auth } = useAuth();
+  const isSuperAdmin = auth?.role === 'super_admin';
   const [round, setRound] = useState(null);
   const [candidates, setCandidates] = useState([]);
   const [ballotBoxes, setBallotBoxes] = useState([]);
@@ -187,18 +190,52 @@ export default function Scanner() {
   };
 
   const handleCreatePass = async () => {
-    const { data } = await api.post(`/rounds/${roundId}/passes`);
-    setActivePass(data);
-    setScanCount(0);
-    fetchRoundData();
+    try {
+      const { data } = await api.post(`/rounds/${roundId}/passes`);
+      setActivePass(data);
+      setScanCount(0);
+      fetchRoundData();
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.response?.data?.error || 'Failed to create pass' });
+    }
   };
 
   const handleCompletePass = async () => {
     if (!activePass) return;
-    if (!confirm(`Complete Pass ${activePass.pass_number}? This cannot be undone.`)) return;
-    await api.put(`/passes/${activePass.id}/complete`);
-    setActivePass(null);
-    fetchRoundData();
+    if (!confirm(`Complete Pass ${activePass.pass_number}? You can reopen it later if needed.`)) return;
+    try {
+      await api.put(`/passes/${activePass.id}/complete`);
+      setActivePass(null);
+      fetchRoundData();
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.response?.data?.error || 'Failed to complete pass' });
+    }
+  };
+
+  const handleReopenPass = async (passId, passNumber) => {
+    const reason = prompt(`Why are you reopening Pass ${passNumber}?`);
+    if (!reason || !reason.trim()) return;
+    try {
+      await api.put(`/passes/${passId}/reopen`, { reason });
+      fetchRoundData();
+      setFeedback({ type: 'success', message: `Pass ${passNumber} reopened` });
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.response?.data?.error || 'Failed to reopen pass' });
+    }
+  };
+
+  const handleDeletePass = async (passId, passNumber) => {
+    const reason = prompt(`Why are you deleting Pass ${passNumber}? This will reset all scanned ballots to unused.`);
+    if (!reason || !reason.trim()) return;
+    const pin = prompt('Enter your PIN to confirm deletion:');
+    if (!pin) return;
+    try {
+      await api.delete(`/passes/${passId}`, { data: { deleted_reason: reason, confirm_pin: pin } });
+      fetchRoundData();
+      setFeedback({ type: 'success', message: `Pass ${passNumber} deleted` });
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.response?.data?.error || 'Failed to delete pass' });
+    }
   };
 
   const clearFeedback = () => {
@@ -292,31 +329,51 @@ export default function Scanner() {
         </div>
       )}
 
-      {/* Pass Controls */}
+      {/* Pass Controls — only Super Admin can manage passes */}
       <div style={styles.passBar}>
         {activePass ? (
           <>
             <span style={styles.passLabel}>Pass {activePass.pass_number} — Active</span>
             <span style={styles.scanCount}>{scanCount} scans</span>
-            <button style={styles.btnComplete} onClick={handleCompletePass}>Complete Pass</button>
+            {isSuperAdmin && (
+              <button style={styles.btnComplete} onClick={handleCompletePass}>Complete Pass</button>
+            )}
           </>
         ) : (
           <>
             <span style={styles.muted}>No active pass</span>
-            <button style={styles.btnPrimary} onClick={handleCreatePass}>
-              Start Pass {passes.length + 1}
-            </button>
+            {isSuperAdmin ? (
+              <button style={styles.btnPrimary} onClick={handleCreatePass}>
+                Start Pass {passes.length + 1}
+              </button>
+            ) : (
+              <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Waiting for admin to start a pass...</span>
+            )}
           </>
         )}
         <button style={styles.btnSmall} onClick={fetchRoundData} title="Refresh">↻</button>
       </div>
 
-      {/* Completed passes summary */}
+      {/* Completed passes summary with reopen/delete for super admin */}
       {passes.filter(p => p.status === 'complete').length > 0 && (
         <div style={styles.passHistory}>
           {passes.filter(p => p.status === 'complete').map(p => (
-            <span key={p.id} style={styles.passPill}>
+            <span key={p.id} style={{ ...styles.passPill, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
               Pass {p.pass_number}: {p.scan_count} scans
+              {isSuperAdmin && (
+                <>
+                  <button
+                    style={{ ...styles.btnSmall, padding: '1px 5px', fontSize: '0.7rem', background: '#dbeafe', color: '#1e40af' }}
+                    onClick={() => handleReopenPass(p.id, p.pass_number)}
+                    title="Reopen this pass for additional scanning"
+                  >Reopen</button>
+                  <button
+                    style={{ ...styles.btnSmall, padding: '1px 5px', fontSize: '0.7rem', background: '#fee2e2', color: '#dc2626' }}
+                    onClick={() => handleDeletePass(p.id, p.pass_number)}
+                    title="Delete this pass and reset ballots"
+                  >Delete</button>
+                </>
+              )}
             </span>
           ))}
         </div>

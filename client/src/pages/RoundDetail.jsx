@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
+import { useAuth } from '../context/AuthContext';
 
 export default function RoundDetail() {
   const { id: electionId, raceId, roundId } = useParams();
@@ -184,6 +185,8 @@ export default function RoundDetail() {
 }
 
 function PassManager({ roundId, onUpdate }) {
+  const { auth } = useAuth();
+  const isSuperAdmin = auth?.role === 'super_admin';
   const [passes, setPasses] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -215,14 +218,32 @@ function PassManager({ roundId, onUpdate }) {
   };
 
   const handleCancel = async (passId, passNumber, scanCount) => {
-    if (!confirm(`Cancel Pass ${passNumber} and delete all ${scanCount || 0} scans? This cannot be undone.`)) return;
+    const reason = prompt(`Why are you deleting Pass ${passNumber}? (${scanCount || 0} scans will be deleted, ballots reset to unused)`);
+    if (!reason || !reason.trim()) return;
+    const pin = prompt('Enter your PIN to confirm deletion:');
+    if (!pin) return;
     setLoading(true);
     try {
-      await api.delete(`/passes/${passId}`, { data: { deleted_reason: 'Canceled by operator' } });
+      await api.delete(`/passes/${passId}`, { data: { deleted_reason: reason, confirm_pin: pin } });
       fetchPasses();
       if (onUpdate) onUpdate();
     } catch (err) {
-      alert('Failed to cancel pass: ' + (err.response?.data?.error || err.message));
+      alert('Failed to delete pass: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReopen = async (passId, passNumber) => {
+    const reason = prompt(`Why are you reopening Pass ${passNumber}?`);
+    if (!reason || !reason.trim()) return;
+    setLoading(true);
+    try {
+      await api.put(`/passes/${passId}/reopen`, { reason });
+      fetchPasses();
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      alert('Failed to reopen pass: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
@@ -260,30 +281,32 @@ function PassManager({ roundId, onUpdate }) {
             fontWeight: 600, fontSize: '0.85rem',
           }}>{p.scan_count || 0} scans</span>
           <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '0.85rem' }}>Active</span>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
-            <button
-              style={{
-                padding: '0.5rem 1rem', background: '#fee2e2', color: '#dc2626',
-                border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-                opacity: loading ? 0.6 : 1,
-              }}
-              onClick={() => handleCancel(p.id, p.pass_number, p.scan_count)}
-              disabled={loading}
-            >
-              Cancel Pass
-            </button>
-            <button
-              style={{
-                padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff',
-                border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
-                opacity: loading ? 0.6 : 1,
-              }}
-              onClick={() => handleComplete(p.id, p.pass_number)}
-              disabled={loading}
-            >
-              {loading ? 'Completing...' : 'Complete Pass'}
-            </button>
-          </div>
+          {isSuperAdmin && (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+              <button
+                style={{
+                  padding: '0.5rem 1rem', background: '#fee2e2', color: '#dc2626',
+                  border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+                  opacity: loading ? 0.6 : 1,
+                }}
+                onClick={() => handleCancel(p.id, p.pass_number, p.scan_count)}
+                disabled={loading}
+              >
+                Delete Pass
+              </button>
+              <button
+                style={{
+                  padding: '0.5rem 1rem', background: '#f59e0b', color: '#fff',
+                  border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
+                  opacity: loading ? 0.6 : 1,
+                }}
+                onClick={() => handleComplete(p.id, p.pass_number)}
+                disabled={loading}
+              >
+                {loading ? 'Completing...' : 'Complete Pass'}
+              </button>
+            </div>
+          )}
         </div>
       ))}
 
@@ -295,13 +318,36 @@ function PassManager({ roundId, onUpdate }) {
           <span style={{ fontWeight: 600 }}>Pass {p.pass_number}</span>
           <span style={styles.muted}>{p.scan_count || 0} scans</span>
           <span style={{ color: '#16a34a', fontSize: '0.82rem' }}>✓ Complete</span>
+          {isSuperAdmin && (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+              <button
+                style={{
+                  padding: '0.3rem 0.6rem', background: '#dbeafe', color: '#1e40af',
+                  border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600,
+                }}
+                onClick={() => handleReopen(p.id, p.pass_number)}
+                disabled={loading}
+              >Reopen</button>
+              <button
+                style={{
+                  padding: '0.3rem 0.6rem', background: '#fee2e2', color: '#dc2626',
+                  border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600,
+                }}
+                onClick={() => handleCancel(p.id, p.pass_number, p.scan_count)}
+                disabled={loading}
+              >Delete</button>
+            </div>
+          )}
         </div>
       ))}
 
-      {activePasses.length === 0 && (
+      {isSuperAdmin && activePasses.length === 0 && (
         <button style={{ ...styles.btnPrimary, marginTop: '0.5rem' }} onClick={handleCreate}>
           Start Pass {passes.length + 1}
         </button>
+      )}
+      {!isSuperAdmin && activePasses.length === 0 && passes.length === 0 && (
+        <p style={styles.muted}>Waiting for Super Admin to start a pass.</p>
       )}
     </div>
   );

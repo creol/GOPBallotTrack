@@ -295,6 +295,88 @@ router.post('/race/:id/finalize', async (req, res) => {
   }
 });
 
+// POST /api/admin/control-center/round/:id/reverse-finalize — Reverse a finalized round (Super Admin)
+// Unpublishes and sets round back to tallying so passes can be modified.
+router.post('/round/:id/reverse-finalize', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { notes } = req.body;
+    if (!notes || !notes.trim()) {
+      return res.status(400).json({ error: 'Notes are required to reverse finalization' });
+    }
+
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (round.status !== 'round_finalized') {
+      return res.status(400).json({ error: `Round must be finalized to reverse (current: ${round.status})` });
+    }
+
+    // Check race is not finalized
+    const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
+    if (race.status === 'results_finalized') {
+      return res.status(400).json({ error: 'Cannot reverse round — race is finalized. Reverse race finalization first.' });
+    }
+
+    // Unpublish and reset to tallying
+    await db.query(
+      'UPDATE rounds SET published_at = NULL, released_by = NULL, released_at = NULL WHERE id = $1',
+      [roundId]
+    );
+
+    await transitionStatus('round', roundId, 'tallying', req.session?.name);
+
+    // Record audit entry
+    await db.query(
+      `INSERT INTO status_transitions (entity_type, entity_id, from_status, to_status, changed_by)
+       VALUES ('round_reverse_finalize', $1, 'round_finalized', 'tallying', $2)`,
+      [roundId, `${req.session?.name}: ${notes}`]
+    );
+
+    const io = req.app.get('io');
+    if (io) io.emit('status:changed', { type: 'round', id: roundId, status: 'tallying', race_id: round.race_id });
+
+    res.json({ message: 'Round finalization reversed — round is back in tallying', round_id: roundId });
+  } catch (err) {
+    console.error('Reverse finalize round error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/admin/control-center/race/:id/reverse-finalize — Reverse a finalized race (Super Admin)
+// Sets race back to in_progress so rounds can be modified.
+router.post('/race/:id/reverse-finalize', async (req, res) => {
+  try {
+    const raceId = parseInt(req.params.id);
+    const { notes } = req.body;
+    if (!notes || !notes.trim()) {
+      return res.status(400).json({ error: 'Notes are required to reverse race finalization' });
+    }
+
+    const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [raceId]);
+    if (!race) return res.status(404).json({ error: 'Race not found' });
+    if (race.status !== 'results_finalized') {
+      return res.status(400).json({ error: `Race must be finalized to reverse (current: ${race.status})` });
+    }
+
+    await transitionStatus('race', raceId, 'in_progress', req.session?.name);
+
+    // Record audit entry
+    await db.query(
+      `INSERT INTO status_transitions (entity_type, entity_id, from_status, to_status, changed_by)
+       VALUES ('race_reverse_finalize', $1, 'results_finalized', 'in_progress', $2)`,
+      [raceId, `${req.session?.name}: ${notes}`]
+    );
+
+    const io = req.app.get('io');
+    if (io) io.emit('status:changed', { type: 'race', id: raceId, status: 'in_progress' });
+
+    res.json({ message: 'Race finalization reversed — race is back in progress', race_id: raceId });
+  } catch (err) {
+    console.error('Reverse finalize race error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/admin/control-center/transitions/:entityType/:entityId — Get status transition history
 router.get('/transitions/:entityType/:entityId', async (req, res) => {
   try {
