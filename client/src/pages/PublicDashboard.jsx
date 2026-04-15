@@ -299,37 +299,41 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
     <div style={mob.container}>
       <h1 style={mob.title}>{election.name}</h1>
 
-      {/* Instant SN Search */}
-      <div style={{ marginBottom: '1rem' }}>
-        <input
-          style={mob.searchInput}
-          placeholder="Search ballot serial number..."
-          value={searchSN}
-          onChange={e => handleInstantSearch(e.target.value)}
-          maxLength={64}
-        />
-        {searching && <p style={{ color: '#9ca3af', fontSize: '0.8rem', margin: '0.25rem 0' }}>Searching...</p>}
-        {snResults.length > 0 && snResults.map(r => (
-          <Link key={r.serial_number} to={`/public/${electionId}/ballots/${r.serial_number}`}
-            style={{ ...mob.snResultCard, ...(r.ballot_status === 'spoiled' ? { background: '#f3f4f6', borderColor: '#d1d5db' } : {}) }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.serial_number}</span>
-              {r.ballot_status === 'spoiled' && (
-                <span style={{ background: '#fee2e2', color: '#dc2626', padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700 }}>
-                  SPOILED — NOT COUNTED
-                </span>
-              )}
-            </div>
-            <span style={{ color: '#666', fontSize: '0.8rem' }}>{r.race_name} — Round {r.round_number}</span>
-          </Link>
-        ))}
-        {searchSN.length >= 4 && snResults.length === 0 && !searching && (
-          <p style={{ color: '#9ca3af', fontSize: '0.82rem', margin: '0.25rem 0' }}>Ballot not found or results not yet released</p>
-        )}
-      </div>
+      {/* Instant SN Search — only show if any race has search enabled */}
+      {election.races.some(r => r.public_search_enabled !== false) && (
+        <div style={{ marginBottom: '1rem' }}>
+          <input
+            style={mob.searchInput}
+            placeholder="Search ballot serial number..."
+            value={searchSN}
+            onChange={e => handleInstantSearch(e.target.value)}
+            maxLength={64}
+          />
+          {searching && <p style={{ color: '#9ca3af', fontSize: '0.8rem', margin: '0.25rem 0' }}>Searching...</p>}
+          {snResults.length > 0 && snResults.map(r => (
+            <Link key={r.serial_number} to={`/public/${electionId}/ballots/${r.serial_number}`}
+              style={{ ...mob.snResultCard, ...(r.ballot_status === 'spoiled' ? { background: '#f3f4f6', borderColor: '#d1d5db' } : {}) }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.serial_number}</span>
+                {r.ballot_status === 'spoiled' && (
+                  <span style={{ background: '#fee2e2', color: '#dc2626', padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700 }}>
+                    SPOILED — NOT COUNTED
+                  </span>
+                )}
+              </div>
+              <span style={{ color: '#666', fontSize: '0.8rem' }}>{r.race_name} — Round {r.round_number}</span>
+            </Link>
+          ))}
+          {searchSN.length >= 4 && snResults.length === 0 && !searching && (
+            <p style={{ color: '#9ca3af', fontSize: '0.82rem', margin: '0.25rem 0' }}>Ballot not found or results not yet released</p>
+          )}
+        </div>
+      )}
 
-      {/* Browse All link */}
-      <Link to={`/public/${electionId}/browse`} style={mob.browseLink}>Browse All Ballots</Link>
+      {/* Browse All link — only show if any race has browse enabled */}
+      {election.races.some(r => r.public_browse_enabled) && (
+        <Link to={`/public/${electionId}/browse`} style={mob.browseLink}>Browse All Ballots</Link>
+      )}
 
       {/* Race Cards */}
       {election.races.map(race => {

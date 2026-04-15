@@ -45,32 +45,42 @@ export default function PublicRoundDetail() {
         })}
       </div>
 
-      {/* Ballot SNs */}
-      <div style={styles.section}>
-        <h2>Ballots ({data.serial_numbers.length})</h2>
-        <input
-          style={styles.filterInput}
-          placeholder="Filter serial numbers..."
-          value={snFilter}
-          onChange={e => setSnFilter(e.target.value.toUpperCase())}
-        />
+      {/* Ballot SNs — only show if browse or search is enabled for this race */}
+      {(data.race.public_browse_enabled || data.race.public_search_enabled !== false) && (
+        <div style={styles.section}>
+          <h2>Ballots ({data.serial_numbers.length})</h2>
+          {(data.race.public_search_enabled !== false) && (
+            <input
+              style={styles.filterInput}
+              placeholder="Filter serial numbers..."
+              value={snFilter}
+              onChange={e => setSnFilter(e.target.value.toUpperCase())}
+            />
+          )}
 
-        <div style={styles.snGrid}>
-          {filteredSNs.map(sn => (
-            <Link
-              key={sn}
-              to={`/public/${electionId}/ballots/${sn}`}
-              style={styles.snChip}
-            >
-              {sn}
-            </Link>
-          ))}
+          {data.race.public_browse_enabled && (
+            <div style={styles.snGrid}>
+              {filteredSNs.map(sn => (
+                <Link
+                  key={sn}
+                  to={`/public/${electionId}/ballots/${sn}`}
+                  style={styles.snChip}
+                >
+                  {sn}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {!data.race.public_browse_enabled && data.race.public_search_enabled !== false && (
+            <p style={styles.muted}>Use the search bar above to look up a specific ballot by serial number.</p>
+          )}
+
+          {data.race.public_browse_enabled && filteredSNs.length === 0 && snFilter && (
+            <p style={styles.muted}>No matching serial numbers</p>
+          )}
         </div>
-
-        {filteredSNs.length === 0 && snFilter && (
-          <p style={styles.muted}>No matching serial numbers</p>
-        )}
-      </div>
+      )}
     </div>
   );
 }

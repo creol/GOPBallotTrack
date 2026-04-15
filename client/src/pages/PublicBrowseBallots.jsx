@@ -17,9 +17,10 @@ export default function PublicBrowseBallots() {
 
   if (!election) return <div style={s.container}><p>Loading...</p></div>;
 
-  // Collect all published rounds with their SNs
+  // Collect published rounds with their SNs (only from races with browse enabled)
   const roundsWithSNs = [];
   for (const race of election.races) {
+    if (!race.public_browse_enabled) continue;
     for (const round of race.rounds) {
       roundsWithSNs.push({
         roundId: round.id,

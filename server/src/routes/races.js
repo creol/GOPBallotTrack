@@ -9,7 +9,7 @@ const router = Router();
 // POST /api/admin/elections/:id/races — Create race
 router.post('/elections/:id/races', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors, race_date, race_time, location } = req.body;
+    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors, race_date, race_time, location, public_search_enabled, public_browse_enabled } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     // Get next display_order
@@ -26,10 +26,11 @@ router.post('/elections/:id/races', async (req, res) => {
     }
 
     const { rows: [race] } = await db.query(
-      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds, race_date, race_time, location)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds, race_date, race_time, location, public_search_enabled, public_browse_enabled)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [req.params.id, name, threshold_type || 'majority', threshold_value || null, max + 1,
-       ballot_count || null, max_rounds || null, defaultDate, race_time || null, location || null]
+       ballot_count || null, max_rounds || null, defaultDate, race_time || null, location || null,
+       public_search_enabled !== false, public_browse_enabled === true]
     );
 
     // If ballot_count and max_rounds provided, auto-create rounds with SNs
@@ -69,17 +70,30 @@ router.get('/elections/:id/races', async (req, res) => {
 // PUT /api/admin/races/:id — Update race
 router.put('/races/:id', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, race_date, race_time, location } = req.body;
+    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled } = req.body;
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (name !== undefined) { updates.push(`name = $${idx++}`); values.push(name); }
+    if (threshold_type !== undefined) { updates.push(`threshold_type = $${idx++}`); values.push(threshold_type); }
+    if (threshold_value !== undefined) { updates.push(`threshold_value = $${idx++}`); values.push(threshold_value); }
+    if (race_date !== undefined) { updates.push(`race_date = $${idx++}`); values.push(race_date || null); }
+    if (race_time !== undefined) { updates.push(`race_time = $${idx++}`); values.push(race_time || null); }
+    if (location !== undefined) { updates.push(`location = $${idx++}`); values.push(location || null); }
+    if (public_search_enabled !== undefined) { updates.push(`public_search_enabled = $${idx++}`); values.push(public_search_enabled); }
+    if (public_browse_enabled !== undefined) { updates.push(`public_browse_enabled = $${idx++}`); values.push(public_browse_enabled); }
+
+    if (updates.length === 0) {
+      const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [req.params.id]);
+      if (!race) return res.status(404).json({ error: 'Race not found' });
+      return res.json(race);
+    }
+
+    values.push(req.params.id);
     const { rows: [race] } = await db.query(
-      `UPDATE races SET
-        name = COALESCE($1, name),
-        threshold_type = COALESCE($2, threshold_type),
-        threshold_value = COALESCE($3, threshold_value),
-        race_date = COALESCE($4, race_date),
-        race_time = COALESCE($5, race_time),
-        location = COALESCE($6, location)
-       WHERE id = $7 RETURNING *`,
-      [name, threshold_type, threshold_value, race_date || null, race_time || null, location || null, req.params.id]
+      `UPDATE races SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
     );
     if (!race) return res.status(404).json({ error: 'Race not found' });
     res.json(race);
