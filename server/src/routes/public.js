@@ -72,8 +72,14 @@ router.get('/:electionId', async (req, res) => {
       );
       race.eliminated = withdrawnCandidates;
 
-      // Get race outcome
-      if (race.outcome) {
+      // Get race outcome — only expose publicly after all finalized rounds are published
+      const { rows: [unpublishedFinalized] } = await db.query(
+        "SELECT id FROM rounds WHERE race_id = $1 AND status = 'round_finalized' AND published_at IS NULL LIMIT 1",
+        [race.id]
+      );
+      const outcomePublished = race.outcome && !unpublishedFinalized;
+
+      if (outcomePublished) {
         const outcomeCandidate = race.outcome_candidate_id
           ? (await db.query('SELECT name FROM candidates WHERE id = $1', [race.outcome_candidate_id])).rows[0]
           : null;
@@ -100,14 +106,14 @@ router.get('/:electionId', async (req, res) => {
       ) || allRounds[0] || null;
       const publishedCount = rounds.length; // rounds already filtered to published_at IS NOT NULL
 
-      if (race.outcome === 'winner') {
+      if (outcomePublished && race.outcome === 'winner') {
         const winnerName = race.outcome_details?.candidate_name || 'TBD';
         race.status_label = `Winner: ${winnerName}`;
-      } else if (race.outcome === 'advances_primary') {
+      } else if (outcomePublished && race.outcome === 'advances_primary') {
         race.status_label = 'Advances to Primary';
-      } else if (race.outcome === 'closed') {
+      } else if (outcomePublished && race.outcome === 'closed') {
         race.status_label = 'Race Closed';
-      } else if (race.status === 'results_finalized') {
+      } else if (outcomePublished && race.status === 'results_finalized') {
         race.status_label = 'Race Complete';
       } else if (activeRound) {
         if (activeRound.status === 'voting_open') {
@@ -125,6 +131,16 @@ router.get('/:electionId', async (req, res) => {
         }
       } else {
         race.status_label = 'Awaiting Vote';
+      }
+    }
+
+    // Strip unpublished outcome fields from races before sending
+    for (const race of races) {
+      if (!race.outcome_details) {
+        delete race.outcome;
+        delete race.outcome_candidate_id;
+        delete race.outcome_notes;
+        delete race.outcome_at;
       }
     }
 
@@ -164,6 +180,18 @@ router.get('/:electionId/races/:raceId', async (req, res) => {
         [round.id]
       );
       round.results = results;
+    }
+
+    // Strip outcome if any finalized round is still unpublished
+    const { rows: [unpub] } = await db.query(
+      "SELECT id FROM rounds WHERE race_id = $1 AND status = 'round_finalized' AND published_at IS NULL LIMIT 1",
+      [race.id]
+    );
+    if (unpub || !race.outcome) {
+      delete race.outcome;
+      delete race.outcome_candidate_id;
+      delete race.outcome_notes;
+      delete race.outcome_at;
     }
 
     res.json({ ...race, rounds });
@@ -259,6 +287,7 @@ router.get('/:electionId/search', async (req, res) => {
       `SELECT bs.serial_number, bs.round_id, bs.status as ballot_status,
               r.round_number, r.status as round_status,
               rc.id as race_id, rc.name as race_name,
+              rc.public_search_enabled, rc.public_browse_enabled,
               c.name as voted_for
        FROM ballot_serials bs
        JOIN rounds r ON r.id = bs.round_id AND r.published_at IS NOT NULL
@@ -274,6 +303,11 @@ router.get('/:electionId/search', async (req, res) => {
     }
 
     const row = rows[0];
+
+    // Check if search is enabled for this race
+    if (row.public_search_enabled === false) {
+      return res.json({ found: false, message: 'Ballot search is not enabled for this race' });
+    }
 
     // Get prev/next serial numbers for navigation (include spoiled)
     const { rows: allSerials } = await db.query(
