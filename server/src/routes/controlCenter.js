@@ -323,14 +323,7 @@ router.post('/round/:id/reverse-finalize', async (req, res) => {
       [roundId]
     );
 
-    await transitionStatus('round', roundId, 'tallying', req.session?.name);
-
-    // Record audit entry
-    await db.query(
-      `INSERT INTO status_transitions (entity_type, entity_id, from_status, to_status, changed_by)
-       VALUES ('round_reverse_finalize', $1, 'round_finalized', 'tallying', $2)`,
-      [roundId, `${req.session?.name}: ${notes}`]
-    );
+    await transitionStatus('round', roundId, 'tallying', `${req.session?.name || 'admin'} [REVERSE: ${notes}]`);
 
     const io = req.app.get('io');
     if (io) io.emit('status:changed', { type: 'round', id: roundId, status: 'tallying', race_id: round.race_id });
@@ -358,14 +351,14 @@ router.post('/race/:id/reverse-finalize', async (req, res) => {
       return res.status(400).json({ error: `Race must be finalized to reverse (current: ${race.status})` });
     }
 
-    await transitionStatus('race', raceId, 'in_progress', req.session?.name);
-
-    // Record audit entry
+    // Clear race outcome so dashboard no longer shows winner
     await db.query(
-      `INSERT INTO status_transitions (entity_type, entity_id, from_status, to_status, changed_by)
-       VALUES ('race_reverse_finalize', $1, 'results_finalized', 'in_progress', $2)`,
-      [raceId, `${req.session?.name}: ${notes}`]
+      `UPDATE races SET outcome = NULL, outcome_candidate_id = NULL, outcome_notes = NULL, outcome_at = NULL
+       WHERE id = $1`,
+      [raceId]
     );
+
+    await transitionStatus('race', raceId, 'in_progress', `${req.session?.name || 'admin'} [REVERSE: ${notes}]`);
 
     const io = req.app.get('io');
     if (io) io.emit('status:changed', { type: 'race', id: raceId, status: 'in_progress' });
