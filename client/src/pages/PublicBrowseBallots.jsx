@@ -17,10 +17,16 @@ export default function PublicBrowseBallots() {
 
   if (!election) return <div style={s.container}><p>Loading...</p></div>;
 
-  // Collect published rounds with their SNs (only from races with browse enabled)
+  // Collect published rounds with their SNs (controlled at election level)
   const roundsWithSNs = [];
+  if (!election.public_browse_enabled) return (
+    <div style={s.container}>
+      <Link to={`/public/${electionId}`} style={s.backLink}>&larr; Back to Dashboard</Link>
+      <h1>Browse All Ballots</h1>
+      <p style={s.muted}>Ballot browsing is not enabled for this election.</p>
+    </div>
+  );
   for (const race of election.races) {
-    if (!race.public_browse_enabled) continue;
     for (const round of race.rounds) {
       roundsWithSNs.push({
         roundId: round.id,

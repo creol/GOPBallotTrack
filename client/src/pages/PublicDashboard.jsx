@@ -299,8 +299,8 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
     <div style={mob.container}>
       <h1 style={mob.title}>{election.name}</h1>
 
-      {/* Instant SN Search — only show if any race has search enabled */}
-      {election.races.some(r => r.public_search_enabled === true) && (
+      {/* Instant SN Search — controlled at election level */}
+      {election.public_search_enabled === true && (
         <div style={{ marginBottom: '1rem' }}>
           <input
             style={mob.searchInput}
@@ -330,8 +330,8 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
         </div>
       )}
 
-      {/* Browse All link — only show if any race has browse enabled */}
-      {election.races.some(r => r.public_browse_enabled) && (
+      {/* Browse All link — controlled at election level */}
+      {election.public_browse_enabled === true && (
         <Link to={`/public/${electionId}/browse`} style={mob.browseLink}>Browse All Ballots</Link>
       )}
 

@@ -56,15 +56,21 @@ router.get('/:id', async (req, res) => {
 // PUT /api/admin/elections/:id — Update election
 router.put('/:id', async (req, res) => {
   try {
-    const { name, date, description } = req.body;
+    const { name, date, description, public_search_enabled, public_browse_enabled } = req.body;
+    const updates = ['updated_at = NOW()'];
+    const values = [];
+    let idx = 1;
+
+    if (name !== undefined) { updates.push(`name = $${idx++}`); values.push(name); }
+    if (date !== undefined) { updates.push(`date = $${idx++}`); values.push(date); }
+    if (description !== undefined) { updates.push(`description = $${idx++}`); values.push(description); }
+    if (public_search_enabled !== undefined) { updates.push(`public_search_enabled = $${idx++}`); values.push(public_search_enabled); }
+    if (public_browse_enabled !== undefined) { updates.push(`public_browse_enabled = $${idx++}`); values.push(public_browse_enabled); }
+
+    values.push(req.params.id);
     const { rows: [election] } = await db.query(
-      `UPDATE elections SET
-        name = COALESCE($1, name),
-        date = COALESCE($2, date),
-        description = COALESCE($3, description),
-        updated_at = NOW()
-       WHERE id = $4 RETURNING *`,
-      [name, date, description, req.params.id]
+      `UPDATE elections SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
     );
     if (!election) return res.status(404).json({ error: 'Election event not found' });
     res.json(election);

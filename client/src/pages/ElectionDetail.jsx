@@ -122,6 +122,33 @@ export default function ElectionDetail() {
         </div>
       )}
 
+      {/* Public Ballot Visibility Settings */}
+      <div style={styles.ballotVisibilitySection}>
+        <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#374151' }}>Public Ballot Visibility</span>
+        <label style={styles.toggleLabel}>
+          <input
+            type="checkbox"
+            checked={election.public_search_enabled === true}
+            onChange={async (e) => {
+              await api.put(`/admin/elections/${id}`, { public_search_enabled: e.target.checked });
+              fetchElection();
+            }}
+          />
+          Allow search by serial number
+        </label>
+        <label style={styles.toggleLabel}>
+          <input
+            type="checkbox"
+            checked={election.public_browse_enabled === true}
+            onChange={async (e) => {
+              await api.put(`/admin/elections/${id}`, { public_browse_enabled: e.target.checked });
+              fetchElection();
+            }}
+          />
+          Allow scrolling through all ballots
+        </label>
+      </div>
+
           {activeSection === 'races' && (
             <div>
               <div style={styles.sectionHeader}>
@@ -622,6 +649,15 @@ const styles = {
   btnDanger: { padding: '0.25rem 0.5rem', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' },
   btnDownload: { padding: '0.5rem 1rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', textDecoration: 'none', display: 'inline-block' },
   muted: { color: '#666', fontSize: '0.9rem' },
+  ballotVisibilitySection: {
+    display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap',
+    padding: '0.5rem 0.75rem', background: '#f9fafb', border: '1px solid #e5e7eb',
+    borderRadius: 6, marginBottom: '1rem', fontSize: '0.85rem',
+  },
+  toggleLabel: {
+    display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer',
+    fontSize: '0.85rem', color: '#4b5563',
+  },
 };
 
 // Inject a <style> tag for responsive sidebar/mobile nav toggle

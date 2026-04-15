@@ -184,33 +184,6 @@ export default function RaceDetail() {
         </div>
       )}
 
-      {/* Public Ballot Visibility Settings */}
-      <div style={styles.ballotVisibilitySection}>
-        <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#374151' }}>Public Ballot Visibility</span>
-        <label style={styles.toggleLabel}>
-          <input
-            type="checkbox"
-            checked={race.public_search_enabled !== false}
-            onChange={async (e) => {
-              await api.put(`/admin/races/${raceId}`, { public_search_enabled: e.target.checked });
-              fetchAll();
-            }}
-          />
-          Allow search by serial number
-        </label>
-        <label style={styles.toggleLabel}>
-          <input
-            type="checkbox"
-            checked={race.public_browse_enabled === true}
-            onChange={async (e) => {
-              await api.put(`/admin/races/${raceId}`, { public_browse_enabled: e.target.checked });
-              fetchAll();
-            }}
-          />
-          Allow scrolling through all ballots
-        </label>
-      </div>
-
       {/* Tab switching for Rounds/Candidates */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
         {NAV_ITEMS.map(item => (

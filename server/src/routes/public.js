@@ -215,6 +215,11 @@ router.get('/:electionId/rounds/:roundId', async (req, res) => {
       return res.status(404).json({ error: 'Round not found' });
     }
 
+    const { rows: [election] } = await db.query(
+      'SELECT public_search_enabled, public_browse_enabled FROM elections WHERE id = $1',
+      [race.election_id]
+    );
+
     const { rows: results } = await db.query(
       `SELECT rr.*, c.name as candidate_name
        FROM round_results rr
@@ -229,7 +234,7 @@ router.get('/:electionId/rounds/:roundId', async (req, res) => {
       [round.id]
     );
 
-    res.json({ round, race, results, serial_numbers: serials.map(s => s.serial_number), ballots: serials });
+    res.json({ round, race, election, results, serial_numbers: serials.map(s => s.serial_number), ballots: serials });
   } catch (err) {
     console.error('Public round detail error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -283,11 +288,19 @@ router.get('/:electionId/search', async (req, res) => {
       return res.status(400).json({ error: 'Serial number must be at least 8 characters' });
     }
 
+    // Check if search is enabled at the election level
+    const { rows: [electionFlags] } = await db.query(
+      'SELECT public_search_enabled, public_browse_enabled FROM elections WHERE id = $1',
+      [req.params.electionId]
+    );
+    if (electionFlags && electionFlags.public_search_enabled === false) {
+      return res.json({ found: false, message: 'Ballot search is not enabled for this election' });
+    }
+
     const { rows } = await db.query(
       `SELECT bs.serial_number, bs.round_id, bs.status as ballot_status,
               r.round_number, r.status as round_status,
               rc.id as race_id, rc.name as race_name,
-              rc.public_search_enabled, rc.public_browse_enabled,
               c.name as voted_for
        FROM ballot_serials bs
        JOIN rounds r ON r.id = bs.round_id AND r.published_at IS NOT NULL
@@ -303,11 +316,7 @@ router.get('/:electionId/search', async (req, res) => {
     }
 
     const row = rows[0];
-
-    // Check if search is enabled for this race
-    if (row.public_search_enabled === false) {
-      return res.json({ found: false, message: 'Ballot search is not enabled for this race' });
-    }
+    const browseEnabled = electionFlags?.public_browse_enabled === true;
 
     // Get prev/next serial numbers for navigation (include spoiled)
     const { rows: allSerials } = await db.query(
@@ -329,9 +338,9 @@ router.get('/:electionId/search', async (req, res) => {
       voted_for: row.voted_for || null,
       ballot_index: idx + 1,
       ballot_total: snList.length,
-      prev_sn: row.public_browse_enabled ? prev_sn : null,
-      next_sn: row.public_browse_enabled ? next_sn : null,
-      public_browse_enabled: row.public_browse_enabled,
+      prev_sn: browseEnabled ? prev_sn : null,
+      next_sn: browseEnabled ? next_sn : null,
+      public_browse_enabled: browseEnabled,
       image_url: `/api/public/${req.params.electionId}/ballots/${sn}`,
     });
   } catch (err) {
