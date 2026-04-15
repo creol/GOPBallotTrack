@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import api from '../api/client';
@@ -7,16 +7,25 @@ import AppHeader from '../components/AppHeader';
 let stationCounter = 0;
 
 export default function StationSetup() {
-  const [step, setStep] = useState(1);
   const [stationId, setStationId] = useState(sessionStorage.getItem('stationId') || '');
-  const [connected, setConnected] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [editingId, setEditingId] = useState(false);
   const [activeRounds, setActiveRounds] = useState([]);
-  const [selectedRound, setSelectedRound] = useState(null);
-  const [assigning, setAssigning] = useState(false);
+  const [agentAlive, setAgentAlive] = useState(null); // null = checking, true/false
+  const [assigning, setAssigning] = useState(null); // round_id being assigned
   const [error, setError] = useState(null);
-  const [downloaded, setDownloaded] = useState(false);
+  const [connected, setConnected] = useState(false);
   const navigate = useNavigate();
+  const idRef = useRef(null);
+
+  // Initialize station ID
+  useEffect(() => {
+    if (!stationId) {
+      stationCounter++;
+      const id = `station-${stationCounter}`;
+      setStationId(id);
+      sessionStorage.setItem('stationId', id);
+    }
+  }, []);
 
   const fetchActiveRounds = async () => {
     try {
@@ -27,39 +36,65 @@ export default function StationSetup() {
     }
   };
 
-  // Auto-generate station ID on first visit
-  useEffect(() => {
-    if (!stationId) {
-      stationCounter++;
-      setStationId(`station-${stationCounter}`);
+  const checkAgent = async () => {
+    const id = sessionStorage.getItem('stationId');
+    if (!id) { setAgentAlive(false); return; }
+    try {
+      const { data } = await api.get(`/stations/${id}/heartbeat`);
+      setAgentAlive(data.alive);
+    } catch {
+      setAgentAlive(false);
     }
-    // Auto-test connection on load
-    handleTestConnection();
-    // Fetch rounds immediately so step 2 is ready
-    fetchActiveRounds();
-  }, []);
+  };
 
-  // Listen for round status changes via WebSocket
-  useEffect(() => {
-    const socket = io();
-    socket.on('status:changed', () => fetchActiveRounds());
-    return () => socket.disconnect();
-  }, []);
-
-  const handleTestConnection = async () => {
-    setTesting(true);
-    setError(null);
+  const checkConnection = async () => {
     try {
       const { data } = await api.get('/health');
-      if (data.status === 'ok') {
-        setConnected(true);
-      } else {
-        setError('Server returned unexpected status');
-      }
+      if (data.status === 'ok') setConnected(true);
+    } catch {}
+  };
+
+  // Initial load + polling
+  useEffect(() => {
+    checkConnection();
+    fetchActiveRounds();
+    checkAgent();
+
+    // Poll agent status every 5s
+    const agentTimer = setInterval(checkAgent, 5000);
+
+    // WebSocket for real-time round updates
+    const socket = io();
+    socket.on('status:changed', () => fetchActiveRounds());
+    return () => {
+      clearInterval(agentTimer);
+      socket.disconnect();
+    };
+  }, []);
+
+  const handleSaveId = () => {
+    const id = stationId.trim();
+    if (!id) return;
+    sessionStorage.setItem('stationId', id);
+    setEditingId(false);
+    // Re-check agent with new ID
+    checkAgent();
+  };
+
+  const handleSelectRound = async (round) => {
+    const id = stationId.trim();
+    if (!id) { setError('Set a station ID first'); return; }
+    sessionStorage.setItem('stationId', id);
+    setAssigning(round.round_id);
+    setError(null);
+    try {
+      await api.post(`/stations/${id}/assign`, { roundId: round.round_id });
+      sessionStorage.setItem('assignedRound', JSON.stringify(round));
+      navigate(`/scan/${round.round_id}`);
     } catch (err) {
-      setError('Cannot reach server: ' + err.message);
+      setError(err.response?.data?.error || 'Failed to assign round');
     } finally {
-      setTesting(false);
+      setAssigning(null);
     }
   };
 
@@ -67,177 +102,107 @@ export default function StationSetup() {
     const id = stationId.trim() || 'station-1';
     sessionStorage.setItem('stationId', id);
     window.location.href = `/api/stations/download-installer?stationId=${encodeURIComponent(id)}`;
-    setDownloaded(true);
-  };
-
-  const handleNext = async () => {
-    if (step === 1) {
-      if (!stationId.trim()) { setError('Enter a station ID'); return; }
-      sessionStorage.setItem('stationId', stationId);
-      await fetchActiveRounds();
-      setStep(2);
-    }
-  };
-
-  const handleSelectRound = async (round) => {
-    setAssigning(true);
-    setError(null);
-    try {
-      await api.post(`/stations/${stationId}/assign`, { roundId: round.round_id });
-      setSelectedRound(round);
-      sessionStorage.setItem('assignedRound', JSON.stringify(round));
-      setStep(3);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Assignment failed');
-    } finally {
-      setAssigning(false);
-    }
-  };
-
-  const handleStartScanning = () => {
-    navigate(`/scan/${selectedRound.round_id}`);
   };
 
   return (
     <div style={s.outerWrapper}>
       <div style={s.headerBar}><AppHeader title="Station Setup" /></div>
       <div style={s.wrapper}>
-      <div style={s.card}>
-        <h1 style={s.title}>Station Setup</h1>
+        <div style={s.card}>
+          <h1 style={s.title}>Station Setup</h1>
 
-        {/* Step 1: Download installer + Station ID */}
-        {step === 1 && (
-          <div>
-            <p style={s.subtitle}>Set up this scanning station</p>
-
-            {/* Station ID */}
-            <div style={s.field}>
-              <label style={s.label}>Station ID</label>
-              <input style={s.input} placeholder="e.g. station-1"
-                value={stationId} onChange={e => setStationId(e.target.value)} />
-              <p style={s.hint}>A unique name for this scanning laptop</p>
-            </div>
-
-            {/* Connection status */}
-            <div style={s.field}>
-              <label style={s.label}>Server Connection</label>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                {connected
-                  ? <span style={s.successDot}>Connected</span>
-                  : <button style={s.btnSecondary} onClick={handleTestConnection} disabled={testing}>
-                      {testing ? 'Testing...' : 'Test Connection'}
-                    </button>
-                }
+          {/* Station ID - compact inline display */}
+          <div style={s.idRow}>
+            <span style={s.idLabel}>Station:</span>
+            {editingId ? (
+              <div style={{ display: 'flex', gap: '0.5rem', flex: 1 }}>
+                <input
+                  ref={idRef}
+                  style={s.idInput}
+                  value={stationId}
+                  onChange={e => setStationId(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveId()}
+                  autoFocus
+                />
+                <button style={s.btnSmall} onClick={handleSaveId}>Save</button>
               </div>
-            </div>
-
-            {error && <p style={s.error}>{error}</p>}
-
-            {/* Big download section */}
-            <div style={s.installerSection}>
-              <h3 style={s.installerTitle}>1. Install the Station Agent</h3>
-              <p style={s.installerDesc}>
-                Download and run this file. It installs everything automatically —
-                no other software needed.
-              </p>
-              <button
-                style={{ ...s.downloadBtn, opacity: !stationId.trim() ? 0.5 : 1 }}
-                onClick={handleDownloadInstaller}
-                disabled={!stationId.trim()}
-              >
-                Download Station Installer
-              </button>
-
-              {downloaded && (
-                <div style={s.downloadedSteps}>
-                  <p style={s.stepsTitle}>After downloading:</p>
-                  <ol style={s.stepsList}>
-                    <li>Open your <strong>Downloads</strong> folder</li>
-                    <li>Double-click <strong>BallotTrack-Station-Setup.bat</strong></li>
-                    <li>Click <strong>Yes</strong> when asked for permission</li>
-                    <li>Wait for it to finish — it will start automatically</li>
-                  </ol>
-                  <p style={s.hint}>
-                    A desktop shortcut called "BallotTrack Station" will be created for future use.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Divider */}
-            <div style={s.divider}>
-              <span style={s.dividerText}>or assign a round manually</span>
-            </div>
-
-            {/* Manual flow: assign to round via browser */}
-            <h3 style={{ ...s.installerTitle, fontSize: '0.9rem' }}>2. Assign to a Round (optional)</h3>
-            <p style={s.hint}>
-              The station agent auto-assigns when there's one active round.
-              Use this if you need to pick a specific round.
-            </p>
-
-            <button style={{ ...s.btnPrimary, marginTop: '0.75rem', opacity: !connected || !stationId.trim() ? 0.5 : 1 }}
-              onClick={handleNext} disabled={!connected || !stationId.trim()}>
-              Select Round Manually
-            </button>
-          </div>
-        )}
-
-        {/* Step 2: Select Round */}
-        {step === 2 && (
-          <div>
-            <p style={s.subtitle}>Select the race and round for this station</p>
-
-            {activeRounds.length === 0 && (
-              <div style={s.emptyState}>
-                <p>No rounds are currently open for tallying.</p>
-                <p style={s.hint}>A round must be moved to "tallying" status in the Control Center before it appears here.</p>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={s.idValue}>{stationId}</span>
+                <button style={s.btnLink} onClick={() => setEditingId(true)}>change</button>
               </div>
             )}
-
-            {activeRounds.map(round => (
-              <button
-                key={round.round_id}
-                style={s.roundOption}
-                onClick={() => handleSelectRound(round)}
-                disabled={assigning}
-              >
-                <div>
-                  <strong>{round.race_name}</strong> — Round {round.round_number}
-                  <span style={s.hint}> ({round.paper_color})</span>
-                </div>
-                <span style={s.hint}>{round.election_name}</span>
-              </button>
-            ))}
-
-            {error && <p style={s.error}>{error}</p>}
-
-            <button style={s.btnBack} onClick={() => setStep(1)}>&larr; Back</button>
           </div>
-        )}
 
-        {/* Step 3: Confirmation */}
-        {step === 3 && selectedRound && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={s.checkmark}>&#10003;</div>
-            <h2 style={{ margin: '0.5rem 0' }}>Station Ready</h2>
-            <p style={s.assignmentText}>
-              <strong>{selectedRound.race_name}</strong> — Round {selectedRound.round_number}
-            </p>
-            <p style={s.hint}>{selectedRound.election_name}</p>
-
-            <button style={{ ...s.btnPrimary, marginTop: '1.5rem', fontSize: '1.1rem', padding: '0.75rem 2rem' }}
-              onClick={handleStartScanning}>
-              Start Scanning
-            </button>
-
-            <div style={{ marginTop: '1rem' }}>
-              <button style={s.btnBack} onClick={() => setStep(2)}>Change Round</button>
+          {/* Agent Status Banner */}
+          {agentAlive === null && (
+            <div style={s.bannerChecking}>
+              Checking for scanning agent...
             </div>
+          )}
+          {agentAlive === true && (
+            <div style={s.bannerGood}>
+              Scanning agent is running
+            </div>
+          )}
+          {agentAlive === false && (
+            <div style={s.bannerWarning}>
+              <strong>Scanning agent is not running</strong>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.85rem' }}>
+                Double-click the <strong>BallotTrack Station</strong> shortcut on the desktop to start it.
+              </p>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#92400e' }}>
+                If there is no shortcut, <button style={s.btnInlineLink} onClick={handleDownloadInstaller}>download the installer</button> first.
+              </p>
+            </div>
+          )}
+
+          {/* Connection status (only show if disconnected) */}
+          {!connected && (
+            <div style={s.bannerWarning}>
+              Cannot reach server — check your network connection.
+            </div>
+          )}
+
+          {error && <div style={s.bannerError}>{error}</div>}
+
+          {/* Active Rounds */}
+          <div style={s.section}>
+            <h2 style={s.sectionTitle}>Select a Round to Scan</h2>
+
+            {activeRounds.length === 0 ? (
+              <div style={s.emptyState}>
+                <p style={{ margin: 0, fontWeight: 500 }}>No rounds are open for scanning yet.</p>
+                <p style={s.hint}>
+                  Rounds will appear here automatically when opened in the Control Center.
+                </p>
+              </div>
+            ) : (
+              <div style={s.roundList}>
+                {activeRounds.map(round => (
+                  <button
+                    key={round.round_id}
+                    style={s.roundCard}
+                    onClick={() => handleSelectRound(round)}
+                    disabled={assigning === round.round_id}
+                  >
+                    <div style={s.roundMain}>
+                      <span style={s.roundRace}>{round.race_name}</span>
+                      <span style={s.roundDetail}>
+                        Round {round.round_number} &middot; {round.paper_color}
+                      </span>
+                    </div>
+                    <div style={s.roundElection}>{round.election_name}</div>
+                    <div style={s.roundArrow}>
+                      {assigning === round.round_id ? 'Assigning...' : 'Start \u2192'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
-    </div>
     </div>
   );
 }
@@ -245,54 +210,39 @@ export default function StationSetup() {
 const s = {
   outerWrapper: { minHeight: '100vh', background: '#f3f4f6', fontFamily: 'system-ui, sans-serif' },
   headerBar: { maxWidth: 520, margin: '0 auto', padding: '1rem 1rem 0' },
-  wrapper: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 60px)' },
-  card: { background: '#fff', borderRadius: 12, padding: '2.5rem', width: '100%', maxWidth: 520, boxShadow: '0 4px 24px rgba(0,0,0,0.08)' },
-  title: { margin: '0 0 0.25rem', textAlign: 'center', fontSize: '1.75rem' },
-  subtitle: { color: '#666', textAlign: 'center', margin: '0 0 1.5rem', fontSize: '0.9rem' },
-  field: { marginBottom: '1rem' },
-  label: { fontWeight: 600, fontSize: '0.85rem', display: 'block', marginBottom: '0.25rem' },
-  input: { width: '100%', padding: '0.6rem', border: '1px solid #d1d5db', borderRadius: 6, fontSize: '1rem', boxSizing: 'border-box' },
-  hint: { color: '#666', fontSize: '0.8rem', margin: '0.25rem 0 0' },
-  btnPrimary: { width: '100%', padding: '0.75rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '1rem', fontWeight: 600 },
-  btnSecondary: { padding: '0.5rem 1rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem' },
-  btnBack: { padding: '0.5rem 1rem', background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.9rem', marginTop: '0.5rem' },
-  successDot: { color: '#16a34a', fontWeight: 600, fontSize: '0.85rem' },
-  error: { color: '#dc2626', fontSize: '0.9rem', margin: '0.5rem 0' },
-  emptyState: { textAlign: 'center', padding: '2rem', background: '#f9fafb', borderRadius: 8, marginBottom: '1rem' },
-  roundOption: {
-    width: '100%', padding: '1rem', border: '2px solid #e5e7eb', borderRadius: 8, background: '#fff',
-    cursor: 'pointer', textAlign: 'left', marginBottom: '0.5rem', fontSize: '0.95rem',
-    transition: 'border-color 0.1s',
-  },
-  checkmark: {
-    width: 80, height: 80, borderRadius: '50%', background: '#dcfce7', color: '#16a34a',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto',
-    fontSize: '2.5rem', fontWeight: 700,
-  },
-  assignmentText: { fontSize: '1.2rem', margin: '0.5rem 0' },
-  installerSection: {
-    marginTop: '1.5rem', padding: '1.25rem', background: '#f0fdf4', border: '2px solid #bbf7d0',
-    borderRadius: 10,
-  },
-  installerTitle: { margin: '0 0 0.35rem', fontSize: '1rem' },
-  installerDesc: { color: '#444', fontSize: '0.85rem', margin: '0 0 0.75rem', lineHeight: 1.4 },
-  downloadBtn: {
-    display: 'block', width: '100%', padding: '0.85rem', background: '#16a34a', color: '#fff',
-    border: 'none', borderRadius: 8, fontSize: '1.1rem', fontWeight: 700, cursor: 'pointer',
-    textAlign: 'center',
-  },
-  downloadedSteps: {
-    marginTop: '1rem', padding: '0.75rem', background: '#fff', borderRadius: 6,
-    border: '1px solid #d1d5db',
-  },
-  stepsTitle: { margin: '0 0 0.35rem', fontWeight: 600, fontSize: '0.85rem' },
-  stepsList: { margin: '0', paddingLeft: '1.25rem', fontSize: '0.85rem', lineHeight: 1.8, color: '#333' },
-  divider: {
-    display: 'flex', alignItems: 'center', margin: '1.5rem 0', gap: '0.75rem',
-  },
-  dividerText: {
-    flex: '0 0 auto', color: '#999', fontSize: '0.8rem', whiteSpace: 'nowrap',
-    background: '#fff', padding: '0 0.5rem',
-  },
-};
+  wrapper: { display: 'flex', alignItems: 'flex-start', justifyContent: 'center', minHeight: 'calc(100vh - 60px)', paddingTop: '2rem' },
+  card: { background: '#fff', borderRadius: 12, padding: '2rem', width: '100%', maxWidth: 520, boxShadow: '0 4px 24px rgba(0,0,0,0.08)' },
+  title: { margin: '0 0 1rem', textAlign: 'center', fontSize: '1.5rem' },
 
+  // Station ID row
+  idRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', padding: '0.6rem 0.75rem', background: '#f9fafb', borderRadius: 8 },
+  idLabel: { fontWeight: 600, fontSize: '0.9rem', color: '#374151' },
+  idValue: { fontSize: '0.95rem', fontWeight: 500 },
+  idInput: { flex: 1, padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: 4, fontSize: '0.9rem' },
+  btnSmall: { padding: '0.35rem 0.75rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 },
+  btnLink: { background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '0.8rem', padding: 0, textDecoration: 'underline' },
+  btnInlineLink: { background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: '0.8rem', padding: 0, textDecoration: 'underline', fontWeight: 600 },
+
+  // Banners
+  bannerChecking: { padding: '0.6rem 0.75rem', background: '#dbeafe', color: '#1e40af', borderRadius: 8, fontSize: '0.85rem', marginBottom: '0.75rem', fontWeight: 500 },
+  bannerGood: { padding: '0.6rem 0.75rem', background: '#dcfce7', color: '#166534', borderRadius: 8, fontSize: '0.85rem', marginBottom: '0.75rem', fontWeight: 600 },
+  bannerWarning: { padding: '0.75rem', background: '#fef3c7', color: '#78350f', borderRadius: 8, fontSize: '0.9rem', marginBottom: '0.75rem', lineHeight: 1.4 },
+  bannerError: { padding: '0.6rem 0.75rem', background: '#fee2e2', color: '#dc2626', borderRadius: 8, fontSize: '0.85rem', marginBottom: '0.75rem', fontWeight: 600 },
+
+  // Rounds section
+  section: { marginTop: '0.5rem' },
+  sectionTitle: { margin: '0 0 0.75rem', fontSize: '1.05rem', fontWeight: 600 },
+  hint: { color: '#666', fontSize: '0.8rem', margin: '0.35rem 0 0' },
+  emptyState: { textAlign: 'center', padding: '1.5rem', background: '#f9fafb', borderRadius: 8 },
+  roundList: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
+  roundCard: {
+    width: '100%', padding: '1rem', border: '2px solid #e5e7eb', borderRadius: 10, background: '#fff',
+    cursor: 'pointer', textAlign: 'left', fontSize: '0.95rem', display: 'flex', alignItems: 'center',
+    gap: '0.75rem', transition: 'border-color 0.15s, background 0.15s',
+  },
+  roundMain: { flex: 1, display: 'flex', flexDirection: 'column', gap: '0.15rem' },
+  roundRace: { fontWeight: 700, fontSize: '1rem' },
+  roundDetail: { fontSize: '0.85rem', color: '#666' },
+  roundElection: { fontSize: '0.8rem', color: '#9ca3af', maxWidth: '8rem', textAlign: 'right' },
+  roundArrow: { fontSize: '0.9rem', fontWeight: 600, color: '#2563eb', whiteSpace: 'nowrap' },
+};
