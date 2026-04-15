@@ -76,26 +76,28 @@ export default function PublicBallotViewer() {
         </div>
       )}
 
-      {/* Prev / Next navigation */}
-      <div style={styles.nav}>
-        <button
-          style={{ ...styles.navBtn, opacity: data.prev_sn ? 1 : 0.3 }}
-          disabled={!data.prev_sn}
-          onClick={() => goTo(data.prev_sn)}
-        >
-          &larr; Previous
-        </button>
-        <span style={styles.navCount}>
-          {data.ballot_index} of {data.ballot_total}
-        </span>
-        <button
-          style={{ ...styles.navBtn, opacity: data.next_sn ? 1 : 0.3 }}
-          disabled={!data.next_sn}
-          onClick={() => goTo(data.next_sn)}
-        >
-          Next &rarr;
-        </button>
-      </div>
+      {/* Prev / Next navigation — hidden when browse is disabled */}
+      {data.public_browse_enabled !== false && (
+        <div style={styles.nav}>
+          <button
+            style={{ ...styles.navBtn, opacity: data.prev_sn ? 1 : 0.3 }}
+            disabled={!data.prev_sn}
+            onClick={() => goTo(data.prev_sn)}
+          >
+            &larr; Previous
+          </button>
+          <span style={styles.navCount}>
+            {data.ballot_index} of {data.ballot_total}
+          </span>
+          <button
+            style={{ ...styles.navBtn, opacity: data.next_sn ? 1 : 0.3 }}
+            disabled={!data.next_sn}
+            onClick={() => goTo(data.next_sn)}
+          >
+            Next &rarr;
+          </button>
+        </div>
+      )}
     </div>
   );
 }

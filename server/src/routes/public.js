@@ -329,8 +329,9 @@ router.get('/:electionId/search', async (req, res) => {
       voted_for: row.voted_for || null,
       ballot_index: idx + 1,
       ballot_total: snList.length,
-      prev_sn,
-      next_sn,
+      prev_sn: row.public_browse_enabled ? prev_sn : null,
+      next_sn: row.public_browse_enabled ? next_sn : null,
+      public_browse_enabled: row.public_browse_enabled,
       image_url: `/api/public/${req.params.electionId}/ballots/${sn}`,
     });
   } catch (err) {
