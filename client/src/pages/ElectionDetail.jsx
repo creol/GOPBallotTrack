@@ -547,6 +547,21 @@ function ExportSection({ electionId }) {
   return (
     <div>
       <h2>Export</h2>
+
+      <h3 style={{ fontSize: '0.95rem', marginBottom: '0.5rem' }}>Results PDFs</h3>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <a href={`/api/admin/elections/${electionId}/results-summary-pdf`} style={styles.btnDownload} download>
+          Event Summary PDF
+        </a>
+        <a href={`/api/admin/elections/${electionId}/results-detail-pdf`} style={styles.btnDownload} download>
+          Event Detail PDF
+        </a>
+        <a href={`/api/admin/elections/${electionId}/results-zip`} style={styles.btnDownload} download>
+          All Results PDFs (ZIP)
+        </a>
+      </div>
+
+      <h3 style={{ fontSize: '0.95rem', marginBottom: '0.5rem' }}>Data Export</h3>
       <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
         {imageStatus === 'ready' ? (
           <a href={`/api/admin/elections/${electionId}/export-images/download`} style={styles.btnDownload} download>
