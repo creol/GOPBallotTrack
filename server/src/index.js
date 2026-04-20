@@ -37,7 +37,7 @@ const io = new Server(server, {
 });
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(path.join(__dirname, '..', '..', 'uploads')));
 app.use('/data/scans', express.static(path.join(__dirname, '..', '..', 'data', 'scans')));
