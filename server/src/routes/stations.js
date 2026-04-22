@@ -5,6 +5,7 @@ const multer = require('multer');
 const archiver = require('archiver');
 const db = require('../db');
 const { processBallot, recordScanUpload } = require('../services/scanProcessingService');
+const { requireAuth, requireStationToken } = require('../middleware/auth');
 
 const { APP_VERSION } = require('../version');
 
@@ -20,7 +21,8 @@ const upload = multer({
 });
 
 // GET /api/stations/download-agent — Download station agent as ZIP (includes node_modules)
-router.get('/stations/download-agent', (req, res) => {
+// Admin-only — the bundled config.json contains the STATION_TOKEN.
+router.get('/stations/download-agent', requireAuth, (req, res) => {
   const stationId = req.query.stationId || 'station-1';
   const serverUrl = `${req.protocol}://${req.get('host')}`;
 
@@ -49,10 +51,11 @@ router.get('/stations/download-agent', (req, res) => {
     archive.directory(nodeModulesDir, 'node_modules');
   }
 
-  // Generate a pre-filled config.json with this server's URL and the station ID
+  // Generate a pre-filled config.json — stationToken is required for every agent request.
   const config = JSON.stringify({
     serverUrl,
     stationId,
+    stationToken: process.env.STATION_TOKEN || '',
     watchFolder: 'C:\\ScanSnap\\Output',
     retryAttempts: 5,
   }, null, 2);
@@ -62,7 +65,8 @@ router.get('/stations/download-agent', (req, res) => {
 });
 
 // GET /api/stations/download-installer — Download a self-configuring .bat installer
-router.get('/stations/download-installer', (req, res) => {
+// Admin-only — the rendered installer contains the STATION_TOKEN that unlocks agent endpoints.
+router.get('/stations/download-installer', requireAuth, (req, res) => {
   const stationId = req.query.stationId || 'station-1';
   const serverUrl = `${req.protocol}://${req.get('host')}`;
 
@@ -74,6 +78,7 @@ router.get('/stations/download-installer', (req, res) => {
   let bat = fs.readFileSync(templatePath, 'utf8');
   bat = bat.replace('__SERVER_URL__', serverUrl);
   bat = bat.replace('__STATION_ID__', stationId);
+  bat = bat.replace(/__STATION_TOKEN__/g, process.env.STATION_TOKEN || '');
 
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="BallotTrack-Station-Setup.bat"`);
@@ -93,7 +98,8 @@ router.get('/stations/download-node', (req, res) => {
 });
 
 // GET /api/stations/download-bundle — Single ZIP with node.exe + agent + node_modules + config
-router.get('/stations/download-bundle', (req, res) => {
+// Admin-only — the bundled config.json contains the STATION_TOKEN.
+router.get('/stations/download-bundle', requireAuth, (req, res) => {
   const stationId = req.query.stationId || 'station-1';
   const serverUrl = `${req.protocol}://${req.get('host')}`;
   const agentDir = path.join(__dirname, '..', '..', '..', 'agent');
@@ -130,10 +136,11 @@ router.get('/stations/download-bundle', (req, res) => {
     archive.directory(nodeModulesDir, 'node_modules');
   }
 
-  // Pre-filled config.json
+  // Pre-filled config.json — stationToken is required for every agent request.
   const config = JSON.stringify({
     serverUrl,
     stationId,
+    stationToken: process.env.STATION_TOKEN || '',
     watchFolder: 'C:\\ScanSnap\\Output',
     retryAttempts: 5,
   }, null, 2);
@@ -193,7 +200,7 @@ router.post('/stations/:stationId/assign', (req, res) => {
 });
 
 // POST /api/stations/:stationId/heartbeat — Agent heartbeat
-router.post('/stations/:stationId/heartbeat', (req, res) => {
+router.post('/stations/:stationId/heartbeat', requireStationToken, (req, res) => {
   const existing = stationAssignments.get(req.params.stationId) || {};
   stationAssignments.set(req.params.stationId, {
     ...existing,
@@ -224,7 +231,7 @@ router.get('/stations/:stationId/assignment', (req, res) => {
 });
 
 // POST /api/stations/:stationId/upload — Upload ballot image from station agent
-router.post('/stations/:stationId/upload', upload.single('image'), async (req, res) => {
+router.post('/stations/:stationId/upload', requireStationToken, upload.single('image'), async (req, res) => {
   try {
     const stationId = req.params.stationId;
     const assignment = stationAssignments.get(stationId);

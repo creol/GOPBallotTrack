@@ -1,11 +1,12 @@
 const { Router } = require('express');
 const db = require('../db');
 const { writeBatch } = require('../services/scanLogService');
+const { requireStationToken } = require('../middleware/auth');
 
 const router = Router();
 
 // POST /api/stations/:stationId/logs — Receive agent log batch
-router.post('/stations/:stationId/logs', async (req, res) => {
+router.post('/stations/:stationId/logs', requireStationToken, async (req, res) => {
   try {
     const { stationId } = req.params;
     const { logs } = req.body;

@@ -28,6 +28,9 @@ services:
       ADMIN_PIN: ${ADMIN_PIN:-1234}
       JUDGE_PIN: ${JUDGE_PIN:-5678}
       CHAIR_PIN: ${CHAIR_PIN:-9012}
+      # Station agent shared secret. Must be set — the app refuses to start in production
+      # if STATION_TOKEN is unset. Every station's installer bakes this in.
+      STATION_TOKEN: ${STATION_TOKEN}
     volumes:
       - ./uploads:/app/uploads
       - ./data/scans:/app/data/scans
