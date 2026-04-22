@@ -212,10 +212,63 @@ export default function RoundDetail() {
 
       {globalError && <div style={styles.errorBanner}>{globalError}</div>}
 
-      {/* 1. Scanning & Passes */}
-      <PassManager roundId={roundId} onUpdate={refreshAll} />
+      {/* 1. Round Controls — state-aware lifecycle buttons. Super admin only. */}
+      {isSuperAdmin && (
+      <section style={styles.sectionCard}>
+        <div style={styles.sectionHeader}>
+          <h2 style={styles.sectionTitle}>Round Controls</h2>
+        </div>
 
-      {/* 2. Results preview */}
+        {primaryAction && (
+          <button
+            data-primary-in-page
+            style={{ ...primaryAction.style, opacity: actionBusy ? 0.6 : 1 }}
+            onClick={primaryAction.onClick}
+            disabled={!!actionBusy}
+          >
+            {primaryAction.label}
+          </button>
+        )}
+
+        {status === 'round_finalized' && isPublished && (
+          <p style={styles.infoLine}>
+            ✓ Published to public dashboard.
+          </p>
+        )}
+
+        {status === 'canceled' && (
+          <p style={styles.infoLine}>This round was canceled.</p>
+        )}
+
+        {!primaryAction && status !== 'round_finalized' && status !== 'canceled' && (
+          <p style={styles.infoLine}>
+            No direct action available. See the Scanning and Tasks sections below.
+          </p>
+        )}
+      </section>
+      )}
+
+      {/* 2. Scanning & Passes — grayed out until status = tallying */}
+      <PassManager
+        roundId={roundId}
+        onUpdate={refreshAll}
+        disabled={status !== 'tallying'}
+        disabledReason={
+          status === 'pending_needs_action' || status === 'ready'
+            ? 'Open voting first, then move to tallying to enable scanning.'
+            : status === 'voting_open'
+              ? 'Close voting, then open for tallying to enable scanning.'
+              : status === 'voting_closed'
+                ? 'Open for tallying to enable scanning.'
+                : status === 'round_finalized'
+                  ? 'This round is finalized. Scanning is closed.'
+                  : status === 'canceled'
+                    ? 'This round was canceled. Scanning is closed.'
+                    : 'Scanning is not currently open.'
+        }
+      />
+
+      {/* 3. Results preview */}
       {hasResults && (
         <section style={styles.sectionCard}>
           <div style={styles.sectionHeader}>
@@ -257,42 +310,6 @@ export default function RoundDetail() {
             </div>
           )}
         </section>
-      )}
-
-      {/* 3. Round Controls — state-aware lifecycle buttons. Super admin only. */}
-      {isSuperAdmin && (
-      <section style={styles.sectionCard}>
-        <div style={styles.sectionHeader}>
-          <h2 style={styles.sectionTitle}>Round Controls</h2>
-        </div>
-
-        {primaryAction && (
-          <button
-            data-primary-in-page
-            style={{ ...primaryAction.style, opacity: actionBusy ? 0.6 : 1 }}
-            onClick={primaryAction.onClick}
-            disabled={!!actionBusy}
-          >
-            {primaryAction.label}
-          </button>
-        )}
-
-        {status === 'round_finalized' && isPublished && (
-          <p style={styles.infoLine}>
-            ✓ Published to public dashboard.
-          </p>
-        )}
-
-        {status === 'canceled' && (
-          <p style={styles.infoLine}>This round was canceled.</p>
-        )}
-
-        {!primaryAction && status !== 'round_finalized' && status !== 'canceled' && (
-          <p style={styles.infoLine}>
-            No direct action available. See the Scanning section above and the Tasks below.
-          </p>
-        )}
-      </section>
       )}
 
       {/* 4. Tasks — state-aware workflow links */}
@@ -372,7 +389,7 @@ export default function RoundDetail() {
 }
 
 // ─── Scanning / Passes ─────────────────────────────────────────────────────
-function PassManager({ roundId, onUpdate }) {
+function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' }) {
   const { auth } = useAuth();
   const isSuperAdmin = auth?.role === 'super_admin';
   const [passes, setPasses] = useState([]);
@@ -472,20 +489,28 @@ function PassManager({ roundId, onUpdate }) {
   const completedPasses = passes.filter(p => p.status === 'complete');
 
   return (
-    <section style={styles.sectionCard}>
+    <section style={{ ...styles.sectionCard, ...(disabled ? styles.sectionDisabled : {}) }}>
       <div style={styles.sectionHeader}>
         <h2 style={styles.sectionTitle}>Scanning</h2>
-        {isSuperAdmin && activePasses.length === 0 && (
+        {!disabled && isSuperAdmin && activePasses.length === 0 && (
           <button style={styles.btnPrimary} onClick={handleCreate}>
             Start Pass {passes.length + 1}
           </button>
         )}
       </div>
 
-      {passes.length === 0 && (
+      {disabled && (
+        <div style={styles.scanningLockedBanner}>
+          <span style={{ fontWeight: 700 }}>Scanning is locked.</span>
+          {disabledReason && <span> &nbsp;·&nbsp; {disabledReason}</span>}
+        </div>
+      )}
+
+      {!disabled && passes.length === 0 && (
         <p style={styles.muted}>No passes yet. Super Admin starts a pass, then ballots flow in from the agent.</p>
       )}
 
+      <div style={disabled ? { opacity: 0.5, pointerEvents: 'none', userSelect: 'none' } : undefined}>
       {activePasses.map(p => (
         <div key={p.id} style={styles.activePassCard}>
           <div style={styles.passLineLeft}>
@@ -521,6 +546,7 @@ function PassManager({ roundId, onUpdate }) {
       ))}
 
       <StationCountsTable passes={passes} stationCounts={stationCounts} reconcileCounts={reconcileCounts} />
+      </div>
 
       <SuperAdminPinModal
         open={!!pinModal}
@@ -721,27 +747,6 @@ function TaskSection({ round, flaggedCount, spoiledCount, resettingSpoiled, onRe
     });
   }
 
-  // Always-available utilities
-  items.push({
-    key: 'boxes',
-    title: 'Ballot Box Breakdown',
-    description: 'See per-ballot-box vote counts across passes.',
-    active: false,
-    action: <Link to={`/admin/rounds/${roundId}/boxes`} style={styles.btnLink}>Open Breakdown</Link>,
-  });
-
-  items.push({
-    key: 'calibration',
-    title: 'Calibration PDF',
-    description: 'Print-and-scan calibration sheet for the ADF scanner.',
-    active: false,
-    action: (
-      <a href={`/api/admin/rounds/${roundId}/calibration-pdf`} style={styles.btnGhost} target="_blank" rel="noreferrer">
-        Open PDF
-      </a>
-    ),
-  });
-
   if (spoiledCount > 0) {
     items.push({
       key: 'reset-spoiled',
@@ -799,6 +804,12 @@ const styles = {
   sectionCard: {
     background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
     padding: '1rem', marginBottom: '1rem',
+  },
+  sectionDisabled: { background: '#f9fafb', borderColor: '#e5e7eb' },
+  scanningLockedBanner: {
+    background: '#f3f4f6', color: '#4b5563', padding: '0.6rem 0.85rem',
+    borderRadius: 6, fontSize: '0.88rem', marginBottom: '0.5rem',
+    border: '1px dashed #d1d5db',
   },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' },
   sectionTitle: { margin: 0, fontSize: '1.1rem' },

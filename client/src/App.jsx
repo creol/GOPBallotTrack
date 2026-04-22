@@ -8,7 +8,6 @@ import ElectionDetail from './pages/ElectionDetail';
 import RaceDetail from './pages/RaceDetail';
 import RoundDetail from './pages/RoundDetail';
 import BallotReviewQueue from './pages/BallotReviewQueue';
-import BallotBoxDetail from './pages/BallotBoxDetail';
 import BallotDesigner from './pages/BallotDesigner';
 import Scanner from './pages/Scanner';
 import Confirmation from './pages/Confirmation';
@@ -100,10 +99,6 @@ export default function App() {
         <Route path="/admin/elections/:id/logs" element={
           <ProtectedRoute auth={auth}><ScanLogs /></ProtectedRoute>
         } />
-        <Route path="/admin/rounds/:roundId/boxes" element={
-          <ProtectedRoute auth={auth}><BallotBoxDetail /></ProtectedRoute>
-        } />
-
         {/* User management — super_admin only */}
         <Route path="/admin/users" element={
           <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
