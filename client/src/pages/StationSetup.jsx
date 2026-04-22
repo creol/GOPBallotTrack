@@ -62,10 +62,22 @@ export default function StationSetup() {
 
     const socket = io();
     socket.on('status:changed', () => fetchActiveRounds());
-    // Instant agent detection via WebSocket — no polling needed
+    // Instant agent detection via WebSocket. If the user hasn't locked in a station
+    // name (no manual edit, no prior adoption), auto-adopt whatever agent is heartbeating
+    // — matches the local scanner's real name instead of the throwaway "station-1" default.
     socket.on('agent:heartbeat', (data) => {
-      const id = sessionStorage.getItem('stationId');
-      if (data.stationId === id) setAgentAlive(true);
+      const currentId = sessionStorage.getItem('stationId');
+      const locked = sessionStorage.getItem('stationLocked') === 'true';
+      if (data.stationId === currentId) {
+        setAgentAlive(true);
+        return;
+      }
+      if (!locked && data.stationId) {
+        sessionStorage.setItem('stationId', data.stationId);
+        sessionStorage.setItem('stationLocked', 'true');
+        setStationId(data.stationId);
+        setAgentAlive(true);
+      }
     });
 
     // Fallback poll every 10s in case agent was already running before page loaded
@@ -81,6 +93,8 @@ export default function StationSetup() {
     const id = stationId.trim();
     if (!id) return;
     sessionStorage.setItem('stationId', id);
+    // User made an explicit choice — lock in so auto-adopt doesn't overwrite it.
+    sessionStorage.setItem('stationLocked', 'true');
     setEditingId(false);
     // Re-check agent with new ID
     checkAgent();

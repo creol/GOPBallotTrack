@@ -20,6 +20,7 @@ export default function Scanner() {
   const [agentAlive, setAgentAlive] = useState(null); // null = checking, true/false
   const [agentVersion, setAgentVersion] = useState(null);
   const [agentCountdown, setAgentCountdown] = useState(10); // seconds to wait before showing warning
+  const [stationId, setStationIdState] = useState(sessionStorage.getItem('stationId') || '');
 
   const fetchRoundData = useCallback(async () => {
     try {
@@ -50,7 +51,6 @@ export default function Scanner() {
     try {
       const { data: counts } = await api.get(`/rounds/${roundId}/station-counts`);
       const rows = Array.isArray(counts) ? counts : [];
-      const stationId = sessionStorage.getItem('stationId');
       let total = 0;
       let local = 0;
       if (displayedPassId != null) {
@@ -65,7 +65,7 @@ export default function Scanner() {
     } catch (err) {
       console.error('Failed to fetch station counts:', err);
     }
-  }, [roundId]);
+  }, [roundId, stationId]);
 
   useEffect(() => {
     fetchRoundData();
@@ -83,10 +83,12 @@ export default function Scanner() {
     return () => socket.disconnect();
   }, [fetchRoundData, roundId]);
 
-  // Poll agent heartbeat — initial countdown grace period, then periodic checks
+  // Poll agent heartbeat — initial countdown grace period, then periodic checks.
+  // Also listens for agent:heartbeat broadcasts and auto-adopts the agent's real station
+  // name (unless the user has explicitly locked a different name on the Station Setup page).
   useEffect(() => {
-    const stationId = sessionStorage.getItem('stationId');
     if (!stationId) { setAgentAlive(false); setAgentCountdown(0); return; }
+    setAgentCountdown(10);
 
     let countdownTimer = null;
     let pollTimer = null;
@@ -105,10 +107,8 @@ export default function Scanner() {
       }
     };
 
-    // Check immediately
     checkHeartbeat();
 
-    // Countdown timer — ticks every second during initial grace period
     countdownTimer = setInterval(() => {
       setAgentCountdown(prev => {
         if (prev <= 1 || resolved) {
@@ -119,14 +119,33 @@ export default function Scanner() {
       });
     }, 1000);
 
-    // Poll every 5 seconds during countdown, then every 10 seconds after
     pollTimer = setInterval(checkHeartbeat, 5000);
+
+    // Socket listener: adopt agent's station id if nothing is locked in yet.
+    const socket = io();
+    socket.on('agent:heartbeat', (data) => {
+      if (!data?.stationId) return;
+      if (data.stationId === stationId) {
+        setAgentAlive(true);
+        if (data.agentVersion) setAgentVersion(data.agentVersion);
+        resolved = true;
+        setAgentCountdown(0);
+        return;
+      }
+      const locked = sessionStorage.getItem('stationLocked') === 'true';
+      if (!locked) {
+        sessionStorage.setItem('stationId', data.stationId);
+        sessionStorage.setItem('stationLocked', 'true');
+        setStationIdState(data.stationId);
+      }
+    });
 
     return () => {
       clearInterval(countdownTimer);
       clearInterval(pollTimer);
+      socket.disconnect();
     };
-  }, []);
+  }, [stationId]);
 
   const handleCreatePass = async () => {
     try {
@@ -231,7 +250,7 @@ export default function Scanner() {
           }}>
             {versionMismatch
               ? `Agent Connected (v${agentVersion}) — updating to v${APP_VERSION}, will restart automatically...`
-              : `Scan Agent Connected — v${agentVersion || APP_VERSION}`
+              : `Scan Agent Connected${stationId ? ` — ${stationId}` : ''} — v${agentVersion || APP_VERSION}`
             }
           </div>
         );
