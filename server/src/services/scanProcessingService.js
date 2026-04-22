@@ -444,4 +444,58 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   };
 }
 
-module.exports = { processBallot, getOrCreateActivePass };
+/**
+ * Classify a processBallot() result into a short outcome string for scan_uploads.
+ * Every agent upload gets exactly one row in scan_uploads regardless of outcome.
+ */
+function deriveOutcome(result) {
+  if (!result) return 'error';
+  if (result.type === 'wrong_station') return 'wrong_station';
+  if (result.flagged) return result.flag_reason || 'flagged';
+  if (!result.success) return 'error';
+  return 'counted';
+}
+
+/**
+ * Record one row per agent upload. Called by station upload route and scanWatcher
+ * after processBallot returns. Looks up the active/most-recent pass for the round
+ * so uploads are bucketed per pass for reporting.
+ */
+async function recordScanUpload({ stationId, roundId, result }) {
+  try {
+    const outcome = deriveOutcome(result);
+    const serialNumber = result?.serial_number || null;
+
+    // Resolve round_id from the serial if the caller didn't supply one
+    // (watcher path doesn't know the round upfront).
+    let resolvedRoundId = roundId || null;
+    if (!resolvedRoundId && serialNumber) {
+      const { rows: [bs] } = await db.query(
+        'SELECT round_id FROM ballot_serials WHERE serial_number = $1 LIMIT 1',
+        [serialNumber]
+      );
+      if (bs) resolvedRoundId = bs.round_id;
+    }
+
+    let passId = null;
+    if (resolvedRoundId) {
+      const { rows: [p] } = await db.query(
+        `SELECT id FROM passes
+         WHERE round_id = $1 AND status != 'deleted'
+         ORDER BY (status = 'active') DESC, pass_number DESC
+         LIMIT 1`,
+        [resolvedRoundId]
+      );
+      if (p) passId = p.id;
+    }
+    await db.query(
+      `INSERT INTO scan_uploads (station_id, round_id, pass_id, serial_number, outcome)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [stationId || 'unknown', resolvedRoundId, passId, serialNumber, outcome]
+    );
+  } catch (err) {
+    console.error('[Scan] Failed to record upload:', err.message);
+  }
+}
+
+module.exports = { processBallot, getOrCreateActivePass, recordScanUpload };

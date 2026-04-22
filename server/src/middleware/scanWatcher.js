@@ -53,7 +53,7 @@ function moveFile(srcPath, destDir, newName) {
 async function processSingleBallot(filePath, scannerId, io) {
   console.log(`[ScanWatcher] Processing ballot: ${path.basename(filePath)}`);
 
-  const { processBallot } = require('../services/scanProcessingService');
+  const { processBallot, recordScanUpload } = require('../services/scanProcessingService');
 
   let imageBuffer;
   try {
@@ -63,13 +63,20 @@ async function processSingleBallot(filePath, scannerId, io) {
     return;
   }
 
+  const stationId = `scanner-${scannerId}`;
   const result = await processBallot({
     imageBuffer,
     filePath,
-    stationId: `scanner-${scannerId}`,
+    stationId,
     scannerId,
     io,
   });
+
+  // Track every upload regardless of outcome. Round is looked up inside
+  // recordScanUpload from the result's serial/pass if needed — here we pass
+  // null because the watcher has no pre-assigned round.
+  const resolvedRoundId = result?.round_id || null;
+  await recordScanUpload({ stationId, roundId: resolvedRoundId, result });
 
   if (result.success) {
     if (result.flagged) {

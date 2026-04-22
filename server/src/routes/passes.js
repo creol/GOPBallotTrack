@@ -229,11 +229,16 @@ router.put('/passes/:id/reopen', requireSuperAdminForPass, async (req, res) => {
   }
 });
 
-// GET /api/rounds/:id/passes — List passes with scan counts
+// GET /api/rounds/:id/passes — List passes with scan counts.
+// scan_count = rows in `scans` (successfully-counted votes).
+// upload_count = rows in `scan_uploads` (every agent upload regardless of outcome,
+// including flagged, duplicate, wrong_round, etc.) — used for the Total Scans display.
 router.get('/rounds/:id/passes', async (req, res) => {
   try {
     const { rows: passes } = await db.query(
-      `SELECT p.*, (SELECT COUNT(*) FROM scans s WHERE s.pass_id = p.id) as scan_count
+      `SELECT p.*,
+         (SELECT COUNT(*) FROM scans s WHERE s.pass_id = p.id)::int AS scan_count,
+         (SELECT COUNT(*) FROM scan_uploads su WHERE su.pass_id = p.id)::int AS upload_count
        FROM passes p
        WHERE p.round_id = $1 AND p.status != 'deleted'
        ORDER BY p.pass_number`,
@@ -242,6 +247,34 @@ router.get('/rounds/:id/passes', async (req, res) => {
     res.json(passes);
   } catch (err) {
     console.error('List passes error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/rounds/:id/station-counts — Per-station, per-pass upload counts.
+// Counts every image the agent uploaded regardless of classification.
+router.get('/rounds/:id/station-counts', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows } = await db.query(
+      `SELECT
+         su.station_id,
+         su.pass_id,
+         p.pass_number,
+         p.status AS pass_status,
+         COUNT(*)::int AS uploads,
+         SUM(CASE WHEN su.outcome = 'counted' THEN 1 ELSE 0 END)::int AS counted,
+         SUM(CASE WHEN su.outcome != 'counted' THEN 1 ELSE 0 END)::int AS flagged
+       FROM scan_uploads su
+       LEFT JOIN passes p ON su.pass_id = p.id
+       WHERE su.round_id = $1
+       GROUP BY su.station_id, su.pass_id, p.pass_number, p.status
+       ORDER BY p.pass_number NULLS LAST, su.station_id`,
+      [roundId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Station counts error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

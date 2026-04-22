@@ -4,7 +4,7 @@ const fs = require('fs');
 const multer = require('multer');
 const archiver = require('archiver');
 const db = require('../db');
-const { processBallot } = require('../services/scanProcessingService');
+const { processBallot, recordScanUpload } = require('../services/scanProcessingService');
 
 const { APP_VERSION } = require('../version');
 
@@ -248,6 +248,10 @@ router.post('/stations/:stationId/upload', upload.single('image'), async (req, r
       roundId: assignment.roundId,
       io,
     });
+
+    // Track every upload regardless of outcome, so Total/Local counts reflect
+    // "anything the agent uploaded" not just successfully-counted scans.
+    await recordScanUpload({ stationId, roundId: assignment.roundId, result });
 
     // Clean up temp upload
     try { fs.unlinkSync(req.file.path); } catch {}

@@ -13,7 +13,8 @@ export default function Scanner() {
   const [round, setRound] = useState(null);
   const [passes, setPasses] = useState([]);
   const [activePass, setActivePass] = useState(null);
-  const [scanCount, setScanCount] = useState(0);
+  const [totalUploads, setTotalUploads] = useState(0);
+  const [localUploads, setLocalUploads] = useState(0);
 
   const [feedback, setFeedback] = useState(null); // { type: 'success'|'error', message }
   const [agentAlive, setAgentAlive] = useState(null); // null = checking, true/false
@@ -34,17 +35,33 @@ export default function Scanner() {
       const passList = Array.isArray(passData) ? passData : [];
       setPasses(passList);
       const active = passList.find(p => p.status === 'active');
-      if (active) {
-        setActivePass(active);
-        setScanCount(parseInt(active.scan_count) || 0);
-      } else {
-        setActivePass(null);
-        // If no active pass but there are passes, show the latest scan count
-        const latest = passList[passList.length - 1];
-        if (latest) setScanCount(parseInt(latest.scan_count) || 0);
-      }
+      setActivePass(active || null);
     } catch (err) {
       console.error('Failed to fetch passes:', err);
+    }
+
+    // Station-scoped upload counts — "anything the agent uploaded" regardless of outcome.
+    // Bucket by the displayed pass (active if any, else latest) for the Total/Local pills.
+    try {
+      const { data: counts } = await api.get(`/rounds/${roundId}/station-counts`);
+      const rows = Array.isArray(counts) ? counts : [];
+      const displayedPass = rows.reduce((acc, r) => {
+        if (r.pass_status === 'active') return r.pass_id;
+        if (acc == null) return r.pass_id;
+        return acc;
+      }, null);
+      const stationId = sessionStorage.getItem('stationId');
+      let total = 0;
+      let local = 0;
+      rows.forEach(r => {
+        if (r.pass_id !== displayedPass) return;
+        total += r.uploads || 0;
+        if (stationId && r.station_id === stationId) local += r.uploads || 0;
+      });
+      setTotalUploads(total);
+      setLocalUploads(local);
+    } catch (err) {
+      console.error('Failed to fetch station counts:', err);
     }
   }, [roundId]);
 
@@ -242,7 +259,12 @@ export default function Scanner() {
         {activePass ? (
           <>
             <span style={styles.passLabel}>Pass {activePass.pass_number} — Active</span>
-            <span style={styles.scanCount}>{scanCount} scans</span>
+            <span style={styles.scanCount} title="Total uploads across all stations for this pass">
+              Total: {totalUploads}
+            </span>
+            <span style={styles.localCount} title="Uploads from this station for this pass">
+              Local: {localUploads}
+            </span>
             {isSuperAdmin && (
               <button style={styles.btnComplete} onClick={handleCompletePass}>Complete Pass</button>
             )}
@@ -267,7 +289,7 @@ export default function Scanner() {
         <div style={styles.passHistory}>
           {passes.filter(p => p.status === 'complete').map(p => (
             <span key={p.id} style={{ ...styles.passPill, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-              Pass {p.pass_number}: {p.scan_count} scans
+              Pass {p.pass_number}: {p.upload_count ?? p.scan_count} scans
               {isSuperAdmin && (
                 <>
                   <button
@@ -304,6 +326,7 @@ const styles = {
   passBar: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#f3f4f6', borderRadius: 8, marginBottom: '0.75rem' },
   passLabel: { fontWeight: 700, color: '#16a34a' },
   scanCount: { background: '#dbeafe', color: '#1e40af', padding: '2px 10px', borderRadius: 12, fontWeight: 600, fontSize: '0.85rem' },
+  localCount: { background: '#dcfce7', color: '#166534', padding: '2px 10px', borderRadius: 12, fontWeight: 600, fontSize: '0.85rem' },
   passHistory: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' },
   passPill: { background: '#e5e7eb', padding: '2px 8px', borderRadius: 12, fontSize: '0.8rem' },
   feedback: { padding: '0.75rem', borderRadius: 6, marginBottom: '0.75rem', cursor: 'pointer', fontWeight: 600, textAlign: 'center' },
