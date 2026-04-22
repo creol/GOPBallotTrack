@@ -769,8 +769,44 @@ export default function Confirmation() {
               return `/data/scans/${imgPath.replace(/^\/app\/data\/scans\//, '').replace(/^.*[\/\\]data[\/\\]scans[\/\\]/, '')}`;
             };
 
+            const nameMissing = !judgeName.trim();
+
             return (
               <div style={{ marginTop: '0.75rem' }}>
+                {/* Judge name input — required for every reconcile action.
+                    Without this, handleReconcile bails out silently and every shortcut
+                    or button appears to do nothing. */}
+                <div style={{
+                  display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap',
+                  padding: '0.5rem 0.75rem', marginBottom: '0.75rem',
+                  background: nameMissing ? '#fef3c7' : '#f9fafb',
+                  border: `1px solid ${nameMissing ? '#f59e0b' : '#e5e7eb'}`,
+                  borderRadius: 6,
+                }}>
+                  <label style={{ fontWeight: 600, fontSize: '0.85rem', color: nameMissing ? '#92400e' : '#374151' }}>
+                    Reviewer name:
+                  </label>
+                  <input
+                    style={{ ...styles.input, flex: 1, minWidth: 180, margin: 0 }}
+                    placeholder={nameMissing ? 'Required — decisions log this name' : 'Your name'}
+                    value={judgeName}
+                    onChange={e => { setJudgeName(e.target.value); if (error) setError(null); }}
+                    autoFocus={nameMissing}
+                  />
+                  {nameMissing && (
+                    <span style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 600 }}>
+                      Enter a name to enable buttons + keyboard shortcuts.
+                    </span>
+                  )}
+                </div>
+
+                {/* Keyboard hint */}
+                {!nameMissing && (
+                  <div style={{ fontSize: '0.78rem', color: '#6b7280', marginBottom: '0.5rem' }}>
+                    Shortcuts: ← accept Pass 1 · → accept Pass 2 · ↓ needs physical review · [ prev · ] next · ↑ next
+                  </div>
+                )}
+
                 {/* Summary Stats */}
                 <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
                   {[
