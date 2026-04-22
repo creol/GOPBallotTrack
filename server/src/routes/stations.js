@@ -5,7 +5,7 @@ const multer = require('multer');
 const archiver = require('archiver');
 const db = require('../db');
 const { processBallot, recordScanUpload } = require('../services/scanProcessingService');
-const { requireAuth, requireStationToken } = require('../middleware/auth');
+const { requireAuth, requireStationToken, requireAuthOrStationToken } = require('../middleware/auth');
 
 const { APP_VERSION } = require('../version');
 
@@ -98,8 +98,9 @@ router.get('/stations/download-node', (req, res) => {
 });
 
 // GET /api/stations/download-bundle — Single ZIP with node.exe + agent + node_modules + config
-// Admin-only — the bundled config.json contains the STATION_TOKEN.
-router.get('/stations/download-bundle', requireAuth, (req, res) => {
+// Callable by admins (for distribution) and by the station-install.bat running on a station
+// machine (which carries the STATION_TOKEN from the admin-downloaded installer).
+router.get('/stations/download-bundle', requireAuthOrStationToken, (req, res) => {
   const stationId = req.query.stationId || 'station-1';
   const serverUrl = `${req.protocol}://${req.get('host')}`;
   const agentDir = path.join(__dirname, '..', '..', '..', 'agent');

@@ -63,6 +63,27 @@ function getSession(req) {
 }
 
 /**
+ * Middleware: accept EITHER an admin session OR a valid X-Station-Token header.
+ * Used on endpoints that both humans (admins pulling the bundle for distribution) and
+ * machines (a running .bat installer on a station laptop) need to hit.
+ */
+function requireAuthOrStationToken(req, res, next) {
+  const session = getSession(req);
+  if (session) {
+    req.session = session;
+    return next();
+  }
+  const expected = process.env.STATION_TOKEN;
+  const provided = req.headers['x-station-token'];
+  if (expected && provided) {
+    const a = Buffer.from(String(provided));
+    const b = Buffer.from(String(expected));
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+  }
+  return res.status(401).json({ error: 'Authentication or station token required' });
+}
+
+/**
  * Middleware: validate the X-Station-Token header against the STATION_TOKEN env var
  * (timing-safe). Used to gate all state-changing station agent endpoints so anyone on
  * the LAN who isn't provisioned can't spoof heartbeats, assignments, or ballot uploads.
@@ -153,4 +174,4 @@ async function verifyPin(userId, pin) {
   return user.pin_hash === hashPin(pin);
 }
 
-module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireRaceAccess, requireStationToken, sessions };
+module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireRaceAccess, requireStationToken, requireAuthOrStationToken, sessions };
