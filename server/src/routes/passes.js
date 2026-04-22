@@ -251,6 +251,26 @@ router.get('/rounds/:id/passes', async (req, res) => {
   }
 });
 
+// GET /api/rounds/:id/reconciliation-counts — Images needing reconciliation, by station.
+// Unresolved = reviewed_ballots.outcome IS NULL. Grouped by the originating station.
+router.get('/rounds/:id/reconciliation-counts', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows } = await db.query(
+      `SELECT COALESCE(station_id, 'unknown') AS station_id, COUNT(*)::int AS pending
+       FROM reviewed_ballots
+       WHERE round_id = $1 AND outcome IS NULL
+       GROUP BY COALESCE(station_id, 'unknown')
+       ORDER BY station_id`,
+      [roundId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Reconciliation counts error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/rounds/:id/station-counts — Per-station, per-pass upload counts.
 // Counts every image the agent uploaded regardless of classification.
 router.get('/rounds/:id/station-counts', async (req, res) => {

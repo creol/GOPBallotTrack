@@ -189,16 +189,19 @@ function PassManager({ roundId, onUpdate }) {
   const isSuperAdmin = auth?.role === 'super_admin';
   const [passes, setPasses] = useState([]);
   const [stationCounts, setStationCounts] = useState([]);
+  const [reconcileCounts, setReconcileCounts] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const fetchPasses = async () => {
     try {
-      const [passesRes, countsRes] = await Promise.all([
+      const [passesRes, countsRes, reconRes] = await Promise.all([
         api.get(`/rounds/${roundId}/passes`),
         api.get(`/rounds/${roundId}/station-counts`),
+        api.get(`/rounds/${roundId}/reconciliation-counts`),
       ]);
       setPasses(Array.isArray(passesRes.data) ? passesRes.data : []);
       setStationCounts(Array.isArray(countsRes.data) ? countsRes.data : []);
+      setReconcileCounts(Array.isArray(reconRes.data) ? reconRes.data : []);
     } catch {}
   };
 
@@ -355,23 +358,29 @@ function PassManager({ roundId, onUpdate }) {
         <p style={styles.muted}>Waiting for Super Admin to start a pass.</p>
       )}
 
-      <StationCountsTable passes={passes} stationCounts={stationCounts} />
+      <StationCountsTable passes={passes} stationCounts={stationCounts} reconcileCounts={reconcileCounts} />
     </div>
   );
 }
 
 // Per-station × per-pass upload breakdown. Rows are stations, columns are passes,
 // cells show total uploads (any outcome). "Unassigned" groups rows whose upload
-// couldn't be bucketed into a pass (e.g. agent uploaded before a pass existed).
-function StationCountsTable({ passes, stationCounts }) {
-  if (!stationCounts || stationCounts.length === 0) return null;
+// couldn't be bucketed into a pass. The "Needs Review" column shows unresolved
+// reviewed_ballots from that station (outcome IS NULL).
+function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
+  const reconMap = new Map((reconcileCounts || []).map(r => [r.station_id, r.pending || 0]));
+
+  // Include stations that only show up in reconciliation (e.g. all their uploads failed QR).
+  const stationIdSet = new Set((stationCounts || []).map(r => r.station_id));
+  reconMap.forEach((_, sid) => stationIdSet.add(sid));
+  if (stationIdSet.size === 0) return null;
 
   const nonDeletedPasses = passes.filter(p => p.status !== 'deleted');
   const passColumns = nonDeletedPasses.map(p => ({ id: p.id, label: `Pass ${p.pass_number}` }));
   const hasUnbucketed = stationCounts.some(r => r.pass_id == null);
   if (hasUnbucketed) passColumns.push({ id: null, label: 'Unassigned' });
 
-  const stationIds = Array.from(new Set(stationCounts.map(r => r.station_id))).sort();
+  const stationIds = Array.from(stationIdSet).sort();
   const lookup = new Map();
   stationCounts.forEach(r => { lookup.set(`${r.station_id}|${r.pass_id ?? 'null'}`, r.uploads || 0); });
 
@@ -380,6 +389,7 @@ function StationCountsTable({ passes, stationCounts }) {
   const rowTotal = (station) =>
     stationCounts.filter(r => r.station_id === station).reduce((s, r) => s + (r.uploads || 0), 0);
   const grandTotal = stationCounts.reduce((s, r) => s + (r.uploads || 0), 0);
+  const reconTotal = Array.from(reconMap.values()).reduce((s, n) => s + n, 0);
 
   const th = { textAlign: 'left', padding: '0.5rem 0.75rem', background: '#f9fafb', fontSize: '0.82rem', borderBottom: '1px solid #e5e7eb', fontWeight: 700 };
   const td = { padding: '0.4rem 0.75rem', fontSize: '0.88rem', borderBottom: '1px solid #f3f4f6' };
@@ -397,24 +407,39 @@ function StationCountsTable({ passes, stationCounts }) {
                 <th key={c.id ?? 'null'} style={{ ...th, textAlign: 'right' }}>{c.label}</th>
               ))}
               <th style={{ ...th, textAlign: 'right' }}>Total</th>
+              <th style={{ ...th, textAlign: 'right' }} title="Unresolved reviewed ballots">Needs Review</th>
             </tr>
           </thead>
           <tbody>
-            {stationIds.map(sid => (
-              <tr key={sid}>
-                <td style={{ ...td, fontFamily: 'monospace' }}>{sid}</td>
-                {passColumns.map(c => (
-                  <td key={c.id ?? 'null'} style={numeric}>{lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}</td>
-                ))}
-                <td style={{ ...numeric, fontWeight: 700 }}>{rowTotal(sid)}</td>
-              </tr>
-            ))}
+            {stationIds.map(sid => {
+              const pending = reconMap.get(sid) || 0;
+              return (
+                <tr key={sid}>
+                  <td style={{ ...td, fontFamily: 'monospace' }}>{sid}</td>
+                  {passColumns.map(c => (
+                    <td key={c.id ?? 'null'} style={numeric}>{lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}</td>
+                  ))}
+                  <td style={{ ...numeric, fontWeight: 700 }}>{rowTotal(sid)}</td>
+                  <td style={{
+                    ...numeric,
+                    fontWeight: 700,
+                    color: pending > 0 ? '#b45309' : '#6b7280',
+                    background: pending > 0 ? '#fef3c7' : undefined,
+                  }}>{pending}</td>
+                </tr>
+              );
+            })}
             <tr>
               <td style={{ ...td, fontWeight: 700, background: '#f9fafb' }}>Total</td>
               {passColumns.map(c => (
                 <td key={c.id ?? 'null'} style={{ ...numeric, fontWeight: 700, background: '#f9fafb' }}>{colTotal(c.id ?? null)}</td>
               ))}
               <td style={{ ...numeric, fontWeight: 700, background: '#dbeafe', color: '#1e40af' }}>{grandTotal}</td>
+              <td style={{
+                ...numeric, fontWeight: 700,
+                color: reconTotal > 0 ? '#b45309' : '#6b7280',
+                background: reconTotal > 0 ? '#fef3c7' : '#f9fafb',
+              }}>{reconTotal}</td>
             </tr>
           </tbody>
         </table>

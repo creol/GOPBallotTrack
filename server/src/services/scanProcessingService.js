@@ -118,9 +118,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
       try {
         const pass = await getOrCreateActivePass(assignedRoundId);
         await db.query(
-          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, flag_reason, image_path, notes)
-           VALUES ($1, $2, $3, 'qr_not_found', $4, $5)`,
-          [assignedRoundId, pass.id, scannerId || null, savedPath,
+          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, station_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, $4, 'qr_not_found', $5, $6)`,
+          [assignedRoundId, pass.id, scannerId || null, source, savedPath,
            `QR code could not be decoded. Source: ${source}. Original file: ${filePath ? path.basename(filePath) : 'upload'}`]
         );
         log(`QR not found — image saved for review: ${savedName}`);
@@ -148,9 +148,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
       try {
         const pass = await getOrCreateActivePass(assignedRoundId);
         await db.query(
-          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, flag_reason, image_path, notes)
-           VALUES ($1, $2, $3, 'invalid_qr', $4, $5)`,
-          [assignedRoundId, pass.id, scannerId || null, savedPath,
+          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, station_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, $4, 'invalid_qr', $5, $6)`,
+          [assignedRoundId, pass.id, scannerId || null, source, savedPath,
            `Invalid QR data: ${qrResult.qrData}. Source: ${source}`]
         );
       } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
@@ -192,9 +192,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
         try {
           const pass = await getOrCreateActivePass(assignedRoundId);
           await db.query(
-            `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, notes)
-             VALUES ($1, $2, $3, $4, 'wrong_station', $5, $6)`,
-            [assignedRoundId, pass.id, wrong.id, scannerId || null, savedPath,
+            `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, station_id, flag_reason, image_path, notes)
+             VALUES ($1, $2, $3, $4, $5, 'wrong_station', $6, $7)`,
+            [assignedRoundId, pass.id, wrong.id, scannerId || null, source, savedPath,
              `Belongs to ${wrong.race_name} Round ${wrong.round_number}. Source: ${source}`]
           );
         } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
@@ -237,9 +237,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
           : 'Serial not found in assigned round';
 
         await db.query(
-          `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, notes)
-           VALUES ($1, $2, $3, $4, 'wrong_round', $5, $6)`,
-          [assignedRoundId, pass.id, anyBallot.id, scannerId || null, savedPath, noteText]
+          `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, station_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, $4, $5, 'wrong_round', $6, $7)`,
+          [assignedRoundId, pass.id, anyBallot.id, scannerId || null, source, savedPath, noteText]
         );
 
         // If same race, also create a scan record so ballot is visible in confirmation/comparison
@@ -284,9 +284,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
       try {
         const pass = await getOrCreateActivePass(assignedRoundId);
         await db.query(
-          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, flag_reason, image_path, notes)
-           VALUES ($1, $2, $3, 'unknown_sn', $4, $5)`,
-          [assignedRoundId, pass.id, scannerId || null, savedPath,
+          `INSERT INTO reviewed_ballots (round_id, pass_id, scanner_id, station_id, flag_reason, image_path, notes)
+           VALUES ($1, $2, $3, $4, 'unknown_sn', $5, $6)`,
+          [assignedRoundId, pass.id, scannerId || null, source, savedPath,
            `Unrecognized serial number: ${serialNumber}. Source: ${source}`]
         );
       } catch (dbErr) { console.error('[Scan] Failed to create review record:', dbErr.message); }
@@ -346,9 +346,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   if (!ballotSpec) {
     const savedPath = saveImageForReview(buffer, `nospec-${serialNumber}`, filePath);
     await db.query(
-      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path)
-       VALUES ($1, $2, $3, $4, 'no_spec', $5)`,
-      [roundId, pass.id, ballotInfo.id, scannerId || null, savedPath]
+      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, station_id, flag_reason, image_path)
+       VALUES ($1, $2, $3, $4, $5, 'no_spec', $6)`,
+      [roundId, pass.id, ballotInfo.id, scannerId || null, source, savedPath]
     );
     log(`NO SPEC SN=${serialNumber} — ballot spec not found`, 'warn');
     if (io) io.emit('scan:review_needed', { serial_number: serialNumber, reason: 'no_spec', station: source });
@@ -372,9 +372,9 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     fs.writeFileSync(flaggedPath, buffer);
 
     await db.query(
-      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, flag_reason, image_path, omr_scores)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [roundId, pass.id, ballotInfo.id, scannerId || null, omrResult.flag_reason, flaggedPath,
+      `INSERT INTO reviewed_ballots (round_id, pass_id, original_serial_id, scanner_id, station_id, flag_reason, image_path, omr_scores)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [roundId, pass.id, ballotInfo.id, scannerId || null, source, omrResult.flag_reason, flaggedPath,
        JSON.stringify(omrResult.candidates)]
     );
 
