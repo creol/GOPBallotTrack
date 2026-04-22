@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.156';
+const AGENT_VERSION = '0.157';
 
 const chokidar = require('chokidar');
 const axios = require('axios');

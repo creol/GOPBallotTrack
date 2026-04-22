@@ -21,6 +21,7 @@ if %errorlevel% neq 0 (
 :: ============================================
 set "SERVER_URL=__SERVER_URL__"
 set "STATION_ID=__STATION_ID__"
+set "STATION_TOKEN=__STATION_TOKEN__"
 
 set "INSTALL_DIR=C:\BallotTrack-Agent"
 set "WATCH_FOLDER=C:\ScanSnap\Output"
@@ -81,7 +82,7 @@ mkdir "%INSTALL_DIR%" 2>nul
 :: Download the agent bundle (single ZIP: node.exe + agent files + node_modules + config)
 echo   Downloading station agent bundle...
 echo   (this may take 15-30 seconds)
-powershell -ExecutionPolicy Bypass -Command "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest '%SERVER_URL%/api/stations/download-bundle?stationId=%STATION_ID%' -OutFile '%INSTALL_DIR%\bundle.zip' -UseBasicParsing"
+powershell -ExecutionPolicy Bypass -Command "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest '%SERVER_URL%/api/stations/download-bundle?stationId=%STATION_ID%' -Headers @{'X-Station-Token' = '%STATION_TOKEN%'} -OutFile '%INSTALL_DIR%\bundle.zip' -UseBasicParsing"
 
 if not exist "%INSTALL_DIR%\bundle.zip" (
     echo   [ERROR] Failed to download agent bundle from server.
