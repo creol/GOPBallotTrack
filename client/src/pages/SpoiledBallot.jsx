@@ -1,6 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Html5Qrcode } from 'html5-qrcode';
 import api from '../api/client';
 import AppHeader from '../components/AppHeader';
 
@@ -13,41 +12,10 @@ export default function SpoiledBallot() {
   const [image, setImage] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const html5QrRef = useRef(null);
 
   useEffect(() => {
     api.get(`/rounds/${roundId}/detail`).then(({ data }) => setRound(data));
-    return () => { stopScanner(); };
   }, [roundId]);
-
-  const startScanner = async () => {
-    try {
-      const scanner = new Html5Qrcode('spoiled-qr-reader');
-      html5QrRef.current = scanner;
-      setScanning(true);
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 200, height: 200 } },
-        (decodedText) => {
-          const sn = decodedText.trim().toUpperCase();
-          if (sn.length >= 8) setSerialNumber(sn);
-          stopScanner();
-        },
-        () => {}
-      );
-    } catch (err) {
-      setFeedback({ type: 'error', message: 'Could not start camera' });
-    }
-  };
-
-  const stopScanner = async () => {
-    if (html5QrRef.current) {
-      try { await html5QrRef.current.stop(); } catch {}
-      html5QrRef.current = null;
-      setScanning(false);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -118,20 +86,14 @@ export default function SpoiledBallot() {
         {/* Serial Number */}
         <div style={styles.formGroup}>
           <label style={styles.label}>Serial Number</label>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <input
-              style={{ ...styles.input, flex: 1, fontFamily: 'monospace', textTransform: 'uppercase' }}
-              placeholder="Enter or scan SN"
-              value={serialNumber}
-              onChange={e => setSerialNumber(e.target.value.toUpperCase())}
-              minLength={8}
-              required
-            />
-            <button type="button" style={styles.btnSmall} onClick={scanning ? stopScanner : startScanner}>
-              {scanning ? 'Stop' : 'Scan QR'}
-            </button>
-          </div>
-          <div id="spoiled-qr-reader" style={{ width: '100%', maxWidth: 280, marginTop: scanning ? '0.5rem' : 0 }} />
+          <input
+            style={{ ...styles.input, fontFamily: 'monospace', textTransform: 'uppercase' }}
+            placeholder="Enter SN"
+            value={serialNumber}
+            onChange={e => setSerialNumber(e.target.value.toUpperCase())}
+            minLength={8}
+            required
+          />
         </div>
 
         {/* Camera capture for jammed ballots */}
@@ -175,7 +137,6 @@ const styles = {
   radioGroup: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   radioLabel: { display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' },
   feedback: { padding: '0.75rem', borderRadius: 6, marginBottom: '0.75rem', fontWeight: 600, textAlign: 'center' },
-  btnSmall: { padding: '0.4rem 0.8rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' },
   btnDanger: { padding: '0.75rem', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '1rem', fontWeight: 600 },
   muted: { color: '#666', fontSize: '0.9rem' },
 };
