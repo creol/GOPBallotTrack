@@ -30,34 +30,36 @@ export default function Scanner() {
       console.error('Failed to fetch round data:', err);
     }
 
+    let displayedPassId = null;
     try {
       const { data: passData } = await api.get(`/rounds/${roundId}/passes`);
       const passList = Array.isArray(passData) ? passData : [];
       setPasses(passList);
       const active = passList.find(p => p.status === 'active');
       setActivePass(active || null);
+      // The pills always reflect the current pass. A freshly started pass has
+      // no scan_uploads rows yet, so driving displayedPassId from the passes
+      // list (not the counts payload) is what makes counts reset on new pass.
+      displayedPassId = active
+        ? active.id
+        : (passList.length > 0 ? passList[passList.length - 1].id : null);
     } catch (err) {
       console.error('Failed to fetch passes:', err);
     }
 
-    // Station-scoped upload counts — "anything the agent uploaded" regardless of outcome.
-    // Bucket by the displayed pass (active if any, else latest) for the Total/Local pills.
     try {
       const { data: counts } = await api.get(`/rounds/${roundId}/station-counts`);
       const rows = Array.isArray(counts) ? counts : [];
-      const displayedPass = rows.reduce((acc, r) => {
-        if (r.pass_status === 'active') return r.pass_id;
-        if (acc == null) return r.pass_id;
-        return acc;
-      }, null);
       const stationId = sessionStorage.getItem('stationId');
       let total = 0;
       let local = 0;
-      rows.forEach(r => {
-        if (r.pass_id !== displayedPass) return;
-        total += r.uploads || 0;
-        if (stationId && r.station_id === stationId) local += r.uploads || 0;
-      });
+      if (displayedPassId != null) {
+        rows.forEach(r => {
+          if (r.pass_id !== displayedPassId) return;
+          total += r.uploads || 0;
+          if (stationId && r.station_id === stationId) local += r.uploads || 0;
+        });
+      }
       setTotalUploads(total);
       setLocalUploads(local);
     } catch (err) {
