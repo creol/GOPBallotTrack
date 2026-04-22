@@ -129,7 +129,6 @@ export default function RoundDetail() {
   const totalVotes = hasResults ? round.results.reduce((s, r) => s + r.vote_count, 0) : 0;
 
   // Primary state action — one button that captures "what to do next" in the current phase.
-  // Shown both in the Round Controls section and as the sticky mobile action bar.
   const primaryAction = (() => {
     if (status === 'ready') return { label: 'Open Voting', style: styles.btnSuccess, onClick: () => postAction(`/admin/control-center/round/${roundId}/open-voting`) };
     if (status === 'voting_open') return { label: 'Close Voting', style: styles.btnWarning, onClick: () => postAction(`/admin/control-center/round/${roundId}/close-voting`) };
@@ -144,6 +143,43 @@ export default function RoundDetail() {
     };
     return null;
   })();
+
+  // Revert action — lets admin step back one lifecycle state if they moved too early.
+  // PIN-gated because reverting is a real state change that affects other parts of the app
+  // (e.g. tallying → voting_closed hides in-progress scans from the Confirmation view).
+  const revertAction = (() => {
+    if (status === 'voting_open') return {
+      label: 'Back to Ready',
+      url: `/admin/control-center/round/${roundId}/revert-to-ready`,
+      description: 'Return this round to Ready. Voting has not produced any data yet — this just reopens the configuration step.',
+    };
+    if (status === 'voting_closed') return {
+      label: 'Reopen Voting',
+      url: `/admin/control-center/round/${roundId}/revert-to-voting-open`,
+      description: 'Return this round to Voting Open so polls can continue accepting votes.',
+    };
+    if (status === 'tallying') return {
+      label: 'Back to Voting Closed',
+      url: `/admin/control-center/round/${roundId}/revert-to-voting-closed`,
+      description: 'Step back to Voting Closed. Any scans already collected remain attached to their passes, but the Scanning section will lock again until tallying is reopened.',
+    };
+    return null;
+  })();
+
+  const openRevert = () => {
+    if (!revertAction) return;
+    setPinModal({
+      title: revertAction.label,
+      description: revertAction.description,
+      confirmLabel: revertAction.label,
+      confirmStyle: 'normal',
+      requireNotes: false,
+      onConfirm: async () => {
+        setPinModal(null);
+        await postAction(revertAction.url);
+      },
+    });
+  };
 
   const openRecount = () => setPinModal({
     title: `Issue Recount — Round ${round.round_number}`,
@@ -219,16 +255,28 @@ export default function RoundDetail() {
           <h2 style={styles.sectionTitle}>Round Controls</h2>
         </div>
 
-        {primaryAction && (
-          <button
-            data-primary-in-page
-            style={{ ...primaryAction.style, opacity: actionBusy ? 0.6 : 1 }}
-            onClick={primaryAction.onClick}
-            disabled={!!actionBusy}
-          >
-            {primaryAction.label}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {primaryAction && (
+            <button
+              data-primary-in-page
+              style={{ ...primaryAction.style, opacity: actionBusy ? 0.6 : 1 }}
+              onClick={primaryAction.onClick}
+              disabled={!!actionBusy}
+            >
+              {primaryAction.label}
+            </button>
+          )}
+          {revertAction && (
+            <button
+              style={{ ...styles.btnGhost, opacity: actionBusy ? 0.6 : 1 }}
+              onClick={openRevert}
+              disabled={!!actionBusy}
+              title={revertAction.description}
+            >
+              ← {revertAction.label}
+            </button>
+          )}
+        </div>
 
         {status === 'round_finalized' && isPublished && (
           <p style={styles.infoLine}>

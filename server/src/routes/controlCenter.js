@@ -177,6 +177,67 @@ router.post('/round/:id/open-tallying', async (req, res) => {
   }
 });
 
+// ─── Revert endpoints — step backwards one lifecycle state ────────────────
+// These let an admin undo a premature transition. Data is preserved; only the
+// round's status flips backwards. No CHECK-constraint errors, no data loss.
+
+// POST /api/admin/control-center/round/:id/revert-to-ready — voting_open → ready
+router.post('/round/:id/revert-to-ready', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (round.status !== 'voting_open') {
+      return res.status(400).json({ error: `Only a round in 'voting_open' can revert to ready (current: ${round.status})` });
+    }
+    await transitionStatus('round', roundId, 'ready', req.session?.name);
+    const io = req.app.get('io');
+    if (io) io.emit('status:changed', { type: 'round', id: roundId, status: 'ready', race_id: round.race_id });
+    res.json({ message: 'Reverted to ready', round_id: roundId });
+  } catch (err) {
+    console.error('Revert to ready error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/admin/control-center/round/:id/revert-to-voting-open — voting_closed → voting_open
+router.post('/round/:id/revert-to-voting-open', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (round.status !== 'voting_closed') {
+      return res.status(400).json({ error: `Only a round in 'voting_closed' can revert to voting_open (current: ${round.status})` });
+    }
+    await transitionStatus('round', roundId, 'voting_open', req.session?.name);
+    const io = req.app.get('io');
+    if (io) io.emit('status:changed', { type: 'round', id: roundId, status: 'voting_open', race_id: round.race_id });
+    res.json({ message: 'Reverted to voting open', round_id: roundId });
+  } catch (err) {
+    console.error('Revert to voting-open error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/admin/control-center/round/:id/revert-to-voting-closed — tallying → voting_closed
+router.post('/round/:id/revert-to-voting-closed', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (round.status !== 'tallying') {
+      return res.status(400).json({ error: `Only a round in 'tallying' can revert to voting_closed (current: ${round.status})` });
+    }
+    await transitionStatus('round', roundId, 'voting_closed', req.session?.name);
+    const io = req.app.get('io');
+    if (io) io.emit('status:changed', { type: 'round', id: roundId, status: 'voting_closed', race_id: round.race_id });
+    res.json({ message: 'Reverted to voting closed', round_id: roundId });
+  } catch (err) {
+    console.error('Revert to voting-closed error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/admin/control-center/round/:id/publish — Publish results to dashboard
 router.post('/round/:id/publish', async (req, res) => {
   try {

@@ -108,30 +108,34 @@ router.put('/passes/:id/complete', requireSuperAdminForPass, async (req, res) =>
 // Resets ballot serials to 'unused' so the pass can be rescanned.
 // Blocked if round or race is finalized (must reverse finalization first).
 router.delete('/passes/:id', requireSuperAdminForPass, async (req, res) => {
+  const client = await db.pool.connect();
   try {
-    const { rows: [pass] } = await db.query('SELECT * FROM passes WHERE id = $1', [req.params.id]);
+    const { rows: [pass] } = await client.query('SELECT * FROM passes WHERE id = $1', [req.params.id]);
     if (!pass) return res.status(404).json({ error: 'Pass not found' });
 
     // Check round is not finalized or canceled
-    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [pass.round_id]);
+    const { rows: [round] } = await client.query('SELECT * FROM rounds WHERE id = $1', [pass.round_id]);
     if (['round_finalized', 'canceled'].includes(round.status)) {
       return res.status(400).json({ error: 'Cannot delete pass — round is finalized or canceled. Reverse finalization first.' });
     }
 
     // Check race is not finalized
-    const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
+    const { rows: [race] } = await client.query('SELECT * FROM races WHERE id = $1', [round.race_id]);
     if (race.status === 'results_finalized') {
       return res.status(400).json({ error: 'Cannot delete pass — race is finalized. Reverse race finalization first.' });
     }
 
-    // Double-verify: require PIN confirmation
+    // Require PIN confirmation — accept any super admin's PIN, not just the session user's.
     const { deleted_reason, confirm_pin } = req.body || {};
     if (!confirm_pin) {
       return res.status(400).json({ error: 'PIN confirmation required to delete a pass (confirm_pin)' });
     }
-    const { verifyPin } = require('../middleware/auth');
-    const pinValid = await verifyPin(req.session.user_id, confirm_pin);
-    if (!pinValid) {
+    const { hashPin } = require('../middleware/auth');
+    const { rows: pinMatch } = await client.query(
+      "SELECT id FROM admin_users WHERE role = 'super_admin' AND pin_hash = $1 LIMIT 1",
+      [hashPin(confirm_pin)]
+    );
+    if (pinMatch.length === 0) {
       return res.status(403).json({ error: 'PIN verification failed' });
     }
 
@@ -139,50 +143,53 @@ router.delete('/passes/:id', requireSuperAdminForPass, async (req, res) => {
       return res.status(400).json({ error: 'A reason is required when deleting a pass' });
     }
 
-    // Get all ballot_serial_ids from scans in this pass to reset them
-    const { rows: scannedSerials } = await db.query(
+    // Transaction: either the pass is fully deleted (with serials reset + audit row) or nothing changes.
+    await client.query('BEGIN');
+
+    const { rows: scannedSerials } = await client.query(
       'SELECT DISTINCT ballot_serial_id FROM scans WHERE pass_id = $1',
       [req.params.id]
     );
 
-    // Soft-delete the pass
-    await db.query(
+    await client.query(
       `UPDATE passes SET status = 'deleted', deleted_reason = $1 WHERE id = $2`,
       [deleted_reason, req.params.id]
     );
 
-    // Delete associated scans
-    await db.query('DELETE FROM scans WHERE pass_id = $1', [req.params.id]);
+    await client.query('DELETE FROM scans WHERE pass_id = $1', [req.params.id]);
 
-    // Reset ballot serials back to 'unused' if they aren't scanned in another active pass
     for (const { ballot_serial_id } of scannedSerials) {
-      const { rows: [otherScan] } = await db.query(
+      const { rows: [otherScan] } = await client.query(
         `SELECT s.id FROM scans s JOIN passes p ON p.id = s.pass_id
          WHERE s.ballot_serial_id = $1 AND p.status != 'deleted' LIMIT 1`,
         [ballot_serial_id]
       );
       if (!otherScan) {
-        await db.query(
+        await client.query(
           "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'counted'",
           [ballot_serial_id]
         );
       }
     }
 
-    // Record audit entry in status_transitions for the PDF
-    await db.query(
+    await client.query(
       `INSERT INTO status_transitions (entity_type, entity_id, from_status, to_status, changed_by)
        VALUES ('pass_deleted', $1, 'active', 'deleted', $2)`,
-      [pass.id, `${req.session.name}: ${deleted_reason}`]
+      [pass.id, `${req.session?.name || 'admin'}: ${deleted_reason}`]
     );
+
+    await client.query('COMMIT');
 
     const io = req.app.get('io');
     if (io) io.emit('pass:deleted', { pass_id: pass.id, round_id: pass.round_id });
 
     res.json({ message: `Pass ${pass.pass_number} deleted — ${scannedSerials.length} ballot serials reset to unused` });
   } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
     console.error('Delete pass error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
