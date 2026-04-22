@@ -133,7 +133,7 @@ export default function ChairDecision() {
     try {
       if (action === 'next_round') {
         await handleApplyDecisions();
-        // Finalize the round so it can be published in Control Center
+        // Finalize the round so it can be published from the Round page
         await api.post(`/admin/rounds/${roundId}/confirm`, { confirmed_by_name: actionPin ? 'admin' : 'admin' });
         setShowAction(null);
         setActionPin('');
@@ -314,7 +314,7 @@ export default function ChairDecision() {
                 {showAction === 'cancel' && 'Cancel Race'}
               </h3>
               <p style={{ color: '#4b5563', margin: '0 0 1rem', fontSize: '0.9rem' }}>
-                {showAction === 'next_round' && 'This will save candidate decisions, finalize this round, and return to the race page. The round will be available for publishing in the Control Center.'}
+                {showAction === 'next_round' && 'This will save candidate decisions, finalize this round, and return to the race page. The round will be available for publishing from the Round page.'}
                 {showAction === 'finalize' && 'This will apply all candidate decisions and close the race. This cannot be undone.'}
                 {showAction === 'cancel' && 'This will cancel the race. A reason is required. This cannot be undone.'}
               </p>

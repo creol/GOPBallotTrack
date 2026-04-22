@@ -43,7 +43,7 @@ export default function DashboardPreview({ electionName, raceName, roundNumber, 
       })}
 
       <p style={s.footer}>{totalVotes} ballots counted</p>
-      <p style={s.note}>Publishing to the public dashboard is done in the Control Center.</p>
+      <p style={s.note}>Publishing to the public dashboard is done from the Round page.</p>
     </div>
   );
 }

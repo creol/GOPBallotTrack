@@ -179,7 +179,7 @@ export default function StationSetup() {
               <div style={s.emptyState}>
                 <p style={{ margin: 0, fontWeight: 500 }}>No rounds are open for scanning yet.</p>
                 <p style={s.hint}>
-                  Rounds will appear here automatically when opened in the Control Center.
+                  Rounds will appear here automatically when Voting is opened on the Round page.
                 </p>
               </div>
             ) : (

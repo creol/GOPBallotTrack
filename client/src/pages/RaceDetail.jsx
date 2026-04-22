@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
+import SuperAdminPinModal from '../components/SuperAdminPinModal';
+import { useAuth } from '../context/AuthContext';
 import { toInputDate, formatDate, formatTime12 } from '../utils/dateFormat';
 
 const NAV_ITEMS = [
@@ -11,8 +13,13 @@ const NAV_ITEMS = [
 
 export default function RaceDetail() {
   const { id: electionId, raceId } = useParams();
+  const { auth } = useAuth();
+  const isSuperAdmin = auth?.role === 'super_admin';
   const [electionName, setElectionName] = useState('');
   const [race, setRace] = useState(null);
+  const [raceActionBusy, setRaceActionBusy] = useState(false);
+  const [racePinModal, setRacePinModal] = useState(null);
+  const [raceActionError, setRaceActionError] = useState(null);
   const [candidates, setCandidates] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [candidateName, setCandidateName] = useState('');
@@ -139,10 +146,60 @@ export default function RaceDetail() {
     });
   };
 
+  const openFinalizeRace = () => setRacePinModal({
+    title: `Finalize Race — ${race?.name || ''}`,
+    description: 'This marks the race as finalized and cancels any remaining pending/ready rounds. No more rounds can be added. Requires Super Admin approval.',
+    confirmLabel: 'Finalize Race',
+    confirmStyle: 'danger',
+    requireNotes: false,
+    onConfirm: async () => {
+      setRacePinModal(null);
+      setRaceActionBusy(true);
+      setRaceActionError(null);
+      try {
+        await api.post(`/admin/control-center/race/${raceId}/finalize`);
+        await fetchAll();
+      } catch (err) {
+        setRaceActionError(err.response?.data?.error || 'Finalize failed');
+      } finally {
+        setRaceActionBusy(false);
+      }
+    },
+  });
+
+  const openReverseFinalizeRace = () => setRacePinModal({
+    title: `Reverse Race Finalization — ${race?.name || ''}`,
+    description: 'This re-opens the race, clears its outcome, and restores any canceled rounds to Ready. Any unpublished rounds remain in their previous state.',
+    confirmLabel: 'Reverse Finalization',
+    confirmStyle: 'danger',
+    requireNotes: true,
+    notesLabel: 'Reason for reversing race finalization',
+    onConfirm: async ({ notes }) => {
+      setRacePinModal(null);
+      setRaceActionBusy(true);
+      setRaceActionError(null);
+      try {
+        await api.post(`/admin/control-center/race/${raceId}/reverse-finalize`, { notes });
+        await fetchAll();
+      } catch (err) {
+        setRaceActionError(err.response?.data?.error || 'Reverse failed');
+      } finally {
+        setRaceActionBusy(false);
+      }
+    },
+  });
+
   if (!race) return <div style={styles.container}><p>Loading...</p></div>;
 
   const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', voting_open: '#3b82f6', voting_closed: '#8b5cf6', tallying: '#f59e0b', round_finalized: '#6366f1', canceled: '#6b7280' };
   const statusLabel = { ready: 'Ready', voting_open: 'Voting Open', voting_closed: 'Voting Closed', tallying: 'Tallying', round_finalized: 'Finalized', canceled: 'Canceled' };
+  const raceIsFinalized = race.status === 'results_finalized';
+  const raceStatusMeta = {
+    pending_needs_action: { bg: '#fef3c7', color: '#92400e', label: 'Needs Action' },
+    ready: { bg: '#dcfce7', color: '#166534', label: 'Ready' },
+    in_progress: { bg: '#dbeafe', color: '#1e40af', label: 'In Progress' },
+    results_finalized: { bg: '#f3e8ff', color: '#6b21a8', label: 'Finalized' },
+  }[race.status] || null;
 
   return (
     <ElectionLayout breadcrumbs={[
@@ -181,6 +238,54 @@ export default function RaceDetail() {
             )}
           </div>
           <button style={styles.btnSmall} onClick={() => setEditing(true)}>Edit</button>
+        </div>
+      )}
+
+      {/* Race Controls — Finalize / Reverse Finalization. Super admin only. */}
+      {isSuperAdmin && (
+        <div style={{
+          background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
+          padding: '0.85rem 1rem', marginBottom: '1rem',
+          display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600 }}>Race status:</span>
+            {raceStatusMeta ? (
+              <span style={{
+                ...styles.statusBadge,
+                background: raceStatusMeta.bg,
+                color: raceStatusMeta.color,
+                borderRadius: 12,
+              }}>{raceStatusMeta.label}</span>
+            ) : (
+              <span style={styles.muted}>{race.status || 'unknown'}</span>
+            )}
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {!raceIsFinalized && (
+              <button
+                style={{ ...styles.btnDanger, padding: '0.5rem 1rem', fontSize: '0.88rem', opacity: raceActionBusy ? 0.6 : 1 }}
+                onClick={openFinalizeRace}
+                disabled={raceActionBusy}
+              >
+                Finalize Race
+              </button>
+            )}
+            {raceIsFinalized && (
+              <button
+                style={{ ...styles.btnSmall, padding: '0.5rem 1rem', fontSize: '0.88rem', opacity: raceActionBusy ? 0.6 : 1 }}
+                onClick={openReverseFinalizeRace}
+                disabled={raceActionBusy}
+              >
+                Reverse Finalization
+              </button>
+            )}
+          </div>
+          {raceActionError && (
+            <div style={{ flexBasis: '100%', color: '#dc2626', fontSize: '0.85rem', fontWeight: 600 }}>
+              {raceActionError}
+            </div>
+          )}
         </div>
       )}
 
@@ -339,6 +444,19 @@ export default function RaceDetail() {
             </div>
           )}
       </div>
+
+      {/* Race-level PIN modal (Finalize / Reverse Finalization) */}
+      <SuperAdminPinModal
+        open={!!racePinModal}
+        title={racePinModal?.title}
+        description={racePinModal?.description}
+        confirmLabel={racePinModal?.confirmLabel}
+        confirmStyle={racePinModal?.confirmStyle}
+        requireNotes={racePinModal?.requireNotes}
+        notesLabel={racePinModal?.notesLabel}
+        onCancel={() => setRacePinModal(null)}
+        onConfirm={racePinModal?.onConfirm || (() => {})}
+      />
 
       {/* Withdraw Confirmation Modal */}
       {withdrawTarget && (

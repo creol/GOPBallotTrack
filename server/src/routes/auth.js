@@ -47,6 +47,26 @@ router.post('/login', async (req, res) => {
   });
 });
 
+// POST /api/auth/verify-super-admin-pin — Verify a PIN belongs to any super_admin.
+// Used by destructive admin actions (Recount, Void, Reverse Finalize, etc.) that require
+// super admin approval — any super admin's PIN is accepted, not just "the Admin".
+router.post('/verify-super-admin-pin', async (req, res) => {
+  const { pin } = req.body || {};
+  if (!pin) return res.status(400).json({ error: 'PIN is required' });
+  try {
+    const hashed = hashPin(pin);
+    const { rows } = await db.query(
+      "SELECT id, name FROM admin_users WHERE role = 'super_admin' AND pin_hash = $1 LIMIT 1",
+      [hashed]
+    );
+    if (rows.length === 0) return res.status(401).json({ error: 'Invalid super admin PIN' });
+    res.json({ ok: true, admin_id: rows[0].id, admin_name: rows[0].name });
+  } catch (err) {
+    console.error('verify-super-admin-pin error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/auth/change-pin — Change own PIN
 router.post('/change-pin', async (req, res) => {
   const session = getSession(req);

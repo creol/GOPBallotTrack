@@ -18,7 +18,6 @@ import PublicRoundDetail from './pages/PublicRoundDetail';
 import PublicBallotViewer from './pages/PublicBallotViewer';
 import PublicBrowseBallots from './pages/PublicBrowseBallots';
 import UserManagement from './pages/UserManagement';
-import ControlCenter from './pages/ControlCenter';
 import StationSetup from './pages/StationSetup';
 import ScanLogs from './pages/ScanLogs';
 
@@ -109,13 +108,6 @@ export default function App() {
         <Route path="/admin/users" element={
           <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
             <UserManagement />
-          </ProtectedRoute>
-        } />
-
-        {/* Control Center — super_admin only */}
-        <Route path="/admin/control-center" element={
-          <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
-            <ControlCenter />
           </ProtectedRoute>
         } />
 

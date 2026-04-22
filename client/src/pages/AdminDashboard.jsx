@@ -80,9 +80,6 @@ export default function AdminDashboard({ auth }) {
         <nav style={s.sidebar} data-admin-sidebar>
           {auth?.role === 'super_admin' && (
             <>
-              <Link to="/admin/control-center" style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
-                Control Center
-              </Link>
               <Link to="/admin/users" style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
                 Manage Users
               </Link>
@@ -108,10 +105,7 @@ export default function AdminDashboard({ auth }) {
         {/* Mobile nav — visible only on small screens */}
         <nav style={s.mobileNav} data-admin-mobilenav>
           {auth?.role === 'super_admin' && (
-            <>
-              <Link to="/admin/control-center" style={{ ...s.mobileTab, textDecoration: 'none' }}>Control Center</Link>
-              <Link to="/admin/users" style={{ ...s.mobileTab, textDecoration: 'none' }}>Users</Link>
-            </>
+            <Link to="/admin/users" style={{ ...s.mobileTab, textDecoration: 'none' }}>Users</Link>
           )}
           <Link to="/admin" style={{ ...s.mobileTab, ...(activeSection === 'events' ? s.mobileTabActive : {}), textDecoration: 'none' }}>Events</Link>
           <Link to="/admin?section=scanners" style={{ ...s.mobileTab, ...(activeSection === 'scanners' ? s.mobileTabActive : {}), textDecoration: 'none' }}>Scanners</Link>
