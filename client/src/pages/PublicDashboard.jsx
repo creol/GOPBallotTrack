@@ -48,10 +48,16 @@ export default function PublicDashboard() {
     const socket = io({ reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: Infinity });
     socket.on('round:released', () => fetchData());
     socket.on('status:changed', () => fetchData());
+    // Race reorder / visibility toggle / rename — refresh if it's for this election
+    socket.on('races:changed', (payload) => {
+      if (!payload || payload.election_id == null || String(payload.election_id) === String(electionId)) {
+        fetchData();
+      }
+    });
     socket.on('connect', () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
     return () => socket.disconnect();
-  }, [fetchData]);
+  }, [fetchData, electionId]);
 
   const handleSearch = async (e) => {
     e.preventDefault();

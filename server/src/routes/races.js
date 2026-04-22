@@ -97,6 +97,13 @@ router.put('/races/:id', async (req, res) => {
       values
     );
     if (!race) return res.status(404).json({ error: 'Race not found' });
+
+    // Any update that affects public dashboard rendering (name, visibility,
+    // withdrawn/outcome, etc.) should trigger a live refresh. Emitting on all
+    // updates is cheap and keeps TVs in sync without per-field bookkeeping.
+    const io = req.app.get('io');
+    if (io) io.emit('races:changed', { election_id: race.election_id, race_id: race.id, reason: 'updated' });
+
     res.json(race);
   } catch (err) {
     console.error('Update race error:', err);
@@ -192,6 +199,11 @@ router.put('/elections/:id/races/reorder', async (req, res) => {
       'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order',
       [req.params.id]
     );
+
+    // Notify live dashboards so they re-render in the new order without a manual refresh.
+    const io = req.app.get('io');
+    if (io) io.emit('races:changed', { election_id: parseInt(req.params.id), reason: 'reorder' });
+
     res.json(rows);
   } catch (err) {
     console.error('Reorder races error:', err);
