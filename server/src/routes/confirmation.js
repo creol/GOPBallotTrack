@@ -191,6 +191,77 @@ router.post('/rounds/:id/reconcile', async (req, res) => {
   }
 });
 
+// POST /api/rounds/:id/reconcile/undo — Reverse the most recent reconciliation for a ballot
+// If the decision was accept_pass and mutated a scan's candidate_id, restore it from vote_changes.
+router.post('/rounds/:id/reconcile/undo', async (req, res) => {
+  const client = await db.pool.connect();
+  try {
+    const roundId = parseInt(req.params.id);
+    const { ballot_serial_id, reviewed_by } = req.body;
+    if (!ballot_serial_id) return res.status(400).json({ error: 'ballot_serial_id is required' });
+    if (!reviewed_by) return res.status(400).json({ error: 'reviewed_by is required' });
+
+    await client.query('BEGIN');
+
+    // Latest reconciliation for this ballot
+    const { rows: [recon] } = await client.query(
+      `SELECT * FROM ballot_reconciliations
+       WHERE round_id = $1 AND ballot_serial_id = $2
+       ORDER BY created_at DESC LIMIT 1`,
+      [roundId, ballot_serial_id]
+    );
+    if (!recon) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'No reconciliation to undo for this ballot' });
+    }
+
+    // If the reconciliation rewrote a scan's candidate_id, roll that back from vote_changes.
+    if (recon.decision === 'accept_pass' && recon.accepted_pass_id) {
+      const { rows: [latestPass] } = await client.query(
+        "SELECT id FROM passes WHERE round_id = $1 AND status IN ('complete', 'active') ORDER BY pass_number DESC LIMIT 1",
+        [roundId]
+      );
+      if (latestPass) {
+        const { rows: [latestScan] } = await client.query(
+          'SELECT id FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2',
+          [latestPass.id, ballot_serial_id]
+        );
+        if (latestScan) {
+          const { rows: [change] } = await client.query(
+            `SELECT * FROM vote_changes
+             WHERE scan_id = $1 AND changed_at >= $2
+             ORDER BY changed_at DESC LIMIT 1`,
+            [latestScan.id, recon.created_at]
+          );
+          if (change) {
+            await client.query(
+              `UPDATE scans SET candidate_id = $1, omr_method = 'manual_correction' WHERE id = $2`,
+              [change.old_candidate_id, latestScan.id]
+            );
+            await client.query(
+              `INSERT INTO vote_changes (scan_id, old_candidate_id, new_candidate_id, changed_by, reason)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [latestScan.id, change.new_candidate_id, change.old_candidate_id, reviewed_by,
+               `Undo reconciliation (recon #${recon.id})`]
+            );
+          }
+        }
+      }
+    }
+
+    await client.query('DELETE FROM ballot_reconciliations WHERE id = $1', [recon.id]);
+    await client.query('COMMIT');
+
+    res.json({ message: 'Reconciliation undone', undone: recon });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('Undo reconcile error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/rounds/:id/reject-wrong-round — Bulk reject all wrong-round ballots
 router.post('/rounds/:id/reject-wrong-round', async (req, res) => {
   try {

@@ -57,7 +57,26 @@ export default function Confirmation() {
 
     const handler = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-      if (!ballot || ballot.reconciliation) return;
+      if (!ballot) return;
+
+      // Undo works on an already-reconciled ballot; other shortcuts need a not-yet-reconciled one.
+      if ((e.key === 'Backspace' || e.key === 'u' || e.key === 'U') && ballot.reconciliation) {
+        e.preventDefault();
+        handleUndoReconcile(ballot);
+        return;
+      }
+
+      if (ballot.reconciliation) {
+        // Navigation-only shortcuts still work on already-decided ballots.
+        if (e.key === '[' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          setReconIndex(prev => Math.max(0, prev - 1));
+        } else if (e.key === ']' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          setReconIndex(prev => Math.min(filtered.length - 1, prev + 1));
+        }
+        return;
+      }
 
       switch (e.key) {
         case 'ArrowLeft':
@@ -124,6 +143,25 @@ export default function Confirmation() {
       alert('Auto-reconcile failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setAutoReconciling(false);
+    }
+  };
+
+  const handleUndoReconcile = async (ballot) => {
+    if (!judgeName.trim()) { setError('Please enter your name first'); return; }
+    if (!ballot?.reconciliation) return;
+    if (!confirm(`Undo the ${ballot.reconciliation.decision.replace(/_/g, ' ')} decision for ${ballot.serial_number}?`)) return;
+    setReconSubmitting(true);
+    try {
+      await api.post(`/admin/rounds/${roundId}/reconcile/undo`, {
+        ballot_serial_id: ballot.ballot_serial_id,
+        reviewed_by: judgeName,
+      });
+      await fetchReconciliation();
+      fetchComparison();
+    } catch (err) {
+      alert('Undo failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReconSubmitting(false);
     }
   };
 
@@ -803,7 +841,7 @@ export default function Confirmation() {
                 {/* Keyboard hint */}
                 {!nameMissing && (
                   <div style={{ fontSize: '0.78rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                    Shortcuts: ← accept Pass 1 · → accept Pass 2 · ↓ needs physical review · [ prev · ] next · ↑ next
+                    Shortcuts: ← accept Pass 1 · → accept Pass 2 · ↓ needs physical review · [ prev · ] next · ↑ next · Backspace or U undo
                   </div>
                 )}
 
@@ -890,9 +928,23 @@ export default function Confirmation() {
                         </span>
                       </div>
                       {ballot.reconciliation && (
-                        <span style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af' }}>
-                          Reconciled: {ballot.reconciliation.decision.replace(/_/g, ' ')}
-                        </span>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: '0.75rem', background: '#dbeafe', color: '#1e40af' }}>
+                            Reconciled: {ballot.reconciliation.decision.replace(/_/g, ' ')}
+                          </span>
+                          <button
+                            style={{
+                              padding: '0.35rem 0.85rem', border: '1px solid #fca5a5', background: '#fff',
+                              color: '#dc2626', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
+                              opacity: reconSubmitting ? 0.6 : 1,
+                            }}
+                            onClick={() => handleUndoReconcile(ballot)}
+                            disabled={reconSubmitting}
+                            title="Undo this decision (keyboard: Backspace or U)"
+                          >
+                            ↶ Undo
+                          </button>
+                        </div>
                       )}
                     </div>
 
