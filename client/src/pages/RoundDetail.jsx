@@ -17,15 +17,6 @@ const STATUS_META = {
   canceled:             { bg: '#f3f4f6', color: '#6b7280', label: 'Canceled' },
 };
 
-const OUTCOME_META = {
-  eliminated:          { color: '#ef4444', label: 'Eliminated' },
-  withdrew:            { color: '#6b7280', label: 'Withdrew' },
-  advance:             { color: '#16a34a', label: 'Advances' },
-  convention_winner:   { color: '#16a34a', label: 'Convention Winner' },
-  winner:              { color: '#16a34a', label: 'Winner' },
-  advance_to_primary:  { color: '#16a34a', label: 'Advances to Primary' },
-};
-
 export default function RoundDetail() {
   const { id: electionId, raceId, roundId } = useParams();
   const { auth } = useAuth();
@@ -38,7 +29,6 @@ export default function RoundDetail() {
   const [actionBusy, setActionBusy] = useState(null);
   const [globalError, setGlobalError] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
   const [pinModal, setPinModal] = useState(null); // { title, description, confirmLabel, confirmStyle, requireNotes, onConfirm }
 
   const fetchRound = useCallback(async () => {
@@ -181,6 +171,18 @@ export default function RoundDetail() {
     });
   };
 
+  const openUnpublish = () => setPinModal({
+    title: `Unpublish Round ${round.round_number}`,
+    description: 'This removes the round from the public dashboard. The round stays finalized and its results are kept — you can republish at any time.',
+    confirmLabel: 'Unpublish',
+    confirmStyle: 'normal',
+    requireNotes: false,
+    onConfirm: async () => {
+      setPinModal(null);
+      await postAction(`/admin/control-center/round/${roundId}/unpublish`);
+    },
+  });
+
   const openRecount = () => setPinModal({
     title: `Issue Recount — Round ${round.round_number}`,
     description: 'This archives the current results, soft-deletes all passes for this round, resets publication, and sends the round back to tallying. Requires Super Admin approval.',
@@ -279,9 +281,17 @@ export default function RoundDetail() {
         </div>
 
         {status === 'round_finalized' && isPublished && (
-          <p style={styles.infoLine}>
-            ✓ Published to public dashboard.
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+            <span style={styles.infoLine}>✓ Published to public dashboard.</span>
+            <button
+              style={{ ...styles.btnGhost, opacity: actionBusy ? 0.6 : 1 }}
+              onClick={openUnpublish}
+              disabled={!!actionBusy}
+              title="Remove this round from the public dashboard (results remain saved)"
+            >
+              Unpublish
+            </button>
+          </div>
         )}
 
         {status === 'canceled' && (
@@ -316,47 +326,24 @@ export default function RoundDetail() {
         }
       />
 
-      {/* 3. Results preview */}
+      {/* 3. Dashboard Preview — always shown when results exist. Matches the public view. */}
       {hasResults && (
         <section style={styles.sectionCard}>
           <div style={styles.sectionHeader}>
-            <h2 style={styles.sectionTitle}>Results</h2>
-            <button style={styles.btnGhost} onClick={() => setShowPreview(!showPreview)}>
-              {showPreview ? 'Hide Dashboard Preview' : 'Preview Public Dashboard'}
-            </button>
+            <h2 style={styles.sectionTitle}>Dashboard Preview</h2>
+            {isPublished
+              ? <span style={{ ...styles.badge, background: '#dcfce7', color: '#166534' }}>Live on public dashboard</span>
+              : <span style={{ ...styles.badge, background: '#f3f4f6', color: '#4b5563' }}>Preview only — not published</span>}
           </div>
-          <div style={styles.resultsPanel}>
-            {round.results.map(r => {
-              const pct = Number(r.percentage);
-              const oc = OUTCOME_META[r.outcome];
-              return (
-                <div key={r.id || r.candidate_id} style={styles.tvResultRow}>
-                  <span style={styles.tvCandidateName}>
-                    {r.candidate_name}
-                    {oc && <span style={{ color: oc.color, fontSize: '0.75rem', marginLeft: '0.5rem' }}>{oc.label}</span>}
-                  </span>
-                  <div style={styles.tvBarContainer}>
-                    <div style={{ ...styles.tvBar, width: `${Math.min(pct, 100)}%` }} />
-                  </div>
-                  <span style={styles.tvVoteCount}>{r.vote_count}</span>
-                  <span style={styles.tvPct}>{pct.toFixed(5)}%</span>
-                </div>
-              );
-            })}
-          </div>
-          {showPreview && (
-            <div style={{ marginTop: '1rem' }}>
-              <DashboardPreview
-                electionName={round.race?.election?.name}
-                raceName={round.race?.name}
-                roundNumber={round.round_number}
-                results={round.results}
-                decisions={{}}
-                withdrawn={new Set()}
-                totalVotes={totalVotes}
-              />
-            </div>
-          )}
+          <DashboardPreview
+            electionName={round.race?.election?.name}
+            raceName={round.race?.name}
+            roundNumber={round.round_number}
+            results={round.results}
+            decisions={{}}
+            withdrawn={new Set()}
+            totalVotes={totalVotes}
+          />
         </section>
       )}
 
@@ -884,15 +871,6 @@ const styles = {
   stationCard: { border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.75rem', background: '#fff' },
   stationCardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' },
   stationCardRow: { display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '0.15rem 0' },
-
-  // Results
-  resultsPanel: { background: '#1e293b', borderRadius: 12, padding: '1.25rem' },
-  tvResultRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0', flexWrap: 'wrap' },
-  tvCandidateName: { minWidth: 120, fontSize: '1rem', fontWeight: 600, color: '#e2e8f0', flex: '1 1 140px' },
-  tvBarContainer: { flex: '2 1 120px', minWidth: 80, height: 16, background: '#334155', borderRadius: 8, overflow: 'hidden' },
-  tvBar: { height: '100%', background: 'linear-gradient(90deg, #3b82f6, #60a5fa)', borderRadius: 8, transition: 'width 0.8s ease' },
-  tvVoteCount: { width: 40, textAlign: 'right', fontWeight: 700, fontSize: '1.05rem', color: '#fff' },
-  tvPct: { width: 80, textAlign: 'right', color: '#94a3b8', fontSize: '0.85rem' },
 
   // Tasks
   taskGrid: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },

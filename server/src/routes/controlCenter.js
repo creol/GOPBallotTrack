@@ -264,6 +264,29 @@ router.post('/round/:id/publish', async (req, res) => {
   }
 });
 
+// POST /api/admin/control-center/round/:id/unpublish — Remove from public dashboard
+// Round stays finalized; only the published_at flag is cleared so the TV/mobile public view drops it.
+router.post('/round/:id/unpublish', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
+    if (!round) return res.status(404).json({ error: 'Round not found' });
+    if (!round.published_at) {
+      return res.status(400).json({ error: 'Round is not currently published' });
+    }
+    await db.query('UPDATE rounds SET published_at = NULL WHERE id = $1', [roundId]);
+
+    const io = req.app.get('io');
+    if (io) io.emit('round:released', { round_id: roundId });
+    if (io) io.emit('status:changed', { type: 'round', id: roundId, status: 'unpublished', race_id: round.race_id });
+
+    res.json({ message: 'Round removed from public dashboard', round_id: roundId });
+  } catch (err) {
+    console.error('Unpublish error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/admin/control-center/round/:id/recount — Issue recount
 router.post('/round/:id/recount', async (req, res) => {
   try {
