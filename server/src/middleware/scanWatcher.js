@@ -76,7 +76,7 @@ async function processSingleBallot(filePath, scannerId, io) {
   // recordScanUpload from the result's serial/pass if needed — here we pass
   // null because the watcher has no pre-assigned round.
   const resolvedRoundId = result?.round_id || null;
-  await recordScanUpload({ stationId, roundId: resolvedRoundId, result });
+  await recordScanUpload({ stationId, roundId: resolvedRoundId, result, io });
 
   if (result.success) {
     if (result.flagged) {

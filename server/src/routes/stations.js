@@ -251,7 +251,7 @@ router.post('/stations/:stationId/upload', upload.single('image'), async (req, r
 
     // Track every upload regardless of outcome, so Total/Local counts reflect
     // "anything the agent uploaded" not just successfully-counted scans.
-    await recordScanUpload({ stationId, roundId: assignment.roundId, result });
+    await recordScanUpload({ stationId, roundId: assignment.roundId, result, io });
 
     // Clean up temp upload
     try { fs.unlinkSync(req.file.path); } catch {}

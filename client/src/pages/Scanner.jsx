@@ -69,13 +69,19 @@ export default function Scanner() {
 
   useEffect(() => {
     fetchRoundData();
-    // Auto-refresh when ADF scanner records ballots
+    // `scan:upload` fires for every agent upload regardless of outcome (counted,
+    // duplicate, qr_not_found, etc.) so the Total/Local pills refresh live. The
+    // older outcome-specific events are redundant now but kept for other listeners.
     const socket = io();
-    socket.on('scan:recorded', () => fetchRoundData());
-    socket.on('scan:flagged', () => fetchRoundData());
+    const refreshIfThisRound = (payload) => {
+      if (!payload || payload.round_id == null || String(payload.round_id) === String(roundId)) {
+        fetchRoundData();
+      }
+    };
+    socket.on('scan:upload', refreshIfThisRound);
     socket.on('pass:complete', () => fetchRoundData());
     return () => socket.disconnect();
-  }, [fetchRoundData]);
+  }, [fetchRoundData, roundId]);
 
   // Poll agent heartbeat — initial countdown grace period, then periodic checks
   useEffect(() => {

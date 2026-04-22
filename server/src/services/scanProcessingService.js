@@ -461,7 +461,7 @@ function deriveOutcome(result) {
  * after processBallot returns. Looks up the active/most-recent pass for the round
  * so uploads are bucketed per pass for reporting.
  */
-async function recordScanUpload({ stationId, roundId, result }) {
+async function recordScanUpload({ stationId, roundId, result, io }) {
   try {
     const outcome = deriveOutcome(result);
     const serialNumber = result?.serial_number || null;
@@ -493,6 +493,19 @@ async function recordScanUpload({ stationId, roundId, result }) {
        VALUES ($1, $2, $3, $4, $5)`,
       [stationId || 'unknown', resolvedRoundId, passId, serialNumber, outcome]
     );
+
+    // Single event the Scanner page can listen on — fires for every upload regardless
+    // of whether it was counted, flagged, duplicate, etc. This is the live-update trigger
+    // for the Total/Local pills.
+    if (io) {
+      io.emit('scan:upload', {
+        round_id: resolvedRoundId,
+        pass_id: passId,
+        station_id: stationId || 'unknown',
+        outcome,
+        serial_number: serialNumber,
+      });
+    }
   } catch (err) {
     console.error('[Scan] Failed to record upload:', err.message);
   }
