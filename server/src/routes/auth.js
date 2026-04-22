@@ -1,11 +1,34 @@
 const { Router } = require('express');
+const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const { login, getSession, hashPin, sessions } = require('../middleware/auth');
 
 const router = Router();
 
+// Strict limiter for the two endpoints that hand out super-admin power based on a PIN.
+// Keyed per source IP; returns 429 after the cap. 15-minute window matches typical brute-force
+// defense intuition for a convention-day adversary and doesn't punish a real admin who mistypes.
+const pinLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many PIN attempts. Try again in 15 minutes.' },
+});
+
+// Broader limiter on all /auth routes so other entry points (change-pin, me, logout) can't
+// be used to probe at high rates either.
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests.' },
+});
+router.use(authLimiter);
+
 // POST /api/auth/login — Login with name + PIN
-router.post('/login', async (req, res) => {
+router.post('/login', pinLimiter, async (req, res) => {
   const { name, pin, role } = req.body;
 
   // Support legacy role+pin login for backward compatibility (e.g., PIN verification dialogs)
@@ -50,7 +73,7 @@ router.post('/login', async (req, res) => {
 // POST /api/auth/verify-super-admin-pin — Verify a PIN belongs to any super_admin.
 // Used by destructive admin actions (Recount, Void, Reverse Finalize, etc.) that require
 // super admin approval — any super admin's PIN is accepted, not just "the Admin".
-router.post('/verify-super-admin-pin', async (req, res) => {
+router.post('/verify-super-admin-pin', pinLimiter, async (req, res) => {
   const { pin } = req.body || {};
   if (!pin) return res.status(400).json({ error: 'PIN is required' });
   try {

@@ -4,6 +4,10 @@ const db = require('../db');
 // Simple token store (in-memory — fine for single-server LAN deployment)
 const sessions = new Map();
 
+// Server-side session lifetime. Cookie maxAge is 24h; this is the effective limit because
+// getSession evicts anything older so a stolen cookie can't be reused past the window.
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -36,20 +40,49 @@ async function login(name, pin) {
 
 /**
  * Get session from request (Authorization: Bearer <token> or cookie).
+ * Evicts sessions older than SESSION_TTL_MS so expired cookies can't be reused.
  */
 function getSession(req) {
+  let token = null;
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    return sessions.get(token) || null;
+    token = authHeader.slice(7);
+  } else if (req.cookies?.bt_token) {
+    token = req.cookies.bt_token;
   }
+  if (!token) return null;
 
-  const cookieToken = req.cookies?.bt_token;
-  if (cookieToken) {
-    return sessions.get(cookieToken) || null;
+  const session = sessions.get(token);
+  if (!session) return null;
+
+  if (session.created && Date.now() - session.created > SESSION_TTL_MS) {
+    sessions.delete(token);
+    return null;
   }
+  return session;
+}
 
-  return null;
+/**
+ * Middleware: validate the X-Station-Token header against the STATION_TOKEN env var
+ * (timing-safe). Used to gate all state-changing station agent endpoints so anyone on
+ * the LAN who isn't provisioned can't spoof heartbeats, assignments, or ballot uploads.
+ */
+function requireStationToken(req, res, next) {
+  const expected = process.env.STATION_TOKEN;
+  if (!expected) {
+    console.error('[Auth] STATION_TOKEN env var is not set — rejecting station request');
+    return res.status(503).json({ error: 'Server not configured: STATION_TOKEN missing' });
+  }
+  const provided = req.headers['x-station-token'];
+  if (!provided) return res.status(401).json({ error: 'Station token required' });
+
+  // timingSafeEqual needs equal-length buffers
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: 'Invalid station token' });
+  }
+  next();
 }
 
 /**
@@ -120,4 +153,4 @@ async function verifyPin(userId, pin) {
   return user.pin_hash === hashPin(pin);
 }
 
-module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireRaceAccess, sessions };
+module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireRaceAccess, requireStationToken, sessions };

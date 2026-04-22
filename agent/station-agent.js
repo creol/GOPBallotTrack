@@ -9,7 +9,7 @@
  * Config: edit config.json in the same directory
  */
 
-const AGENT_VERSION = '0.155';
+const AGENT_VERSION = '0.156';
 
 const chokidar = require('chokidar');
 const axios = require('axios');
@@ -25,12 +25,19 @@ if (!fs.existsSync(configPath)) {
 }
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-const { serverUrl, stationId, watchFolder, retryAttempts = 5 } = config;
+const { serverUrl, stationId, stationToken, watchFolder, retryAttempts = 5 } = config;
 
 if (!serverUrl || !stationId || !watchFolder) {
   console.error('ERROR: config.json must have serverUrl, stationId, and watchFolder');
   process.exit(1);
 }
+if (!stationToken) {
+  console.warn('WARNING: config.json has no stationToken — agent POSTs will be rejected by a hardened server.');
+  console.warn('Reinstall from /station-setup to generate a new config with the current token.');
+}
+
+// Header that accompanies every request so the server's requireStationToken middleware lets us through.
+const stationAuthHeader = stationToken ? { 'X-Station-Token': stationToken } : {};
 
 // Ensure processed/failed folders exist
 const processedDir = path.join(watchFolder, '..', 'processed');
@@ -63,7 +70,7 @@ async function flushLogs() {
   if (logBuffer.length === 0) return;
   const batch = logBuffer.splice(0, logBuffer.length);
   try {
-    await axios.post(`${serverUrl}/api/stations/${stationId}/logs`, { logs: batch }, { timeout: 5000 });
+    await axios.post(`${serverUrl}/api/stations/${stationId}/logs`, { logs: batch }, { timeout: 5000, headers: stationAuthHeader });
   } catch {
     // Put them back if send fails — they'll retry next flush
     logBuffer.unshift(...batch);
@@ -77,7 +84,7 @@ setInterval(async () => {
   // Send heartbeat so server/scanner UI knows agent is alive
   try {
     await axios.post(`${serverUrl}/api/stations/${stationId}/heartbeat`,
-      { roundId: currentRoundId, agentVersion: AGENT_VERSION }, { timeout: 3000 });
+      { roundId: currentRoundId, agentVersion: AGENT_VERSION }, { timeout: 3000, headers: stationAuthHeader });
   } catch {}
 }, LOG_FLUSH_INTERVAL);
 
@@ -108,7 +115,7 @@ function logSuccess(msg, serialNumber) {
  */
 async function ensureAssignment() {
   try {
-    const { data: assignment } = await axios.get(`${serverUrl}/api/stations/${stationId}/assignment`);
+    const { data: assignment } = await axios.get(`${serverUrl}/api/stations/${stationId}/assignment`, { headers: stationAuthHeader });
     if (assignment.assigned && assignment.roundId) {
       currentRoundId = assignment.roundId;
       logSuccess(`Assigned to round ${assignment.roundId}`);
@@ -116,7 +123,7 @@ async function ensureAssignment() {
     }
 
     log('Not assigned to a round — checking for active rounds...');
-    const { data: rounds } = await axios.get(`${serverUrl}/api/stations/active-rounds`);
+    const { data: rounds } = await axios.get(`${serverUrl}/api/stations/active-rounds`, { headers: stationAuthHeader });
 
     if (rounds.length === 0) {
       log('No rounds are open for scanning yet.');
@@ -127,7 +134,7 @@ async function ensureAssignment() {
 
     if (rounds.length === 1) {
       const round = rounds[0];
-      await axios.post(`${serverUrl}/api/stations/${stationId}/assign`, { roundId: round.round_id });
+      await axios.post(`${serverUrl}/api/stations/${stationId}/assign`, { roundId: round.round_id }, { headers: stationAuthHeader });
       currentRoundId = round.round_id;
       logSuccess(`Auto-assigned to: ${round.race_name} — Round ${round.round_number} (${round.paper_color})`);
       return round.round_id;
@@ -160,7 +167,7 @@ async function uploadFile(filePath) {
 
       const url = `${serverUrl}/api/stations/${stationId}/upload`;
       const response = await axios.post(url, form, {
-        headers: form.getHeaders(),
+        headers: { ...form.getHeaders(), ...stationAuthHeader },
         timeout: 30000,
         maxContentLength: 50 * 1024 * 1024, // 50MB
       });
