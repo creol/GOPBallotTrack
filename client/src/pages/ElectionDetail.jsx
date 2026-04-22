@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
@@ -92,6 +92,44 @@ export default function ElectionDetail() {
     fetchBoxes();
   };
 
+  // ─── Race reordering + visibility toggle ────────────────────────────────
+  const dragItem = useRef(null);
+  const dragOver = useRef(null);
+
+  const handleRaceDragStart = (index) => { dragItem.current = index; };
+  const handleRaceDragEnter = (index) => { dragOver.current = index; };
+  const handleRaceDragEnd = async () => {
+    if (dragItem.current == null || dragOver.current == null || dragItem.current === dragOver.current) {
+      dragItem.current = null; dragOver.current = null; return;
+    }
+    const items = [...(election.races || [])];
+    const moved = items[dragItem.current];
+    items.splice(dragItem.current, 1);
+    items.splice(dragOver.current, 0, moved);
+    dragItem.current = null;
+    dragOver.current = null;
+    // Optimistic update
+    setElection({ ...election, races: items });
+    try {
+      await api.put(`/admin/elections/${id}/races/reorder`, { race_ids: items.map(r => r.id) });
+    } catch {
+      fetchElection(); // rollback on failure
+    }
+  };
+
+  const toggleRaceVisibility = async (raceId, newValue) => {
+    // Optimistic update
+    setElection({
+      ...election,
+      races: (election.races || []).map(r => r.id === raceId ? { ...r, dashboard_visible: newValue } : r),
+    });
+    try {
+      await api.put(`/admin/races/${raceId}`, { dashboard_visible: newValue });
+    } catch {
+      fetchElection();
+    }
+  };
+
   if (!election) return <div style={styles.container}><p>Loading...</p></div>;
 
   const statusColor = { pending_needs_action: '#f59e0b', ready: '#10b981', in_progress: '#3b82f6', results_finalized: '#6366f1' };
@@ -181,12 +219,41 @@ export default function ElectionDetail() {
               )}
 
               {(!election.races || election.races.length === 0) && <p style={styles.muted}>No races yet.</p>}
-              {election.races?.map(race => (
-                <div key={race.id} style={{ marginBottom: '1rem' }}>
-                  <Link to={`/admin/elections/${id}/races/${race.id}`} style={styles.raceCard}>
-                    <span style={styles.raceName}>{race.name}</span>
-                    <span style={{ ...styles.statusBadge, background: statusColor[race.status] || '#999' }}>{race.status}</span>
-                  </Link>
+              {election.races && election.races.length > 1 && (
+                <p style={styles.muted}>Drag the handle (⠿) to reorder. Toggle the eye icon to hide a race from the public dashboard.</p>
+              )}
+              {election.races?.map((race, index) => {
+                const visible = race.dashboard_visible !== false;
+                return (
+                <div
+                  key={race.id}
+                  draggable
+                  onDragStart={() => handleRaceDragStart(index)}
+                  onDragEnter={() => handleRaceDragEnter(index)}
+                  onDragEnd={handleRaceDragEnd}
+                  onDragOver={e => e.preventDefault()}
+                  style={{ marginBottom: '1rem' }}
+                >
+                  <div style={styles.raceCardRow}>
+                    <span style={styles.dragHandle} title="Drag to reorder">⠿</span>
+                    <Link to={`/admin/elections/${id}/races/${race.id}`} style={{ ...styles.raceCard, flex: 1, opacity: visible ? 1 : 0.6 }}>
+                      <span style={styles.raceName}>{race.name}</span>
+                      <span style={{ ...styles.statusBadge, background: statusColor[race.status] || '#999' }}>{race.status}</span>
+                    </Link>
+                    <button
+                      type="button"
+                      style={{
+                        ...styles.visibilityBtn,
+                        background: visible ? '#dcfce7' : '#fee2e2',
+                        color: visible ? '#166534' : '#dc2626',
+                        borderColor: visible ? '#86efac' : '#fca5a5',
+                      }}
+                      onClick={() => toggleRaceVisibility(race.id, !visible)}
+                      title={visible ? 'Visible on public dashboard — click to hide' : 'Hidden from public dashboard — click to show'}
+                    >
+                      {visible ? '👁 Visible' : '⊘ Hidden'}
+                    </button>
+                  </div>
                   {raceRounds[race.id]?.length > 0 && (
                     <div style={styles.roundsList}>
                       {raceRounds[race.id].map(round => (
@@ -205,7 +272,8 @@ export default function ElectionDetail() {
                     </div>
                   )}
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
 
@@ -642,9 +710,20 @@ const styles = {
     cursor: 'pointer', fontSize: '0.82rem', color: '#2563eb', fontWeight: 600, whiteSpace: 'nowrap',
   },
 
+  raceCardRow: {
+    display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem',
+  },
+  dragHandle: {
+    color: '#9ca3af', fontSize: '1.3rem', cursor: 'grab', padding: '0 0.25rem',
+    userSelect: 'none',
+  },
+  visibilityBtn: {
+    padding: '0.4rem 0.75rem', border: '1px solid', borderRadius: 6,
+    cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap',
+  },
   raceCard: {
     display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem 1rem',
-    border: '1px solid #ddd', borderRadius: 6, marginBottom: '0.5rem',
+    border: '1px solid #ddd', borderRadius: 6,
     textDecoration: 'none', color: 'inherit', background: '#fafafa',
   },
   raceName: { fontWeight: 600, flex: 1 },

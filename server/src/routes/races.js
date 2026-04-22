@@ -70,7 +70,7 @@ router.get('/elections/:id/races', async (req, res) => {
 // PUT /api/admin/races/:id — Update race
 router.put('/races/:id', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled } = req.body;
+    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled, dashboard_visible } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
@@ -83,6 +83,7 @@ router.put('/races/:id', async (req, res) => {
     if (location !== undefined) { updates.push(`location = $${idx++}`); values.push(location || null); }
     if (public_search_enabled !== undefined) { updates.push(`public_search_enabled = $${idx++}`); values.push(public_search_enabled); }
     if (public_browse_enabled !== undefined) { updates.push(`public_browse_enabled = $${idx++}`); values.push(public_browse_enabled); }
+    if (dashboard_visible !== undefined) { updates.push(`dashboard_visible = $${idx++}`); values.push(!!dashboard_visible); }
 
     if (updates.length === 0) {
       const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [req.params.id]);
@@ -168,6 +169,32 @@ router.put('/races/:id/candidates/reorder', async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('Reorder candidates error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/admin/elections/:id/races/reorder — Reorder races within an election
+router.put('/elections/:id/races/reorder', async (req, res) => {
+  try {
+    const { race_ids } = req.body;
+    if (!Array.isArray(race_ids)) {
+      return res.status(400).json({ error: 'race_ids array is required' });
+    }
+
+    for (let i = 0; i < race_ids.length; i++) {
+      await db.query(
+        'UPDATE races SET display_order = $1 WHERE id = $2 AND election_id = $3',
+        [i + 1, race_ids[i], req.params.id]
+      );
+    }
+
+    const { rows } = await db.query(
+      'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Reorder races error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
