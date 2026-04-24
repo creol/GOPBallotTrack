@@ -151,6 +151,39 @@ router.delete('/passes/:id', requireSuperAdminForPass, async (req, res) => {
       [req.params.id]
     );
 
+    // Reviewed ballots tied to this pass need to be removed too — otherwise they
+    // remain stuck in the review queue pointing at a deleted pass. For resolved
+    // outcomes that mutated ballot_serials.status (remade/spoiled), revert the
+    // status before deletion. ('counted' is handled by the scan-deletion +
+    // serial-reset loop below; 'rejected' never changed status.)
+    const { rows: reviewsToCleanup } = await client.query(
+      `SELECT id, outcome, original_serial_id, replacement_serial_id
+       FROM reviewed_ballots WHERE pass_id = $1`,
+      [req.params.id]
+    );
+
+    for (const r of reviewsToCleanup) {
+      if (r.outcome === 'remade') {
+        await client.query(
+          "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'damaged'",
+          [r.original_serial_id]
+        );
+        if (r.replacement_serial_id) {
+          await client.query(
+            "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'counted'",
+            [r.replacement_serial_id]
+          );
+        }
+      } else if (r.outcome === 'spoiled') {
+        await client.query(
+          "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'spoiled'",
+          [r.original_serial_id]
+        );
+      }
+    }
+
+    await client.query('DELETE FROM reviewed_ballots WHERE pass_id = $1', [req.params.id]);
+
     await client.query(
       `UPDATE passes SET status = 'deleted', deleted_reason = $1 WHERE id = $2`,
       [deleted_reason, req.params.id]
@@ -183,7 +216,9 @@ router.delete('/passes/:id', requireSuperAdminForPass, async (req, res) => {
     const io = req.app.get('io');
     if (io) io.emit('pass:deleted', { pass_id: pass.id, round_id: pass.round_id });
 
-    res.json({ message: `Pass ${pass.pass_number} deleted — ${scannedSerials.length} ballot serials reset to unused` });
+    res.json({
+      message: `Pass ${pass.pass_number} deleted — ${scannedSerials.length} ballot serials reset to unused, ${reviewsToCleanup.length} reviewed ballots removed`,
+    });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error('Delete pass error:', err);
