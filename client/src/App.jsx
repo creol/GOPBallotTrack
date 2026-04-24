@@ -55,6 +55,11 @@ export default function App() {
     try { await api.post('/auth/logout'); } catch {}
     delete api.defaults.headers.common['Authorization'];
     setAuth({ role: null, token: null, user_id: null, name: null, checked: true });
+    // The /scan/:roundId route is intentionally unprotected so tally operators can use it
+    // without a login. That means clearing auth state alone won't redirect — do it explicitly
+    // so logging out from anywhere (Scanner included) always lands on /login and also tears
+    // down this page's websocket / polling timers as a side effect.
+    window.location.href = '/login';
   };
 
   const scannerUser = auth.name && auth.name.match(/^scan\d/i);
