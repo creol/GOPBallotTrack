@@ -282,6 +282,23 @@ router.put('/races/:id/outcome', requireSuperAdminPin, async (req, res) => {
     const isTerminal = ['winner', 'advances_primary', 'closed'].includes(outcome);
     const newStatus = isTerminal ? 'results_finalized' : 'in_progress';
 
+    // Refuse to finalize a race while any round is still actively voting or
+    // tallying — auto-canceling those would erase live work (passes, scans,
+    // judge confirmations). The operator must finalize or void the active
+    // round first.
+    if (isTerminal) {
+      const { rows: blockingRounds } = await db.query(
+        "SELECT id, round_number, status FROM rounds WHERE race_id = $1 AND status IN ('voting_open', 'tallying') ORDER BY round_number",
+        [req.params.id]
+      );
+      if (blockingRounds.length > 0) {
+        const list = blockingRounds.map(r => `Round ${r.round_number} (${r.status})`).join(', ');
+        return res.status(400).json({
+          error: `Cannot finalize race — these rounds are still active: ${list}. Finalize or void them first.`,
+        });
+      }
+    }
+
     const { rows: [race] } = await db.query(
       `UPDATE races SET
         outcome = $1, outcome_candidate_id = $2, outcome_notes = $3,
@@ -291,10 +308,13 @@ router.put('/races/:id/outcome', requireSuperAdminPin, async (req, res) => {
     );
     if (!race) return res.status(404).json({ error: 'Race not found' });
 
-    // Cancel pending rounds only for terminal outcomes
+    // For terminal outcomes, only cancel rounds that have no committed work yet.
+    // tallying / voting_open are protected by the guard above; round_finalized
+    // and canceled are left alone; voting_closed is preserved too because it
+    // means voting completed and the operator may still want to tally it.
     if (isTerminal) {
       await db.query(
-        "UPDATE rounds SET status = 'canceled' WHERE race_id = $1 AND status IN ('pending_needs_action', 'ready', 'tallying')",
+        "UPDATE rounds SET status = 'canceled' WHERE race_id = $1 AND status IN ('pending_needs_action', 'ready')",
         [req.params.id]
       );
     }
