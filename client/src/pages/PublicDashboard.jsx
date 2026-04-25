@@ -121,6 +121,14 @@ function TVMode({ election, connected }) {
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
   const mobileUrl = `${window.location.origin}${window.location.pathname}`;
 
+  const [latestOnly, setLatestOnly] = useState(() => {
+    try { return localStorage.getItem('publicDashboard.latestOnly') === '1'; } catch { return false; }
+  });
+  const toggleLatestOnly = (checked) => {
+    setLatestOnly(checked);
+    try { localStorage.setItem('publicDashboard.latestOnly', checked ? '1' : '0'); } catch { /* ignore */ }
+  };
+
   return (
     <div style={tv.container}>
       {!connected && (
@@ -129,6 +137,18 @@ function TVMode({ election, connected }) {
         </div>
       )}
       <h1 style={tv.title}>{election.name}</h1>
+
+      <div style={{ textAlign: 'center', marginTop: '-1.25rem', marginBottom: '1.5rem' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: '#94a3b8', fontSize: '0.95rem', cursor: 'pointer', userSelect: 'none' }}>
+          <input
+            type="checkbox"
+            checked={latestOnly}
+            onChange={e => toggleLatestOnly(e.target.checked)}
+            style={{ width: 18, height: 18, cursor: 'pointer' }}
+          />
+          Show only the latest round per race
+        </label>
+      </div>
 
       <div style={{ ...tv.grid, gridTemplateColumns: gridCols }}>
         {election.races.map(race => {
@@ -184,8 +204,8 @@ function TVMode({ election, connected }) {
               )}
 
               {/* Published results */}
-              {race.rounds.map((round, ri) => {
-                const isLastPublished = ri === race.rounds.length - 1;
+              {(latestOnly && race.rounds.length > 0 ? [race.rounds[race.rounds.length - 1]] : race.rounds).map((round, ri, arr) => {
+                const isLastPublished = ri === arr.length - 1;
                 const isFinalRound = isLastPublished && race.status === 'results_finalized';
                 const advancingCandidates = round.results?.filter(r => r.outcome === 'advance' || r.outcome === 'convention_winner' || r.outcome === 'winner' || r.outcome === 'advance_to_primary') || [];
 
@@ -225,7 +245,7 @@ function TVMode({ election, connected }) {
               })}
 
               {/* Next round — show advancing candidates */}
-              {race.next_round && race.status !== 'results_finalized' && race.rounds.length > 0 && (() => {
+              {!latestOnly && race.next_round && race.status !== 'results_finalized' && race.rounds.length > 0 && (() => {
                 const lastRound = race.rounds[race.rounds.length - 1];
                 const advancing = lastRound.results?.filter(r => r.outcome && r.outcome !== 'eliminated' && r.outcome !== 'withdrew') || [];
                 return (
