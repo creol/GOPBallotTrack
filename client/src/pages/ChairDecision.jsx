@@ -139,14 +139,6 @@ export default function ChairDecision() {
         setShowAction(null);
         setActionPin('');
         navigate(`/admin/elections/${electionId}/races/${raceId}`);
-      } else if (action === 'cancel') {
-        const notes = prompt('Reason for canceling (required):');
-        if (!notes) { setActionError('Reason is required'); return; }
-        await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'closed', notes });
-        alert('Race canceled.');
-        setShowAction(null);
-        setActionPin('');
-        fetchData();
       }
     } catch (err) {
       // Server returns 401 with "Invalid Super Admin PIN" when the PIN doesn't match
@@ -284,9 +276,6 @@ export default function ChairDecision() {
           <button style={styles.btnPrimary} onClick={() => { setShowAction('next_round'); setActionPin(''); setActionError(null); }}>
             Finalize Round & Move to Next
           </button>
-          <button style={styles.btnDangerLarge} onClick={() => { setShowAction('cancel'); setActionPin(''); setActionError(null); }}>
-            Cancel Race
-          </button>
         </div>
 
         {/* PIN Modal */}
@@ -295,11 +284,9 @@ export default function ChairDecision() {
             <div style={styles.modalCard}>
               <h3 style={{ margin: '0 0 0.5rem' }}>
                 {showAction === 'next_round' && 'Finalize Round & Move to Next'}
-                {showAction === 'cancel' && 'Cancel Race'}
               </h3>
               <p style={{ color: '#4b5563', margin: '0 0 1rem', fontSize: '0.9rem' }}>
                 {showAction === 'next_round' && 'This will save candidate decisions, finalize this round, and return to the race page. The round will be available for publishing from the Round page.'}
-                {showAction === 'cancel' && 'This will cancel the race. A reason is required. This cannot be undone.'}
               </p>
               {hasDecisions && (
                 <div style={{ background: '#f3f4f6', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.82rem' }}>
@@ -326,7 +313,7 @@ export default function ChairDecision() {
               {actionError && <p style={{ color: '#dc2626', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{actionError}</p>}
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
                 <button
-                  style={showAction === 'cancel' ? styles.btnDangerLarge : styles.btnPrimary}
+                  style={styles.btnPrimary}
                   onClick={() => verifyPinAndExecute(showAction)}
                 >
                   Confirm
