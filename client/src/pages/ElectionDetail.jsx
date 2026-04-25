@@ -390,8 +390,16 @@ function ScannersSection({ electionId }) {
 }
 
 function DashboardsSection({ electionId }) {
+  const [tvLatestOnly, setTvLatestOnly] = useState(() => {
+    try { return localStorage.getItem(`dashboards.tvLatestOnly.${electionId}`) === '1'; } catch { return false; }
+  });
+  const toggleTvLatestOnly = (checked) => {
+    setTvLatestOnly(checked);
+    try { localStorage.setItem(`dashboards.tvLatestOnly.${electionId}`, checked ? '1' : '0'); } catch { /* ignore */ }
+  };
+
   const publicUrl = `${window.location.origin}/public/${electionId}`;
-  const tvUrl = `${publicUrl}?mode=tv`;
+  const tvUrl = `${publicUrl}?mode=tv${tvLatestOnly ? '&latest=1' : ''}`;
   const adminUrl = `${window.location.origin}/admin/elections/${electionId}`;
 
   const dashboards = [
@@ -426,6 +434,21 @@ function DashboardsSection({ electionId }) {
     <div>
       <h2>Dashboards</h2>
       <p style={styles.muted}>Share these links with attendees and operators. All links work on the local network.</p>
+
+      <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none', fontSize: '0.9rem' }}>
+          <input
+            type="checkbox"
+            checked={tvLatestOnly}
+            onChange={e => toggleTvLatestOnly(e.target.checked)}
+            style={{ width: 16, height: 16, cursor: 'pointer' }}
+          />
+          <span><strong>TV Dashboard:</strong> show only the latest round per race</span>
+        </label>
+        <p style={{ ...styles.muted, margin: '0.35rem 0 0', fontSize: '0.78rem' }}>
+          When checked, the TV dashboard URL below includes <code>&latest=1</code> and each race card collapses to just its most recent published round (or the final round if the race is finalized). Mobile dashboard is unaffected.
+        </p>
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
         {dashboards.map(d => (

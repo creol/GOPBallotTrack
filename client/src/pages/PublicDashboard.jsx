@@ -22,6 +22,7 @@ export default function PublicDashboard() {
   const navigate = useNavigate();
   const windowWidth = useWindowWidth();
   const isTvMode = searchParams.get('mode') === 'tv' || windowWidth > 1200;
+  const latestOnly = searchParams.get('latest') === '1';
 
   const [election, setElection] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -80,7 +81,7 @@ export default function PublicDashboard() {
     </div>
   );
 
-  if (isTvMode) return <><TVMode election={election} connected={connected} /><VersionTag /></>;
+  if (isTvMode) return <><TVMode election={election} connected={connected} latestOnly={latestOnly} /><VersionTag /></>;
   return (
     <><MobileMode
       election={election}
@@ -114,20 +115,12 @@ const STATUS_BADGE_STYLES = {
 };
 
 // ======================== TV MODE ========================
-function TVMode({ election, connected }) {
+function TVMode({ election, connected, latestOnly }) {
   const raceCount = election.races.length;
   const gridCols = raceCount <= 1 ? '1fr' : raceCount <= 2 ? 'repeat(2, 1fr)' : raceCount <= 4 ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(400px, 1fr))';
 
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
   const mobileUrl = `${window.location.origin}${window.location.pathname}`;
-
-  const [latestOnly, setLatestOnly] = useState(() => {
-    try { return localStorage.getItem('publicDashboard.latestOnly') === '1'; } catch { return false; }
-  });
-  const toggleLatestOnly = (checked) => {
-    setLatestOnly(checked);
-    try { localStorage.setItem('publicDashboard.latestOnly', checked ? '1' : '0'); } catch { /* ignore */ }
-  };
 
   return (
     <div style={tv.container}>
@@ -137,18 +130,6 @@ function TVMode({ election, connected }) {
         </div>
       )}
       <h1 style={tv.title}>{election.name}</h1>
-
-      <div style={{ textAlign: 'center', marginTop: '-1.25rem', marginBottom: '1.5rem' }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: '#94a3b8', fontSize: '0.95rem', cursor: 'pointer', userSelect: 'none' }}>
-          <input
-            type="checkbox"
-            checked={latestOnly}
-            onChange={e => toggleLatestOnly(e.target.checked)}
-            style={{ width: 18, height: 18, cursor: 'pointer' }}
-          />
-          Show only the latest round per race
-        </label>
-      </div>
 
       <div style={{ ...tv.grid, gridTemplateColumns: gridCols }}>
         {election.races.map(race => {
