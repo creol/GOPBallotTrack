@@ -132,8 +132,10 @@ export default function ChairDecision() {
     try {
       if (action === 'next_round') {
         await handleApplyDecisions();
-        // Finalize the round so it can be published from the Round page
-        await api.post(`/admin/rounds/${roundId}/confirm`, { pin, confirmed_by_name: 'admin' });
+        // Chair-side finalization — flips the round to round_finalized.
+        // The Election Judge confirm step (Confirmation.jsx) only records the
+        // audit; the actual status change happens here, only with a valid PIN.
+        await api.post(`/admin/rounds/${roundId}/finalize`, { pin, finalized_by_name: 'admin' });
         setShowAction(null);
         setActionPin('');
         navigate(`/admin/elections/${electionId}/races/${raceId}`);
