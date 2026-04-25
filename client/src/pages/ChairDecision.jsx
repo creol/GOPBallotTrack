@@ -139,22 +139,6 @@ export default function ChairDecision() {
         setShowAction(null);
         setActionPin('');
         navigate(`/admin/elections/${electionId}/races/${raceId}`);
-      } else if (action === 'finalize') {
-        await handleApplyDecisions();
-        // Determine outcome from decisions
-        const winnerEntry = Object.entries(decisions).find(([, o]) => o === 'winner' || o === 'convention_winner');
-        const primaryEntry = Object.entries(decisions).find(([, o]) => o === 'advance_to_primary');
-        if (winnerEntry) {
-          await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'winner', candidate_id: parseInt(winnerEntry[0]) });
-        } else if (primaryEntry) {
-          await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'advances_primary' });
-        } else {
-          await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'closed', notes: 'Race finalized' });
-        }
-        alert('Race finalized.');
-        setShowAction(null);
-        setActionPin('');
-        fetchData();
       } else if (action === 'cancel') {
         const notes = prompt('Reason for canceling (required):');
         if (!notes) { setActionError('Reason is required'); return; }
@@ -300,9 +284,6 @@ export default function ChairDecision() {
           <button style={styles.btnPrimary} onClick={() => { setShowAction('next_round'); setActionPin(''); setActionError(null); }}>
             Finalize Round & Move to Next
           </button>
-          <button style={styles.btnSuccess} onClick={() => { setShowAction('finalize'); setActionPin(''); setActionError(null); }}>
-            Finalize Race
-          </button>
           <button style={styles.btnDangerLarge} onClick={() => { setShowAction('cancel'); setActionPin(''); setActionError(null); }}>
             Cancel Race
           </button>
@@ -314,12 +295,10 @@ export default function ChairDecision() {
             <div style={styles.modalCard}>
               <h3 style={{ margin: '0 0 0.5rem' }}>
                 {showAction === 'next_round' && 'Finalize Round & Move to Next'}
-                {showAction === 'finalize' && 'Finalize Race'}
                 {showAction === 'cancel' && 'Cancel Race'}
               </h3>
               <p style={{ color: '#4b5563', margin: '0 0 1rem', fontSize: '0.9rem' }}>
                 {showAction === 'next_round' && 'This will save candidate decisions, finalize this round, and return to the race page. The round will be available for publishing from the Round page.'}
-                {showAction === 'finalize' && 'This will apply all candidate decisions and close the race. This cannot be undone.'}
                 {showAction === 'cancel' && 'This will cancel the race. A reason is required. This cannot be undone.'}
               </p>
               {hasDecisions && (
