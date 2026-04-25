@@ -161,30 +161,75 @@ function isolateCell(raw, ox, oy, cellW, cellH) {
   return { ellipses, images, texts };
 }
 
-function findCandidateOvals(cellEllipses) {
+/**
+ * Identify candidate ovals among all the ellipses on a ballot cell.
+ *
+ * Primary heuristic: candidate ovals have a candidate-name text drawn directly
+ * to their right at the same Y. Example ovals (CORRECT / WRONG) have a label
+ * BELOW them, not beside them, so they don't pass this test.
+ *
+ * Fallback: if no oval has adjacent right-side text (e.g., names were rendered
+ * as outlined paths and don't show up in getTextContent), pick the largest
+ * same-size cluster of ovals that lie in the upper 70% of the cell — examples
+ * are always near the bottom, candidates are higher up.
+ */
+function findCandidateOvals(cellEllipses, cellTexts, cellHeight) {
   if (cellEllipses.length === 0) return [];
+
+  // ---- Primary: ovals with name-text adjacent on the right ----
+  const nameAdjacent = cellEllipses.filter((oval) => {
+    return cellTexts.some((t) => {
+      // Text must be RIGHT of the oval (candidate names sit to the right of their oval)
+      if (t.x < oval.cx + oval.rx) return false;
+      // Same row: text Y within oval radius + small tolerance
+      if (Math.abs(t.y_api - oval.cy) > oval.ry + 4) return false;
+      // Non-empty
+      if (!t.str || t.str.trim().length === 0) return false;
+      return true;
+    });
+  });
+
+  if (nameAdjacent.length > 0) {
+    // If a stray text adjacent to a non-candidate oval slipped in, normalize by
+    // picking the largest same-size cluster among the name-adjacent set.
+    const groups = new Map();
+    for (const e of nameAdjacent) {
+      const key = `${e.rx.toFixed(1)},${e.ry.toFixed(1)}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
+    let bestKey = null, bestCount = -1;
+    for (const [key, arr] of groups) {
+      if (arr.length > bestCount) { bestCount = arr.length; bestKey = key; }
+    }
+    const out = (groups.get(bestKey) || []).slice();
+    out.sort((a, b) => a.cy - b.cy);
+    return out;
+  }
+
+  // ---- Fallback: size-cluster + Y constraint ----
+  // Examples sit near the bottom of the cell; restrict to upper 70%.
+  const yLimit = cellHeight ? cellHeight * 0.70 : Infinity;
+  const upper = cellEllipses.filter((e) => e.cy <= yLimit);
+
   const groups = new Map();
-  for (const e of cellEllipses) {
+  for (const e of upper) {
     const key = `${e.rx.toFixed(1)},${e.ry.toFixed(1)}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(e);
   }
-  let bestKey = null, bestCount = -1;
+  let bestKey = null, bestCount = -1, largestRx = -1;
   for (const [key, arr] of groups) {
-    if (arr.length > bestCount) { bestCount = arr.length; bestKey = key; }
-  }
-  if (bestCount < 2 || groups.size > 1) {
-    let largestRx = -1;
-    for (const [key, arr] of groups) {
-      if (arr.length === bestCount) {
-        const rx = arr[0].rx;
-        if (rx > largestRx) { largestRx = rx; bestKey = key; }
-      }
+    // Tie-break ties on count by larger rx (candidate ovals are typically larger)
+    if (arr.length > bestCount || (arr.length === bestCount && arr[0].rx > largestRx)) {
+      bestCount = arr.length;
+      largestRx = arr[0].rx;
+      bestKey = key;
     }
   }
-  const candidateOvals = groups.get(bestKey) || [];
-  candidateOvals.sort((a, b) => a.cy - b.cy);
-  return candidateOvals;
+  const out = (groups.get(bestKey) || []).slice();
+  out.sort((a, b) => a.cy - b.cy);
+  return out;
 }
 
 function findQrImage(cellImages, ox, oy, cellW, cellH) {
@@ -290,7 +335,7 @@ async function extractDraftSpecFromPdf({ pdfBuffer, pdfPath, ballotSize, candida
     height: qrImage.height,
   };
 
-  const candidateOvals = findCandidateOvals(cell.ellipses);
+  const candidateOvals = findCandidateOvals(cell.ellipses, cell.texts, cellH);
   if (candidateOvals.length === 0) throw new Error('No candidate ovals found in top-left cell.');
 
   let candidateNames;
@@ -303,7 +348,12 @@ async function extractDraftSpecFromPdf({ pdfBuffer, pdfPath, ballotSize, candida
     candidateNames = findCandidateNamesForOvals(cell.texts, candidateOvals);
     const missingIdx = candidateNames.findIndex(n => !n);
     if (missingIdx >= 0) {
-      throw new Error(`Could not match every oval to a candidate name (oval ${missingIdx + 1} at cy=${candidateOvals[missingIdx].cy.toFixed(2)} has no nearby text). Use candidatesOverride to specify names manually.`);
+      const ov = candidateOvals[missingIdx];
+      throw new Error(
+        `Could not match every oval to a candidate name (oval ${missingIdx + 1} of ${candidateOvals.length} at cy=${ov.cy.toFixed(2)}, rx=${ov.rx.toFixed(2)} has no nearby text). ` +
+        `This usually means the auto-detection picked the wrong ovals on the page. ` +
+        `Provide the candidate names manually (in display order, separated by " | "), and they will be assigned to the ${candidateOvals.length} detected ovals top-to-bottom.`
+      );
     }
   }
 
