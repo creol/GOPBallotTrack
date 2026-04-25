@@ -34,6 +34,13 @@ export default function RaceDetail() {
   const [withdrawTarget, setWithdrawTarget] = useState(null);
   const [withdrawPin, setWithdrawPin] = useState('');
   const [withdrawError, setWithdrawError] = useState(null);
+  // Ballot-spec recovery modal state ("Fix scan zones from PDF")
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryFile, setRecoveryFile] = useState(null);
+  const [recoveryPreview, setRecoveryPreview] = useState(null);
+  const [recoveryError, setRecoveryError] = useState(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryResult, setRecoveryResult] = useState(null);
   const [searchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useState(searchParams.get('tab') || 'rounds');
   const dragItem = useRef(null);
@@ -426,6 +433,23 @@ export default function RaceDetail() {
                 </div>
               ))}
 
+              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  style={styles.btnSecondary}
+                  onClick={() => {
+                    setRecoveryOpen(true);
+                    setRecoveryFile(null);
+                    setRecoveryPreview(null);
+                    setRecoveryError(null);
+                    setRecoveryResult(null);
+                  }}
+                  title="Use the printed PDF to rebuild the OMR scan zones for every round of this race. Use when scanning misreads votes because the printed paper doesn't match the on-disk spec."
+                >
+                  Fix scan zones from PDF
+                </button>
+              </div>
+
               <h3 style={{ marginTop: '1rem', fontSize: '0.95rem' }}>Add Additional Round</h3>
               <p style={styles.muted}>
                 {race.ballot_count
@@ -458,6 +482,69 @@ export default function RaceDetail() {
         onConfirm={racePinModal?.onConfirm || (() => {})}
       />
 
+      {/* Ballot-Spec Recovery Modal */}
+      {recoveryOpen && (
+        <RecoverySpecModal
+          raceId={raceId}
+          recoveryFile={recoveryFile}
+          recoveryPreview={recoveryPreview}
+          recoveryResult={recoveryResult}
+          recoveryError={recoveryError}
+          recoveryBusy={recoveryBusy}
+          onChooseFile={async (file) => {
+            setRecoveryFile(file);
+            setRecoveryPreview(null);
+            setRecoveryResult(null);
+            setRecoveryError(null);
+            if (!file) return;
+            setRecoveryBusy(true);
+            try {
+              const fd = new FormData();
+              fd.append('file', file);
+              const { data } = await api.post(
+                `/admin/races/${raceId}/recover-spec/preview`,
+                fd,
+                { headers: { 'Content-Type': 'multipart/form-data' } }
+              );
+              setRecoveryPreview(data);
+              if (!data.ok) setRecoveryError(data.error || 'Preview returned not-ok');
+            } catch (err) {
+              setRecoveryError(err.response?.data?.error || err.message);
+            } finally {
+              setRecoveryBusy(false);
+            }
+          }}
+          onApply={async () => {
+            if (!recoveryFile) return;
+            setRecoveryBusy(true);
+            setRecoveryError(null);
+            try {
+              const fd = new FormData();
+              fd.append('file', recoveryFile);
+              fd.append('confirm', 'true');
+              const { data } = await api.post(
+                `/admin/races/${raceId}/recover-spec/apply`,
+                fd,
+                { headers: { 'Content-Type': 'multipart/form-data' } }
+              );
+              setRecoveryResult(data);
+              fetchAll();
+            } catch (err) {
+              setRecoveryError(err.response?.data?.error || err.message);
+            } finally {
+              setRecoveryBusy(false);
+            }
+          }}
+          onClose={() => {
+            setRecoveryOpen(false);
+            setRecoveryFile(null);
+            setRecoveryPreview(null);
+            setRecoveryError(null);
+            setRecoveryResult(null);
+          }}
+        />
+      )}
+
       {/* Withdraw Confirmation Modal */}
       {withdrawTarget && (
         <div style={styles.modalOverlay}>
@@ -489,6 +576,167 @@ export default function RaceDetail() {
         </div>
       )}
     </ElectionLayout>
+  );
+}
+
+function RecoverySpecModal({
+  raceId, recoveryFile, recoveryPreview, recoveryResult, recoveryError, recoveryBusy,
+  onChooseFile, onApply, onClose,
+}) {
+  const allMatched = recoveryPreview && Array.isArray(recoveryPreview.candidate_matches)
+    && recoveryPreview.candidate_matches.length > 0
+    && recoveryPreview.candidate_matches.every(m => m.db);
+
+  return (
+    <div style={styles.modalOverlay}>
+      <div style={{ ...styles.modalCard, maxWidth: 720, maxHeight: '90vh', overflowY: 'auto' }}>
+        <h3 style={{ margin: '0 0 0.25rem' }}>Fix scan zones from PDF</h3>
+        <p style={{ margin: '0 0 1rem', color: '#374151', lineHeight: 1.45, fontSize: '0.9rem' }}>
+          Upload the PDF that was actually sent to the printer. The server will read the QR + oval positions
+          directly from the PDF's drawing operators and rewrite the OMR <code>ballot-spec.json</code> for
+          <strong> every round of race {raceId}</strong>. Existing specs are backed up.
+        </p>
+
+        {!recoveryResult && (
+          <>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>
+                Printed ballot PDF
+              </label>
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={(e) => onChooseFile(e.target.files?.[0] || null)}
+                disabled={recoveryBusy}
+              />
+              {recoveryFile && (
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 4 }}>
+                  {recoveryFile.name} ({Math.round(recoveryFile.size / 1024)} KB)
+                </div>
+              )}
+            </div>
+
+            {recoveryBusy && !recoveryPreview && (
+              <p style={{ color: '#6b7280', fontSize: '0.9rem' }}>Reading PDF...</p>
+            )}
+
+            {recoveryError && !recoveryResult && (
+              <div style={styles.recoveryErrorBox}>
+                <strong>Error:</strong> {recoveryError}
+              </div>
+            )}
+
+            {recoveryPreview && (
+              <div style={{ marginBottom: '0.75rem' }}>
+                <h4 style={styles.recoverySectionH4}>Detected layout</h4>
+                <div style={styles.recoveryFactRow}>
+                  <span style={styles.recoveryFactLabel}>Ballot size:</span>
+                  <code>{recoveryPreview.extraction?.ballot_size}</code>
+                </div>
+                <div style={styles.recoveryFactRow}>
+                  <span style={styles.recoveryFactLabel}>QR position (pts):</span>
+                  <code>
+                    x={recoveryPreview.extraction?.qr_position_pts?.x?.toFixed(2)} y={recoveryPreview.extraction?.qr_position_pts?.y?.toFixed(2)} {recoveryPreview.extraction?.qr_position_pts?.width?.toFixed(0)}×{recoveryPreview.extraction?.qr_position_pts?.height?.toFixed(0)}
+                  </code>
+                </div>
+
+                <h4 style={styles.recoverySectionH4}>Candidate matches</h4>
+                <table style={styles.recoveryTable}>
+                  <thead>
+                    <tr>
+                      <th style={styles.recoveryTh}>From PDF</th>
+                      <th style={styles.recoveryTh}>Matched DB candidate</th>
+                      <th style={styles.recoveryTh}>Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(recoveryPreview.candidate_matches || []).map((m, i) => (
+                      <tr key={i}>
+                        <td style={styles.recoveryTd}>{m.pdf_name}</td>
+                        <td style={styles.recoveryTd}>
+                          {m.db ? (
+                            <>
+                              <strong>{m.db.name}</strong>
+                              <span style={styles.recoveryMuted}> (id={m.db.id}{m.db.status === 'withdrawn' ? ', withdrawn' : ''})</span>
+                            </>
+                          ) : (
+                            <span style={{ color: '#dc2626', fontWeight: 600 }}>NO MATCH</span>
+                          )}
+                        </td>
+                        <td style={styles.recoveryTd}>
+                          {m.db ? (
+                            <span style={{ ...styles.recoveryMatchBadge, background: m.method === 'exact' ? '#d1fae5' : '#fef3c7', color: m.method === 'exact' ? '#065f46' : '#92400e' }}>
+                              {m.method}
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {recoveryPreview.missing_from_pdf?.length > 0 && (
+                  <div style={{ ...styles.recoveryWarnBox, marginTop: '0.5rem' }}>
+                    <strong>Note:</strong> {recoveryPreview.missing_from_pdf.length} DB candidate(s) have no oval on the printed paper:{' '}
+                    {recoveryPreview.missing_from_pdf.map(c => c.name).join(', ')}.
+                    {' '}This is OK if those candidates were added/withdrawn after printing — they just won't be scannable.
+                  </div>
+                )}
+
+                <h4 style={styles.recoverySectionH4}>Rounds that will be updated</h4>
+                {recoveryPreview.rounds_to_update?.length > 0 ? (
+                  <ul style={styles.recoveryList}>
+                    {recoveryPreview.rounds_to_update.map(r => (
+                      <li key={r.round_id} style={{ marginBottom: 2 }}>
+                        Round {r.round_number}{' '}
+                        <span style={styles.recoveryMuted}>(id={r.round_id})</span>
+                        {r.backup && <span style={styles.recoveryMuted}> — existing spec will be backed up</span>}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={styles.recoveryMuted}>No rounds found for this race.</p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {recoveryResult && recoveryResult.ok && (
+          <div style={styles.recoverySuccessBox}>
+            <h4 style={{ margin: '0 0 0.25rem', color: '#065f46' }}>Recovery applied</h4>
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem' }}>
+              Updated <strong>{recoveryResult.rounds_updated.length}</strong> round(s) of race {recoveryResult.race?.name}. Backups saved with extension <code>.broken-&lt;timestamp&gt;.json</code>.
+            </p>
+            <p style={{ margin: 0, fontSize: '0.85rem' }}>
+              <strong>Next:</strong> physically scan one printed ballot for this race with a known marked candidate to verify scanning aligns correctly.
+            </p>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          {recoveryResult ? (
+            <button style={styles.btnPrimary} onClick={onClose}>Close</button>
+          ) : (
+            <>
+              <button style={styles.btnSmall} onClick={onClose} disabled={recoveryBusy}>Cancel</button>
+              <button
+                style={{
+                  ...styles.btnPrimary,
+                  opacity: (allMatched && !recoveryBusy) ? 1 : 0.5,
+                  cursor: (allMatched && !recoveryBusy) ? 'pointer' : 'not-allowed',
+                }}
+                disabled={!allMatched || recoveryBusy}
+                onClick={onApply}
+                title={!allMatched ? 'All PDF candidates must match a DB candidate before applying' : 'Write the recovered spec to every round of this race'}
+              >
+                {recoveryBusy ? 'Applying...' : `Apply to all ${recoveryPreview?.rounds_to_update?.length || 0} round(s)`}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -570,6 +818,33 @@ const styles = {
   modalCard: {
     background: '#fff', borderRadius: 12, padding: '2rem', width: '100%', maxWidth: 420,
     boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+  },
+
+  // Recovery modal styles
+  btnSecondary: {
+    padding: '0.5rem 1rem', background: '#fff', color: '#1f2937', border: '1px solid #d1d5db',
+    borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem',
+  },
+  recoverySectionH4: { margin: '0.75rem 0 0.4rem', fontSize: '0.92rem', color: '#1f2937' },
+  recoveryFactRow: { display: 'flex', gap: '0.5rem', fontSize: '0.85rem', marginBottom: 2, color: '#374151' },
+  recoveryFactLabel: { fontWeight: 600, minWidth: 130 },
+  recoveryTable: { width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' },
+  recoveryTh: { textAlign: 'left', padding: '0.35rem 0.5rem', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#1f2937' },
+  recoveryTd: { padding: '0.35rem 0.5rem', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top' },
+  recoveryMuted: { color: '#6b7280', fontSize: '0.82rem' },
+  recoveryMatchBadge: { padding: '1px 8px', borderRadius: 10, fontSize: '0.72rem', fontWeight: 600 },
+  recoveryList: { paddingLeft: '1.2rem', margin: 0, fontSize: '0.85rem', color: '#374151' },
+  recoveryErrorBox: {
+    background: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b',
+    padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.85rem', marginBottom: '0.75rem',
+  },
+  recoveryWarnBox: {
+    background: '#fef3c7', border: '1px solid #fbbf24', color: '#92400e',
+    padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.85rem',
+  },
+  recoverySuccessBox: {
+    background: '#d1fae5', border: '1px solid #6ee7b7',
+    padding: '0.75rem', borderRadius: 6, marginBottom: '0.5rem',
   },
 };
 

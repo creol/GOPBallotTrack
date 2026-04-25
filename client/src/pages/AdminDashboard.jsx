@@ -53,11 +53,24 @@ export default function AdminDashboard({ auth }) {
     if (!file) return;
     setImporting(true);
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      await api.post('/admin/import-election', data);
+      const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
+      let result;
+      if (isZip) {
+        const fd = new FormData();
+        fd.append('file', file);
+        result = await api.post('/admin/import-election', fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      } else {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        result = await api.post('/admin/import-election', data);
+      }
       fetchElections();
-      alert('Election event imported successfully!');
+      const filesNote = result?.data?.files_copied_total
+        ? ` (${result.data.files_copied_total} ballot file${result.data.files_copied_total === 1 ? '' : 's'} restored)`
+        : '';
+      alert('Election event imported successfully!' + filesNote);
     } catch (err) {
       alert('Import failed: ' + (err.response?.data?.error || err.message));
     } finally {
@@ -97,8 +110,8 @@ export default function AdminDashboard({ auth }) {
           <div style={s.divider} />
 
           <label style={{ ...s.navItem, cursor: 'pointer', display: 'block' }}>
-            {importing ? 'Importing...' : 'Import JSON'}
-            <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
+            {importing ? 'Importing...' : 'Import JSON or ZIP'}
+            <input type="file" accept=".json,.zip" onChange={handleImport} style={{ display: 'none' }} />
           </label>
         </nav>
 
@@ -111,7 +124,7 @@ export default function AdminDashboard({ auth }) {
           <Link to="/admin?section=scanners" style={{ ...s.mobileTab, ...(activeSection === 'scanners' ? s.mobileTabActive : {}), textDecoration: 'none' }}>Scanners</Link>
           <label style={{ ...s.mobileTab, cursor: 'pointer' }}>
             {importing ? 'Importing...' : 'Import'}
-            <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
+            <input type="file" accept=".json,.zip" onChange={handleImport} style={{ display: 'none' }} />
           </label>
         </nav>
 
