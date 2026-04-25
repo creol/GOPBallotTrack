@@ -185,7 +185,12 @@ async function requireSuperAdminPin(req, res, next) {
   try {
     const session = getSession(req);
     if (!session || session.role !== 'super_admin') {
-      return res.status(401).json({ error: 'Super Admin authentication required' });
+      // 403 here, not 401: the axios client interceptor force-redirects to
+      // /login on 401 for /admin URLs (see client/src/api/client.js). Using
+      // 403 lets the inline modal show "Invalid PIN" instead of yanking the
+      // user to the login page mid-confirmation, which previously hid the
+      // real error and let the operator believe the action succeeded.
+      return res.status(403).json({ error: 'Super Admin authentication required' });
     }
 
     const pin = req.body?.pin;
@@ -198,7 +203,7 @@ async function requireSuperAdminPin(req, res, next) {
       [session.user_id]
     );
     if (!user || user.pin_hash !== hashPin(pin)) {
-      return res.status(401).json({ error: 'Invalid Super Admin PIN' });
+      return res.status(403).json({ error: 'Invalid Super Admin PIN' });
     }
 
     req.session = session;
