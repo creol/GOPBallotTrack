@@ -8,6 +8,7 @@ export default function Confirmation() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [judgeName, setJudgeName] = useState('');
+  const [judgePin, setJudgePin] = useState('');
   const [showOverride, setShowOverride] = useState(false);
   const [overrideNotes, setOverrideNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -244,10 +245,12 @@ export default function Confirmation() {
 
   const handleConfirm = async () => {
     if (!judgeName.trim()) { setError('Please enter your name'); return; }
+    if (!judgePin) { setError('Super Admin PIN is required'); return; }
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/admin/rounds/${roundId}/confirm`, { confirmed_by_name: judgeName });
+      await api.post(`/admin/rounds/${roundId}/confirm`, { pin: judgePin, confirmed_by_name: judgeName });
+      setJudgePin('');
       navigate(`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/chair`);
     } catch (err) {
       setError(err.response?.data?.error || 'Confirmation failed');
@@ -258,14 +261,17 @@ export default function Confirmation() {
 
   const handleOverride = async () => {
     if (!judgeName.trim()) { setError('Please enter your name'); return; }
+    if (!judgePin) { setError('Super Admin PIN is required'); return; }
     if (!overrideNotes.trim()) { setError('Override notes are required'); return; }
     setSubmitting(true);
     setError(null);
     try {
       await api.post(`/admin/rounds/${roundId}/confirm-override`, {
+        pin: judgePin,
         confirmed_by_name: judgeName,
         override_notes: overrideNotes,
       });
+      setJudgePin('');
       navigate(`/admin/elections/${electionId}/races/${raceId}/rounds/${roundId}/chair`);
     } catch (err) {
       setError(err.response?.data?.error || 'Override failed');
@@ -1090,8 +1096,16 @@ export default function Confirmation() {
                 value={judgeName}
                 onChange={e => setJudgeName(e.target.value)}
               />
+              <input
+                style={{ ...styles.input, marginTop: '0.5rem' }}
+                type="password"
+                placeholder="Super Admin PIN"
+                value={judgePin}
+                onChange={e => setJudgePin(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !submitting) handleConfirm(); }}
+              />
               <button
-                style={{ ...styles.btnConfirm, opacity: submitting ? 0.6 : 1 }}
+                style={{ ...styles.btnConfirm, opacity: submitting ? 0.6 : 1, marginTop: '0.5rem' }}
                 onClick={handleConfirm}
                 disabled={submitting}
               >
@@ -1100,14 +1114,21 @@ export default function Confirmation() {
             </div>
           )}
 
-          {/* Name input for override path */}
+          {/* Name + PIN inputs for override path */}
           {showOverride && (
-            <div style={{ marginTop: '0.75rem' }}>
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               <input
                 style={styles.input}
                 placeholder="Your name"
                 value={judgeName}
                 onChange={e => setJudgeName(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                type="password"
+                placeholder="Super Admin PIN"
+                value={judgePin}
+                onChange={e => setJudgePin(e.target.value)}
               />
             </div>
           )}

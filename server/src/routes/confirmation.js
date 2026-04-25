@@ -322,16 +322,11 @@ router.get('/rounds/:id/comparison', async (req, res) => {
 });
 
 // POST /api/rounds/:id/confirm — Election Judge confirms the round.
-// Re-verifies the operator's super-admin PIN server-side IF a pin is in the
-// body (sent by ChairDecision.jsx's "Finalize Round & Move to Next" flow).
-// The Election Judge confirmation page (Confirmation.jsx) doesn't collect a
-// PIN, so the gate is conditional rather than a hard middleware.
-router.post('/rounds/:id/confirm', async (req, res) => {
-  if (req.body?.pin) {
-    return requireSuperAdminPin(req, res, () => actuallyConfirmRound(req, res));
-  }
-  return actuallyConfirmRound(req, res);
-});
+// Always requires a super-admin PIN. The conditional gate that used to live
+// here let Confirmation.jsx finalize a round with just a typed name, which
+// turned a "Finalize Round" flow into a no-PIN action and contradicted the
+// rule that nothing finalizes without a valid super-admin PIN.
+router.post('/rounds/:id/confirm', requireSuperAdminPin, actuallyConfirmRound);
 
 async function actuallyConfirmRound(req, res) {
   try {
@@ -359,14 +354,9 @@ async function actuallyConfirmRound(req, res) {
 }
 
 // POST /api/rounds/:id/confirm-override — Election Judge overrides a mismatch.
-// Like /confirm, the PIN gate is conditional — only enforced if the client sent
-// one — so existing override flows that prompt only for notes keep working.
-router.post('/rounds/:id/confirm-override', async (req, res) => {
-  if (req.body?.pin) {
-    return requireSuperAdminPin(req, res, () => actuallyConfirmOverride(req, res));
-  }
-  return actuallyConfirmOverride(req, res);
-});
+// Same hard PIN gate as /confirm — overrides are even more sensitive, so we
+// never accept them without a fresh super-admin PIN.
+router.post('/rounds/:id/confirm-override', requireSuperAdminPin, actuallyConfirmOverride);
 
 async function actuallyConfirmOverride(req, res) {
   try {
