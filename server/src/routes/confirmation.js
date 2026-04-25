@@ -2,6 +2,7 @@ const { Router } = require('express');
 const {
   getComparison,
   confirmRound,
+  finalizeRound,
   releaseRound,
   getChairPreview,
   getChairDecision,
@@ -321,12 +322,33 @@ router.get('/rounds/:id/comparison', async (req, res) => {
   }
 });
 
-// POST /api/rounds/:id/confirm — Election Judge confirms the round.
-// Always requires a super-admin PIN. The conditional gate that used to live
-// here let Confirmation.jsx finalize a round with just a typed name, which
-// turned a "Finalize Round" flow into a no-PIN action and contradicted the
-// rule that nothing finalizes without a valid super-admin PIN.
+// POST /api/rounds/:id/confirm — Election Judge records that the pass counts
+// have been reviewed and accepted. Saves an audit row and computes the
+// round_results, but does NOT change round status. The Chair finalizes the
+// round separately via POST /rounds/:id/finalize.
 router.post('/rounds/:id/confirm', requireSuperAdminPin, actuallyConfirmRound);
+
+// POST /api/rounds/:id/finalize — Chair flips the round to round_finalized.
+// Requires that a judge confirmation has already been recorded. PIN-gated.
+router.post('/rounds/:id/finalize', requireSuperAdminPin, async (req, res) => {
+  try {
+    const { finalized_by_name } = req.body;
+    if (!finalized_by_name) {
+      return res.status(400).json({ error: 'finalized_by_name is required' });
+    }
+    const result = await finalizeRound({
+      roundId: parseInt(req.params.id),
+      finalizedByName: finalized_by_name,
+    });
+    const io = req.app.get('io');
+    if (io) io.emit('round:finalized', { round_id: parseInt(req.params.id) });
+    res.json({ message: result.alreadyFinalized ? 'Round was already finalized' : 'Round finalized', ...result });
+  } catch (err) {
+    console.error('Finalize round error:', err);
+    const status = err.message.includes('required') || err.message.includes('cannot be finalized') || err.message.includes('must be confirmed') ? 400 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
 
 async function actuallyConfirmRound(req, res) {
   try {
