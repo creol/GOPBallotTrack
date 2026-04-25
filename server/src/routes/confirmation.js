@@ -10,6 +10,7 @@ const {
   recordReconciliation,
 } = require('../services/confirmationService');
 const db = require('../db');
+const { requireSuperAdminPin } = require('../middleware/auth');
 
 const router = Router();
 
@@ -320,8 +321,19 @@ router.get('/rounds/:id/comparison', async (req, res) => {
   }
 });
 
-// POST /api/rounds/:id/confirm — Election Judge confirms the round
+// POST /api/rounds/:id/confirm — Election Judge confirms the round.
+// Re-verifies the operator's super-admin PIN server-side IF a pin is in the
+// body (sent by ChairDecision.jsx's "Finalize Round & Move to Next" flow).
+// The Election Judge confirmation page (Confirmation.jsx) doesn't collect a
+// PIN, so the gate is conditional rather than a hard middleware.
 router.post('/rounds/:id/confirm', async (req, res) => {
+  if (req.body?.pin) {
+    return requireSuperAdminPin(req, res, () => actuallyConfirmRound(req, res));
+  }
+  return actuallyConfirmRound(req, res);
+});
+
+async function actuallyConfirmRound(req, res) {
   try {
     const { confirmed_by_name } = req.body;
     if (!confirmed_by_name) {
@@ -344,10 +356,19 @@ router.post('/rounds/:id/confirm', async (req, res) => {
     const status = err.message.includes('required') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
+}
+
+// POST /api/rounds/:id/confirm-override — Election Judge overrides a mismatch.
+// Like /confirm, the PIN gate is conditional — only enforced if the client sent
+// one — so existing override flows that prompt only for notes keep working.
+router.post('/rounds/:id/confirm-override', async (req, res) => {
+  if (req.body?.pin) {
+    return requireSuperAdminPin(req, res, () => actuallyConfirmOverride(req, res));
+  }
+  return actuallyConfirmOverride(req, res);
 });
 
-// POST /api/rounds/:id/confirm-override — Election Judge overrides a mismatch
-router.post('/rounds/:id/confirm-override', async (req, res) => {
+async function actuallyConfirmOverride(req, res) {
   try {
     const { confirmed_by_name, override_notes } = req.body;
     if (!confirmed_by_name) {
@@ -373,7 +394,7 @@ router.post('/rounds/:id/confirm-override', async (req, res) => {
     const status = err.message.includes('required') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
-});
+}
 
 // GET /api/rounds/:id/chair-preview — What the public will see
 router.get('/rounds/:id/chair-preview', async (req, res) => {

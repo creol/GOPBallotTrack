@@ -4,6 +4,7 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
 const { generateBallots, SIZES } = require('../pdf/ballotGenerator');
+const { requireSuperAdminPin } = require('../middleware/auth');
 
 const router = Router();
 
@@ -454,7 +455,7 @@ router.put('/ballot-serials/:id/reset', async (req, res) => {
 });
 
 // PUT /api/admin/rounds/:id/reset-spoiled — Bulk reset all spoiled ballots in a round back to 'unused'
-router.put('/rounds/:id/reset-spoiled', async (req, res) => {
+router.put('/rounds/:id/reset-spoiled', requireSuperAdminPin, async (req, res) => {
   try {
     const { reset_by } = req.body;
     if (!reset_by) return res.status(400).json({ error: 'reset_by (your name) is required' });

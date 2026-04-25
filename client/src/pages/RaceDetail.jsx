@@ -34,6 +34,11 @@ export default function RaceDetail() {
   const [withdrawTarget, setWithdrawTarget] = useState(null);
   const [withdrawPin, setWithdrawPin] = useState('');
   const [withdrawError, setWithdrawError] = useState(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryDesignations, setSummaryDesignations] = useState({});
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryError, setSummaryError] = useState(null);
+  const [summaryDecidingTotals, setSummaryDecidingTotals] = useState({});
   // Ballot-spec recovery modal state ("Fix scan zones from PDF")
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryFile, setRecoveryFile] = useState(null);
@@ -154,18 +159,62 @@ export default function RaceDetail() {
     });
   };
 
+  const openSummaryModal = async () => {
+    const designations = {};
+    candidates.forEach(c => { designations[c.id] = c.final_designation || ''; });
+    setSummaryDesignations(designations);
+    setSummaryError(null);
+
+    // Fetch the deciding round's vote totals to display next to each candidate.
+    let totals = {};
+    try {
+      const finalized = rounds.filter(r => r.status === 'round_finalized');
+      const target = finalized.length > 0
+        ? finalized[finalized.length - 1]
+        : (rounds.length > 0 ? rounds[rounds.length - 1] : null);
+      if (target) {
+        const { data } = await api.get(`/admin/rounds/${target.id}`);
+        const results = data?.results || data?.round_results || [];
+        results.forEach(r => { totals[r.candidate_id] = r.vote_count; });
+      }
+    } catch {
+      // No totals — modal still works without them.
+    }
+    setSummaryDecidingTotals(totals);
+    setSummaryOpen(true);
+  };
+
+  const handleGenerateSummary = async () => {
+    setSummaryBusy(true);
+    setSummaryError(null);
+    try {
+      const designations = candidates.map(c => ({
+        candidate_id: c.id,
+        designation: summaryDesignations[c.id] || null,
+      }));
+      await api.put(`/admin/races/${raceId}/final-designations`, { designations });
+      window.open(`/api/admin/races/${raceId}/summary-pdf`, '_blank');
+      await fetchAll();
+      setSummaryOpen(false);
+    } catch (err) {
+      setSummaryError(err.response?.data?.error || err.message || 'Failed to generate PDF');
+    } finally {
+      setSummaryBusy(false);
+    }
+  };
+
   const openFinalizeRace = () => setRacePinModal({
     title: `Finalize Race — ${race?.name || ''}`,
     description: 'This marks the race as finalized and cancels any remaining pending/ready rounds. No more rounds can be added. Requires Super Admin approval.',
     confirmLabel: 'Finalize Race',
     confirmStyle: 'danger',
     requireNotes: false,
-    onConfirm: async () => {
+    onConfirm: async ({ pin }) => {
       setRacePinModal(null);
       setRaceActionBusy(true);
       setRaceActionError(null);
       try {
-        await api.post(`/admin/control-center/race/${raceId}/finalize`);
+        await api.post(`/admin/control-center/race/${raceId}/finalize`, { pin });
         await fetchAll();
       } catch (err) {
         setRaceActionError(err.response?.data?.error || 'Finalize failed');
@@ -182,12 +231,12 @@ export default function RaceDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for reversing race finalization',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setRacePinModal(null);
       setRaceActionBusy(true);
       setRaceActionError(null);
       try {
-        await api.post(`/admin/control-center/race/${raceId}/reverse-finalize`, { notes });
+        await api.post(`/admin/control-center/race/${raceId}/reverse-finalize`, { pin, notes });
         await fetchAll();
       } catch (err) {
         setRaceActionError(err.response?.data?.error || 'Reverse failed');
@@ -296,6 +345,26 @@ export default function RaceDetail() {
           )}
         </div>
       )}
+
+      {/* Print Official Race Summary — available to all admins */}
+      <div style={{
+        background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
+        padding: '0.6rem 1rem', marginBottom: '1rem',
+        display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.92rem' }}>Official Race Summary</div>
+          <div style={{ ...styles.muted, fontSize: '0.82rem' }}>
+            Mark official nominees / candidates progressing to primary, then print the official outcome PDF for this race.
+          </div>
+        </div>
+        <button
+          style={{ ...styles.btnPrimary, padding: '0.5rem 1rem', fontSize: '0.88rem' }}
+          onClick={openSummaryModal}
+        >
+          Print Race Summary
+        </button>
+      </div>
 
       {/* Tab switching for Rounds/Candidates */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
@@ -542,6 +611,75 @@ export default function RaceDetail() {
             setRecoveryOverride('');
           }}
         />
+      )}
+
+      {/* Print Official Race Summary Modal */}
+      {summaryOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modalCard, maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ margin: '0 0 0.25rem' }}>Print Official Race Summary</h3>
+            <p style={{ margin: '0 0 0.25rem', fontWeight: 600 }}>{race.name}</p>
+            <p style={{ margin: '0 0 1rem', color: '#6b7280', fontSize: '0.85rem', lineHeight: 1.45 }}>
+              Mark each candidate's official designation. These selections are saved as the race's official outcome and will appear on the printed PDF.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', columnGap: '0.5rem', rowGap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 600, color: '#374151' }}>Candidate</div>
+              <div style={{ fontWeight: 600, color: '#374151', textAlign: 'center' }}>None</div>
+              <div style={{ fontWeight: 600, color: '#374151', textAlign: 'center' }}>Official Nominee</div>
+              <div style={{ fontWeight: 600, color: '#374151', textAlign: 'center' }}>Progress to Primary</div>
+              {candidates.map(c => {
+                const cur = summaryDesignations[c.id] || '';
+                const total = summaryDecidingTotals[c.id];
+                return [
+                  <div key={`${c.id}-name`} style={{ paddingRight: '0.5rem' }}>
+                    <div style={{ fontWeight: 500 }}>{c.name}</div>
+                    {total !== undefined && (
+                      <div style={{ ...styles.muted, fontSize: '0.78rem' }}>{total} votes</div>
+                    )}
+                  </div>,
+                  <div key={`${c.id}-none`} style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name={`des-${c.id}`}
+                      checked={cur === ''}
+                      onChange={() => setSummaryDesignations({ ...summaryDesignations, [c.id]: '' })}
+                    />
+                  </div>,
+                  <div key={`${c.id}-on`} style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name={`des-${c.id}`}
+                      checked={cur === 'official_nominee'}
+                      onChange={() => setSummaryDesignations({ ...summaryDesignations, [c.id]: 'official_nominee' })}
+                    />
+                  </div>,
+                  <div key={`${c.id}-pp`} style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name={`des-${c.id}`}
+                      checked={cur === 'progress_to_primary'}
+                      onChange={() => setSummaryDesignations({ ...summaryDesignations, [c.id]: 'progress_to_primary' })}
+                    />
+                  </div>,
+                ];
+              })}
+            </div>
+
+            {summaryError && (
+              <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b', padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                {summaryError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button style={styles.btnSmall} onClick={() => setSummaryOpen(false)} disabled={summaryBusy}>Cancel</button>
+              <button style={styles.btnPrimary} onClick={handleGenerateSummary} disabled={summaryBusy}>
+                {summaryBusy ? 'Generating...' : 'Save & Generate PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Withdraw Confirmation Modal */}

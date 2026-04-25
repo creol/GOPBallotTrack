@@ -174,4 +174,39 @@ async function verifyPin(userId, pin) {
   return user.pin_hash === hashPin(pin);
 }
 
-module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireRaceAccess, requireStationToken, requireAuthOrStationToken, sessions };
+/**
+ * Middleware: require a super_admin session AND a matching PIN in the request
+ * body. The PIN must belong to the LOGGED-IN super admin — not "any super
+ * admin" — so a destructive action can never run without the actual operator
+ * re-authenticating in the moment. This is the load-bearing server-side gate
+ * for finalize/recount/void/reverse/etc.; the modal on the client is just UX.
+ */
+async function requireSuperAdminPin(req, res, next) {
+  try {
+    const session = getSession(req);
+    if (!session || session.role !== 'super_admin') {
+      return res.status(401).json({ error: 'Super Admin authentication required' });
+    }
+
+    const pin = req.body?.pin;
+    if (!pin) {
+      return res.status(400).json({ error: 'Super Admin PIN is required to confirm this action' });
+    }
+
+    const { rows: [user] } = await db.query(
+      "SELECT pin_hash FROM admin_users WHERE id = $1 AND role = 'super_admin'",
+      [session.user_id]
+    );
+    if (!user || user.pin_hash !== hashPin(pin)) {
+      return res.status(401).json({ error: 'Invalid Super Admin PIN' });
+    }
+
+    req.session = session;
+    next();
+  } catch (err) {
+    console.error('requireSuperAdminPin error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+module.exports = { login, getSession, hashPin, verifyPin, requireAuth, requireSuperAdmin, requireSuperAdminPin, requireRaceAccess, requireStationToken, requireAuthOrStationToken, sessions };

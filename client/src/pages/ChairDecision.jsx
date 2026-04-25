@@ -120,21 +120,20 @@ export default function ChairDecision() {
     }
   };
 
+  // Server-side PIN gate is the source of truth — every destructive endpoint below
+  // re-verifies the operator's super-admin PIN against their session and rejects with
+  // 401 if it doesn't match. We surface that 401 as the modal error so a wrong PIN
+  // can never silently succeed (which is what the old client-only pre-check allowed).
   const verifyPinAndExecute = async (action) => {
     if (!actionPin) { setActionError('PIN is required'); return; }
-    try {
-      await api.post('/auth/login', { role: 'admin', pin: actionPin });
-    } catch {
-      setActionError('Invalid PIN');
-      return;
-    }
     setActionError(null);
+    const pin = actionPin;
 
     try {
       if (action === 'next_round') {
         await handleApplyDecisions();
         // Finalize the round so it can be published from the Round page
-        await api.post(`/admin/rounds/${roundId}/confirm`, { confirmed_by_name: actionPin ? 'admin' : 'admin' });
+        await api.post(`/admin/rounds/${roundId}/confirm`, { pin, confirmed_by_name: 'admin' });
         setShowAction(null);
         setActionPin('');
         navigate(`/admin/elections/${electionId}/races/${raceId}`);
@@ -144,11 +143,11 @@ export default function ChairDecision() {
         const winnerEntry = Object.entries(decisions).find(([, o]) => o === 'winner' || o === 'convention_winner');
         const primaryEntry = Object.entries(decisions).find(([, o]) => o === 'advance_to_primary');
         if (winnerEntry) {
-          await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'winner', candidate_id: parseInt(winnerEntry[0]) });
+          await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'winner', candidate_id: parseInt(winnerEntry[0]) });
         } else if (primaryEntry) {
-          await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'advances_primary' });
+          await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'advances_primary' });
         } else {
-          await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'closed', notes: 'Race finalized' });
+          await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'closed', notes: 'Race finalized' });
         }
         alert('Race finalized.');
         setShowAction(null);
@@ -157,13 +156,16 @@ export default function ChairDecision() {
       } else if (action === 'cancel') {
         const notes = prompt('Reason for canceling (required):');
         if (!notes) { setActionError('Reason is required'); return; }
-        await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'closed', notes });
+        await api.put(`/admin/races/${raceId}/outcome`, { pin, outcome: 'closed', notes });
         alert('Race canceled.');
         setShowAction(null);
         setActionPin('');
         fetchData();
       }
     } catch (err) {
+      // Server returns 401 with "Invalid Super Admin PIN" when the PIN doesn't match
+      // the logged-in user. Show the server's message verbatim so the operator knows
+      // whether it was the PIN or something else.
       setActionError(err.response?.data?.error || 'Action failed');
     }
   };
