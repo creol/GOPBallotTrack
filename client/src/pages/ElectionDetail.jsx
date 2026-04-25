@@ -662,6 +662,15 @@ function ExportSection({ electionId }) {
         <a href={`/api/admin/elections/${electionId}/export-json`} style={styles.btnDownload} download>
           Export as JSON (reimportable)
         </a>
+
+        <a
+          href={`/api/admin/elections/${electionId}/export-json?include_ballots=1`}
+          style={styles.btnDownload}
+          download
+          title="Bundles election structure + ballot files (PDFs, ballot-spec.json) so the duplicate keeps the same scan zones without regenerating"
+        >
+          Export Clone (with ballot files)
+        </a>
       </div>
       {(imageStatus === 'error' || fullStatus === 'error') && (
         <p style={{ color: '#dc2626', marginTop: '0.5rem' }}>Export failed. Please try again.</p>

@@ -29,6 +29,7 @@ const scannersRouter = require('./routes/scanners');
 const adminUsersRouter = require('./routes/adminUsers');
 const controlCenterRouter = require('./routes/controlCenter');
 const testToolsRouter = require('./routes/testTools');
+const ballotSpecRecoveryRouter = require('./routes/ballotSpecRecovery');
 const stationsRouter = require('./routes/stations');
 const scanLogsRouter = require('./routes/scanLogs');
 const reviewedBallotsRouter = require('./routes/reviewedBallots');
@@ -110,6 +111,9 @@ app.use('/api/admin/control-center', requireSuperAdmin, controlCenterRouter);
 
 // Test tools and import/export (any authenticated user)
 app.use('/api/admin', requireAuth, testToolsRouter);
+
+// Ballot-spec recovery from printed PDF (any authenticated user)
+app.use('/api/admin', requireAuth, ballotSpecRecoveryRouter);
 
 // Scanning & pass routes (no PIN — tally operators access directly)
 app.use('/api', passesRouter);
