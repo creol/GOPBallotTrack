@@ -30,10 +30,41 @@ function loadBallotSpec(electionId, roundId) {
   }
 }
 
+// Round statuses where it is safe for a scanner station to deposit ballots.
+// Anything outside this set (pending_needs_action, ready, round_finalized,
+// canceled) MUST reject the upload — a station should never silently
+// re-open or progress a round.
+const SCANNABLE_ROUND_STATUSES = new Set(['voting_open', 'voting_closed', 'tallying']);
+
+class RoundNotScannableError extends Error {
+  constructor(roundId, status) {
+    super(`Round ${roundId} is not open for scanning (status=${status})`);
+    this.code = 'round_not_scannable';
+    this.roundId = roundId;
+    this.roundStatus = status;
+  }
+}
+
+async function getRoundStatus(roundId) {
+  const { rows: [row] } = await db.query('SELECT status FROM rounds WHERE id = $1', [roundId]);
+  return row ? row.status : null;
+}
+
 /**
  * Get or create an active pass for a round.
+ *
+ * Will throw RoundNotScannableError if the round is not currently in a
+ * scannable status. This is the load-bearing gate that prevents a stale
+ * station assignment (or a serial that happens to belong to a different
+ * round, e.g. after a clone) from silently auto-opening an official
+ * round and recording scans against it.
  */
 async function getOrCreateActivePass(roundId) {
+  const status = await getRoundStatus(roundId);
+  if (!SCANNABLE_ROUND_STATUSES.has(status)) {
+    throw new RoundNotScannableError(roundId, status);
+  }
+
   const { rows: [existing] } = await db.query(
     "SELECT * FROM passes WHERE round_id = $1 AND status = 'active' ORDER BY pass_number DESC LIMIT 1",
     [roundId]
@@ -42,11 +73,6 @@ async function getOrCreateActivePass(roundId) {
 
   const { rows: [{ max }] } = await db.query(
     "SELECT COALESCE(MAX(pass_number), 0) as max FROM passes WHERE round_id = $1 AND status != 'deleted'",
-    [roundId]
-  );
-
-  await db.query(
-    "UPDATE rounds SET status = 'tallying' WHERE id = $1 AND status IN ('pending_needs_action', 'ready')",
     [roundId]
   );
 
@@ -96,6 +122,27 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
     }
   }
   if (!buffer) return { success: false, error: 'No image data' };
+
+  // Hard gate: if the caller named a round, refuse to write anything against
+  // it unless the round is currently in a scannable state. Prevents a stale
+  // station assignment from auto-opening an official round.
+  if (assignedRoundId) {
+    const status = await getRoundStatus(assignedRoundId);
+    if (!SCANNABLE_ROUND_STATUSES.has(status)) {
+      const savedPath = saveImageForReview(buffer, `roundclosed-${assignedRoundId}`, filePath);
+      if (filePath) { try { fs.unlinkSync(filePath); } catch {} }
+      log(`ROUND NOT OPEN — round ${assignedRoundId} status=${status}; rejecting upload from ${source}`, 'warn');
+      if (io) io.emit('scan:error', { reason: 'round_not_open', station: source, round_id: assignedRoundId, round_status: status });
+      return {
+        success: false,
+        flag_reason: 'round_not_open',
+        round_id: assignedRoundId,
+        round_status: status,
+        image_path: savedPath,
+        error: `Round ${assignedRoundId} is not open for scanning (status=${status}). Reassign this station to an open round.`,
+      };
+    }
+  }
 
   // QR decode
   log(`START file=${filePath ? path.basename(filePath) : 'upload'} size=${buffer.length}`);
@@ -326,8 +373,29 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
   const electionId = ballotInfo.election_id;
   _logElectionId = electionId;
 
-  // Get or create active pass
-  const pass = await getOrCreateActivePass(roundId);
+  // Get or create active pass — may refuse if the round isn't open for
+  // scanning. Watcher path arrives here without an upfront round gate, so
+  // catch that case and return a clean failure instead of crashing.
+  let pass;
+  try {
+    pass = await getOrCreateActivePass(roundId);
+  } catch (err) {
+    if (err && err.code === 'round_not_scannable') {
+      const savedPath = saveImageForReview(buffer, `roundclosed-${serialNumber}`, filePath);
+      log(`ROUND NOT OPEN — SN=${serialNumber} resolved to round ${err.roundId} status=${err.roundStatus}; rejecting`, 'warn');
+      if (io) io.emit('scan:error', { reason: 'round_not_open', station: source, round_id: err.roundId, round_status: err.roundStatus, serial_number: serialNumber });
+      return {
+        success: false,
+        serial_number: serialNumber,
+        flag_reason: 'round_not_open',
+        round_id: err.roundId,
+        round_status: err.roundStatus,
+        image_path: savedPath,
+        error: `Ballot ${serialNumber} belongs to round ${err.roundId} (status=${err.roundStatus}) — not open for scanning.`,
+      };
+    }
+    throw err;
+  }
 
   // Check for duplicate in this pass
   const { rows: [existingScan] } = await db.query(
@@ -451,6 +519,7 @@ async function processBallot({ imageBuffer, filePath, stationId, roundId: assign
 function deriveOutcome(result) {
   if (!result) return 'error';
   if (result.type === 'wrong_station') return 'wrong_station';
+  if (result.flag_reason === 'round_not_open') return 'round_not_open';
   if (result.flagged) return result.flag_reason || 'flagged';
   if (!result.success) return 'error';
   return 'counted';
@@ -511,4 +580,10 @@ async function recordScanUpload({ stationId, roundId, result, io }) {
   }
 }
 
-module.exports = { processBallot, getOrCreateActivePass, recordScanUpload };
+module.exports = {
+  processBallot,
+  getOrCreateActivePass,
+  recordScanUpload,
+  RoundNotScannableError,
+  SCANNABLE_ROUND_STATUSES,
+};

@@ -10,6 +10,13 @@ async function validateScan(passId, serialNumber) {
   if (!pass) return { valid: false, error: 'Pass not found' };
   if (pass.status !== 'active') return { valid: false, error: 'Pass is not active' };
 
+  // Reject if the round itself is no longer in a scannable state.
+  const { rows: [round] } = await db.query('SELECT status FROM rounds WHERE id = $1', [pass.round_id]);
+  if (!round) return { valid: false, error: 'Round not found' };
+  if (!['voting_open', 'voting_closed', 'tallying'].includes(round.status)) {
+    return { valid: false, error: `Round is not open for scanning (status=${round.status})` };
+  }
+
   // Check SN exists for this round
   const { rows: [ballotSerial] } = await db.query(
     'SELECT * FROM ballot_serials WHERE serial_number = $1 AND round_id = $2',

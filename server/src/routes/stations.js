@@ -266,6 +266,10 @@ router.post('/stations/:stationId/upload', requireStationToken, upload.single('i
 
     if (result.success) {
       res.json(result);
+    } else if (result.flag_reason === 'round_not_open') {
+      // Hard refusal — round is not open for scanning. Surface 409 so the
+      // agent shows it as a conflict (not retried as a transient error).
+      res.status(409).json(result);
     } else {
       res.status(result.type === 'wrong_station' ? 409 : 400).json(result);
     }
