@@ -41,6 +41,7 @@ export default function RaceDetail() {
   const [recoveryError, setRecoveryError] = useState(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryResult, setRecoveryResult] = useState(null);
+  const [recoveryOverride, setRecoveryOverride] = useState('');
   const [searchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useState(searchParams.get('tab') || 'rounds');
   const dragItem = useRef(null);
@@ -491,28 +492,22 @@ export default function RaceDetail() {
           recoveryResult={recoveryResult}
           recoveryError={recoveryError}
           recoveryBusy={recoveryBusy}
+          recoveryOverride={recoveryOverride}
+          setRecoveryOverride={setRecoveryOverride}
           onChooseFile={async (file) => {
             setRecoveryFile(file);
             setRecoveryPreview(null);
             setRecoveryResult(null);
             setRecoveryError(null);
+            setRecoveryOverride('');
             if (!file) return;
-            setRecoveryBusy(true);
-            try {
-              const fd = new FormData();
-              fd.append('file', file);
-              const { data } = await api.post(
-                `/admin/races/${raceId}/recover-spec/preview`,
-                fd,
-                { headers: { 'Content-Type': 'multipart/form-data' } }
-              );
-              setRecoveryPreview(data);
-              if (!data.ok) setRecoveryError(data.error || 'Preview returned not-ok');
-            } catch (err) {
-              setRecoveryError(err.response?.data?.error || err.message);
-            } finally {
-              setRecoveryBusy(false);
-            }
+            await runRecoveryPreview(file, '', { setRecoveryBusy, setRecoveryPreview, setRecoveryError, raceId });
+          }}
+          onRetry={async () => {
+            if (!recoveryFile) return;
+            setRecoveryPreview(null);
+            setRecoveryError(null);
+            await runRecoveryPreview(recoveryFile, recoveryOverride, { setRecoveryBusy, setRecoveryPreview, setRecoveryError, raceId });
           }}
           onApply={async () => {
             if (!recoveryFile) return;
@@ -522,6 +517,9 @@ export default function RaceDetail() {
               const fd = new FormData();
               fd.append('file', recoveryFile);
               fd.append('confirm', 'true');
+              if (recoveryOverride.trim()) {
+                fd.append('candidates_override', normalizeOverride(recoveryOverride));
+              }
               const { data } = await api.post(
                 `/admin/races/${raceId}/recover-spec/apply`,
                 fd,
@@ -541,6 +539,7 @@ export default function RaceDetail() {
             setRecoveryPreview(null);
             setRecoveryError(null);
             setRecoveryResult(null);
+            setRecoveryOverride('');
           }}
         />
       )}
@@ -579,9 +578,40 @@ export default function RaceDetail() {
   );
 }
 
+function normalizeOverride(text) {
+  return String(text || '')
+    .split(/\r?\n|\|/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join('|');
+}
+
+async function runRecoveryPreview(file, overrideText, { setRecoveryBusy, setRecoveryPreview, setRecoveryError, raceId }) {
+  setRecoveryBusy(true);
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (overrideText && overrideText.trim()) {
+      fd.append('candidates_override', normalizeOverride(overrideText));
+    }
+    const { data } = await api.post(
+      `/admin/races/${raceId}/recover-spec/preview`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    setRecoveryPreview(data);
+    if (!data.ok) setRecoveryError(data.error || 'Preview returned not-ok');
+  } catch (err) {
+    setRecoveryError(err.response?.data?.error || err.message);
+  } finally {
+    setRecoveryBusy(false);
+  }
+}
+
 function RecoverySpecModal({
   raceId, recoveryFile, recoveryPreview, recoveryResult, recoveryError, recoveryBusy,
-  onChooseFile, onApply, onClose,
+  recoveryOverride, setRecoveryOverride,
+  onChooseFile, onRetry, onApply, onClose,
 }) {
   const allMatched = recoveryPreview && Array.isArray(recoveryPreview.candidate_matches)
     && recoveryPreview.candidate_matches.length > 0
@@ -624,6 +654,44 @@ function RecoverySpecModal({
               <div style={styles.recoveryErrorBox}>
                 <strong>Error:</strong> {recoveryError}
               </div>
+            )}
+
+            {/* Manual override: shown collapsed by default, auto-expanded when there's been an error */}
+            {recoveryFile && (
+              <details
+                style={{ marginBottom: '0.75rem', fontSize: '0.85rem' }}
+                open={!!recoveryError}
+              >
+                <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#374151' }}>
+                  Manual candidate names (override auto-detection)
+                </summary>
+                <p style={{ margin: '0.5rem 0', color: '#6b7280', fontSize: '0.82rem' }}>
+                  Use this if the auto-detection failed or picked the wrong ovals. Enter the candidate names
+                  in <strong>display order</strong>, one per line. They'll be assigned to the detected
+                  ovals top-to-bottom. The number of names must match the number of ovals on the ballot.
+                </p>
+                <textarea
+                  rows={5}
+                  style={{
+                    width: '100%', padding: '0.5rem', border: '1px solid #ccc',
+                    borderRadius: 4, fontSize: '0.85rem', fontFamily: 'system-ui, sans-serif',
+                    boxSizing: 'border-box',
+                  }}
+                  placeholder={'Jane Smith\nJohn Doe\nAlex Lee'}
+                  value={recoveryOverride}
+                  onChange={(e) => setRecoveryOverride(e.target.value)}
+                  disabled={recoveryBusy}
+                />
+                <div style={{ marginTop: '0.5rem' }}>
+                  <button
+                    style={{ ...styles.btnSmall, padding: '0.4rem 0.75rem' }}
+                    onClick={onRetry}
+                    disabled={recoveryBusy}
+                  >
+                    {recoveryBusy ? 'Re-running...' : 'Re-run preview with these names'}
+                  </button>
+                </div>
+              </details>
             )}
 
             {recoveryPreview && (
