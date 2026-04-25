@@ -368,12 +368,15 @@ router.post('/import-election', importUpload.single('file'), async (req, res) =>
             filesCopiedTotal++;
           }
 
-          // If we copied a ballots.pdf, set the metadata so the UI sees this round as "ready"
+          // If we copied a ballots.pdf, set the metadata AND advance status to "ready"
+          // so the imported round mirrors what normal ballot generation produces and the
+          // RoundDetail page shows the "Open Voting" action button.
           if (wroteFiles.includes('ballots.pdf')) {
             await db.query(
               `UPDATE rounds
                   SET ballot_pdf_path = $1,
-                      ballot_pdf_generated_at = COALESCE($2, NOW())
+                      ballot_pdf_generated_at = COALESCE($2, NOW()),
+                      status = CASE WHEN status = 'pending_needs_action' THEN 'ready' ELSE status END
                 WHERE id = $3`,
               [
                 path.join('uploads', 'elections', String(election.id), 'rounds', String(round.id), 'ballots.pdf').replace(/\\/g, '/'),
