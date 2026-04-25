@@ -99,10 +99,10 @@ export default function RoundDetail() {
       confirmLabel: `Reset ${spoiledCount} Ballot${spoiledCount === 1 ? '' : 's'}`,
       confirmStyle: 'danger',
       requireNotes: false,
-      onConfirm: async ({ adminName }) => {
+      onConfirm: async ({ pin, adminName }) => {
         setResettingSpoiled(true);
         try {
-          await api.put(`/admin/rounds/${roundId}/reset-spoiled`, { reset_by: adminName });
+          await api.put(`/admin/rounds/${roundId}/reset-spoiled`, { pin, reset_by: adminName });
           refreshAll();
         } catch (err) {
           setGlobalError(err.response?.data?.error || 'Reset failed');
@@ -174,9 +174,9 @@ export default function RoundDetail() {
       confirmLabel: revertAction.label,
       confirmStyle: 'normal',
       requireNotes: false,
-      onConfirm: async () => {
+      onConfirm: async ({ pin }) => {
         setPinModal(null);
-        await postAction(revertAction.url);
+        await postAction(revertAction.url, { pin });
       },
     });
   };
@@ -187,9 +187,9 @@ export default function RoundDetail() {
     confirmLabel: 'Unpublish',
     confirmStyle: 'normal',
     requireNotes: false,
-    onConfirm: async () => {
+    onConfirm: async ({ pin }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/unpublish`);
+      await postAction(`/admin/control-center/round/${roundId}/unpublish`, { pin });
     },
   });
 
@@ -200,9 +200,9 @@ export default function RoundDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for recount',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/recount`, { notes });
+      await postAction(`/admin/control-center/round/${roundId}/recount`, { pin, notes });
     },
   });
 
@@ -213,9 +213,9 @@ export default function RoundDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for reversing finalization',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/reverse-finalize`, { notes });
+      await postAction(`/admin/control-center/round/${roundId}/reverse-finalize`, { pin, notes });
     },
   });
 
@@ -226,9 +226,9 @@ export default function RoundDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for voiding this round',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/void`, { notes });
+      await postAction(`/admin/control-center/round/${roundId}/void`, { pin, notes });
     },
   });
 

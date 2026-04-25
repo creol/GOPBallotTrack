@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db');
 const { generateSerials } = require('../services/serialGenerator');
+const { requireSuperAdminPin } = require('../middleware/auth');
 
 const router = Router();
 
@@ -266,8 +267,11 @@ router.put('/candidates/:id/withdraw', async (req, res) => {
   }
 });
 
-// PUT /api/admin/races/:id/outcome — Set race outcome
-router.put('/races/:id/outcome', async (req, res) => {
+// PUT /api/admin/races/:id/outcome — Set race outcome.
+// Terminal outcomes (winner, advances_primary, closed) flip the race to
+// results_finalized — destructive, so we re-verify the operator's PIN here
+// rather than trusting the client-side modal alone.
+router.put('/races/:id/outcome', requireSuperAdminPin, async (req, res) => {
   try {
     const { outcome, candidate_id, notes } = req.body;
     if (!outcome || !['winner', 'advances_next_round', 'advances_primary', 'closed'].includes(outcome)) {
@@ -299,6 +303,62 @@ router.put('/races/:id/outcome', async (req, res) => {
   } catch (err) {
     console.error('Set race outcome error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/admin/races/:id/final-designations — Persist per-candidate official
+// designations (Official Nominee / Progress to Primary). Mutually exclusive per
+// candidate. Used when generating the official Race Summary PDF.
+// Body: { designations: [{ candidate_id, designation: 'official_nominee'|'progress_to_primary'|null }] }
+router.put('/races/:id/final-designations', async (req, res) => {
+  try {
+    const { designations } = req.body;
+    if (!Array.isArray(designations)) {
+      return res.status(400).json({ error: 'designations array is required' });
+    }
+    for (const d of designations) {
+      if (d.designation !== null && !['official_nominee', 'progress_to_primary'].includes(d.designation)) {
+        return res.status(400).json({ error: `Invalid designation: ${d.designation}` });
+      }
+    }
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const d of designations) {
+        await client.query(
+          'UPDATE candidates SET final_designation = $1 WHERE id = $2 AND race_id = $3',
+          [d.designation, d.candidate_id, req.params.id]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    const { rows } = await db.query(
+      'SELECT * FROM candidates WHERE race_id = $1 ORDER BY display_order',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Set final designations error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/admin/races/:id/summary-pdf — Download official Race Summary PDF
+router.get('/races/:id/summary-pdf', async (req, res) => {
+  try {
+    const { generateRaceSummaryPdf } = require('../pdf/raceSummaryPdf');
+    const { pdfPath, downloadName } = await generateRaceSummaryPdf(req.params.id);
+    res.download(pdfPath, downloadName);
+  } catch (err) {
+    console.error('Race summary PDF error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 

@@ -22,14 +22,19 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many PIN attempts for this user. Try again in 15 minutes.' },
 });
 
-// Verify-super-admin-pin has no username in the request (any super admin's PIN is accepted),
-// so this one has to fall back to per-IP rate limiting.
+// Verify-super-admin-pin is now bound to the logged-in session user, so we
+// can rate-limit per user. Successful verifies don't count, so a real super
+// admin who fat-fingers once isn't penalized.
 const superAdminPinLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const session = getSession(req);
+    return session ? `superadmin-pin:${session.user_id}` : `superadmin-pin:ip:${req.ip}`;
+  },
   message: { error: 'Too many super admin PIN attempts. Try again in 15 minutes.' },
 });
 
@@ -48,16 +53,24 @@ router.use(authLimiter);
 router.post('/login', loginLimiter, async (req, res) => {
   const { name, pin, role } = req.body;
 
-  // Support legacy role+pin login for backward compatibility (e.g., PIN verification dialogs)
+  // Legacy role+pin verification path. Pre-fix this looked up `WHERE role = 'super_admin' LIMIT 1`,
+  // which only matched the first super admin's PIN — every other super admin's correct PIN was
+  // reported as "Invalid" even though their account was fine. Now we bind to the logged-in
+  // session user so the only PIN that succeeds is the operator's own, matching the user's
+  // expectation that "the super admin logged in" approves the action.
   if (role && pin && !name) {
-    // Legacy: verify admin PIN — look up any super_admin
-    const { rows } = await db.query(
-      "SELECT * FROM admin_users WHERE role = 'super_admin' LIMIT 1"
-    );
-    if (rows.length > 0 && rows[0].pin_hash === hashPin(pin)) {
-      return res.json({ role: rows[0].role, token: null, verified: true });
+    const session = getSession(req);
+    if (!session || session.role !== 'super_admin') {
+      return res.status(401).json({ error: 'Super Admin session required' });
     }
-    return res.status(401).json({ error: 'Invalid PIN' });
+    const { rows: [user] } = await db.query(
+      "SELECT pin_hash FROM admin_users WHERE id = $1 AND role = 'super_admin'",
+      [session.user_id]
+    );
+    if (!user || user.pin_hash !== hashPin(pin)) {
+      return res.status(401).json({ error: 'Invalid PIN' });
+    }
+    return res.json({ role: 'super_admin', token: null, verified: true });
   }
 
   if (!name || !pin) {
@@ -87,20 +100,26 @@ router.post('/login', loginLimiter, async (req, res) => {
   });
 });
 
-// POST /api/auth/verify-super-admin-pin — Verify a PIN belongs to any super_admin.
-// Used by destructive admin actions (Recount, Void, Reverse Finalize, etc.) that require
-// super admin approval — any super admin's PIN is accepted, not just "the Admin".
+// POST /api/auth/verify-super-admin-pin — Verify the LOGGED-IN super admin's PIN.
+// Bound to the session user so an operator can only approve actions with their own PIN.
+// (Pre-fix this accepted any super admin's PIN, which made the modal pre-check disagree
+// with the destructive endpoint and produced "Invalid" messages even for correct PINs.)
 router.post('/verify-super-admin-pin', superAdminPinLimiter, async (req, res) => {
   const { pin } = req.body || {};
   if (!pin) return res.status(400).json({ error: 'PIN is required' });
   try {
-    const hashed = hashPin(pin);
-    const { rows } = await db.query(
-      "SELECT id, name FROM admin_users WHERE role = 'super_admin' AND pin_hash = $1 LIMIT 1",
-      [hashed]
+    const session = getSession(req);
+    if (!session || session.role !== 'super_admin') {
+      return res.status(401).json({ error: 'Super Admin session required' });
+    }
+    const { rows: [user] } = await db.query(
+      "SELECT id, name, pin_hash FROM admin_users WHERE id = $1 AND role = 'super_admin'",
+      [session.user_id]
     );
-    if (rows.length === 0) return res.status(401).json({ error: 'Invalid super admin PIN' });
-    res.json({ ok: true, admin_id: rows[0].id, admin_name: rows[0].name });
+    if (!user || user.pin_hash !== hashPin(pin)) {
+      return res.status(401).json({ error: 'Invalid Super Admin PIN' });
+    }
+    res.json({ ok: true, admin_id: user.id, admin_name: user.name });
   } catch (err) {
     console.error('verify-super-admin-pin error:', err);
     res.status(500).json({ error: 'Internal server error' });
