@@ -109,6 +109,19 @@ export default function AdminDashboard({ auth }) {
 
           <div style={s.divider} />
 
+          <div style={s.sectionLabel}>Dashboards</div>
+          <Link to="/admin/guides/admin-quickstart" style={{ ...s.navItemSub, textDecoration: 'none', color: 'inherit' }}>
+            Admin Quick Start
+          </Link>
+          <Link to="/admin/guides/scan-station" style={{ ...s.navItemSub, textDecoration: 'none', color: 'inherit' }}>
+            Scan Station Guide
+          </Link>
+          <Link to="/admin/guides/faq" style={{ ...s.navItemSub, textDecoration: 'none', color: 'inherit' }}>
+            Convention FAQ
+          </Link>
+
+          <div style={s.divider} />
+
           <label style={{ ...s.navItem, cursor: 'pointer', display: 'block' }}>
             {importing ? 'Importing...' : 'Import JSON or ZIP'}
             <input type="file" accept=".json,.zip" onChange={handleImport} style={{ display: 'none' }} />
@@ -122,6 +135,9 @@ export default function AdminDashboard({ auth }) {
           )}
           <Link to="/admin" style={{ ...s.mobileTab, ...(activeSection === 'events' ? s.mobileTabActive : {}), textDecoration: 'none' }}>Events</Link>
           <Link to="/admin?section=scanners" style={{ ...s.mobileTab, ...(activeSection === 'scanners' ? s.mobileTabActive : {}), textDecoration: 'none' }}>Scanners</Link>
+          <Link to="/admin/guides/admin-quickstart" style={{ ...s.mobileTab, textDecoration: 'none' }}>Admin Guide</Link>
+          <Link to="/admin/guides/scan-station" style={{ ...s.mobileTab, textDecoration: 'none' }}>Scan Guide</Link>
+          <Link to="/admin/guides/faq" style={{ ...s.mobileTab, textDecoration: 'none' }}>FAQ</Link>
           <label style={{ ...s.mobileTab, cursor: 'pointer' }}>
             {importing ? 'Importing...' : 'Import'}
             <input type="file" accept=".json,.zip" onChange={handleImport} style={{ display: 'none' }} />
@@ -252,6 +268,15 @@ const s = {
   navItemActive: {
     background: '#eff6ff', borderLeft: '3px solid #2563eb',
     color: '#1d4ed8', fontWeight: 600,
+  },
+  sectionLabel: {
+    fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.08em', color: '#9ca3af',
+    padding: '0.5rem 0.75rem 0.25rem',
+  },
+  navItemSub: {
+    display: 'block', padding: '0.4rem 0.75rem 0.4rem 1.25rem',
+    fontSize: '0.82rem', color: '#4b5563', borderRadius: 4,
   },
   divider: { height: 1, background: '#e5e7eb', margin: '0.5rem 0.75rem' },
   mobileNav: {
