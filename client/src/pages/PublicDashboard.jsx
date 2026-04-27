@@ -295,43 +295,44 @@ function TVMode({ election, connected }) {
     if (!settings.auto_scroll) return;
     const stepPx = Math.max(1, Math.min(10, settings.auto_scroll_speed || 1));
     const startDelayMs = Math.max(0, (settings.auto_scroll_start_delay ?? 3) * 1000);
-    // Reset to top whenever the category changes so each rotation starts at the
-    // race-name list, not wherever the previous category happened to leave off.
-    window.scrollTo(0, 0);
-    let raf, paused = true, startTimer;
-    startTimer = setTimeout(() => { paused = false; }, startDelayMs);
-
-    // Don't trigger scroll for tiny overflows (a few px from rounding / measurement
-    // noise). 80px is roughly the height of one candidate row plus some padding,
-    // so anything below that is rounding error, not real "hidden content."
+    // 80px ≈ one candidate row + padding. Below that, overflow is rounding noise;
+    // skip the scroll entirely so we don't slide stuff under the sticky header
+    // for no visible benefit.
     const SCROLL_THRESHOLD = 80;
+    // Step every 40ms regardless of frame rate, so speed doesn't depend on screen Hz.
+    const TICK_INTERVAL_MS = 40;
 
-    const tick = () => {
-      if (!paused) {
-        const max = document.documentElement.scrollHeight - window.innerHeight;
-        if (max <= SCROLL_THRESHOLD) { raf = requestAnimationFrame(tick); return; }
-        const next = window.scrollY + stepPx;
-        if (next >= max) {
-          paused = true;
-          setTimeout(() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            // After looping back to the top, re-apply the start delay so viewers
-            // get the same read-time on the second pass through.
-            setTimeout(() => { paused = false; }, startDelayMs);
-          }, 2500);
-        } else {
-          window.scrollTo(0, next);
-        }
+    // Reset to top on every (re-)mount so a rotation starts at the first race.
+    window.scrollTo(0, 0);
+
+    let paused = true;
+    let startTimer = setTimeout(() => { paused = false; }, startDelayMs);
+    let bottomTimer = null;
+    let resumeTimer = null;
+    const interval = setInterval(() => {
+      if (paused) return;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      if (max <= SCROLL_THRESHOLD) return;
+      const next = window.scrollY + stepPx;
+      if (next >= max) {
+        // Reached the bottom: pause for 2.5s, scroll back to top, then re-apply
+        // the start delay so viewers get the same read-time on the second pass.
+        paused = true;
+        bottomTimer = setTimeout(() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          resumeTimer = setTimeout(() => { paused = false; }, startDelayMs);
+        }, 2500);
+      } else {
+        window.scrollTo(0, next);
       }
-      raf = requestAnimationFrame(tick);
+    }, TICK_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(startTimer);
+      if (bottomTimer) clearTimeout(bottomTimer);
+      if (resumeTimer) clearTimeout(resumeTimer);
     };
-    let last = performance.now();
-    const loop = (t) => {
-      if (t - last >= 40) { last = t; tick(); }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); clearTimeout(startTimer); };
   }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx]);
 
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
