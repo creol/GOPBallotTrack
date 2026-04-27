@@ -607,7 +607,7 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
         <div key={p.id} style={styles.activePassCard}>
           <div style={styles.passLineLeft}>
             <span style={styles.passLabel}>Pass {p.pass_number}</span>
-            <span style={styles.pill} title="Total uploads (any outcome)">{p.upload_count ?? p.scan_count ?? 0} scans</span>
+            <PassTally pass={p} pillStyle={styles.pill} />
             <span style={styles.activeBadge}>Active</span>
           </div>
           {isSuperAdmin && (
@@ -625,7 +625,7 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
         <div key={p.id} style={styles.completedPassRow}>
           <div style={styles.passLineLeft}>
             <span style={{ fontWeight: 600 }}>Pass {p.pass_number}</span>
-            <span style={styles.muted} title="Total uploads (any outcome)">{p.upload_count ?? p.scan_count ?? 0} scans</span>
+            <PassTally pass={p} pillStyle={styles.muted} />
             <span style={styles.completeBadge}>✓ Complete</span>
           </div>
           {isSuperAdmin && (
@@ -652,6 +652,40 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
         onConfirm={pinModal?.onConfirm || (() => {})}
       />
     </section>
+  );
+}
+
+// ─── Per-pass image tally ──────────────────────────────────────────────────
+// Reconciliation aid for the operator: every image the scanner produced should be
+// accounted for somewhere (counted, pending review, rejected, spoiled, or remade).
+// Format: "306 images · 288 counted · 17 pending · 1 rejected" — counted is always
+// shown, the other categories only appear when nonzero so the line stays tight.
+function PassTally({ pass, pillStyle }) {
+  const total = pass.upload_count ?? pass.scan_count ?? 0;
+  const counted = pass.scan_count ?? 0;
+  const pending = pass.review_pending ?? 0;
+  const rejected = pass.review_rejected ?? 0;
+  const spoiled = pass.review_spoiled ?? 0;
+  const remade = pass.review_remade ?? 0;
+  const accounted = counted + pending + rejected + spoiled + remade;
+  const unaccounted = Math.max(0, total - accounted);
+
+  const parts = [`${counted} counted`];
+  if (pending > 0)  parts.push(`${pending} pending`);
+  if (rejected > 0) parts.push(`${rejected} rejected`);
+  if (spoiled > 0)  parts.push(`${spoiled} spoiled`);
+  if (remade > 0)   parts.push(`${remade} remade`);
+  if (unaccounted > 0) parts.push(`${unaccounted} unmatched`);
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <span style={pillStyle} title="Total images uploaded for this pass (every scan, regardless of outcome)">
+        {total} image{total === 1 ? '' : 's'}
+      </span>
+      <span style={{ fontSize: '0.78rem', color: '#6b7280' }} title="Breakdown of every image in this pass">
+        {parts.join(' · ')}
+      </span>
+    </span>
   );
 }
 

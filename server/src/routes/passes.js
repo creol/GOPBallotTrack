@@ -272,15 +272,24 @@ router.put('/passes/:id/reopen', requireSuperAdminForPass, async (req, res) => {
 });
 
 // GET /api/rounds/:id/passes — List passes with scan counts.
-// scan_count = rows in `scans` (successfully-counted votes).
+// scan_count   = rows in `scans` (successfully-counted votes).
 // upload_count = rows in `scan_uploads` (every agent upload regardless of outcome,
-// including flagged, duplicate, wrong_round, etc.) — used for the Total Scans display.
+//                including flagged, duplicate, wrong_round, etc.) — the physical
+//                "how many images did the scanner produce" number used for paper-count
+//                reconciliation by the operator.
+// review_*     = breakdown of reviewed_ballots outcomes per pass, so the UI can render
+//                "306 images · 288 counted · 1 rejected · N pending" and the operator
+//                can confirm every image is accounted for somewhere.
 router.get('/rounds/:id/passes', async (req, res) => {
   try {
     const { rows: passes } = await db.query(
       `SELECT p.*,
          (SELECT COUNT(*) FROM scans s WHERE s.pass_id = p.id)::int AS scan_count,
-         (SELECT COUNT(*) FROM scan_uploads su WHERE su.pass_id = p.id)::int AS upload_count
+         (SELECT COUNT(*) FROM scan_uploads su WHERE su.pass_id = p.id)::int AS upload_count,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome IS NULL)::int    AS review_pending,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome = 'rejected')::int AS review_rejected,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome = 'spoiled')::int  AS review_spoiled,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome = 'remade')::int   AS review_remade
        FROM passes p
        WHERE p.round_id = $1 AND p.status != 'deleted'
        ORDER BY p.pass_number`,
