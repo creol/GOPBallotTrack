@@ -682,6 +682,10 @@ function ExportSection({ electionId }) {
           </button>
         )}
 
+        <a href={`/api/admin/elections/${electionId}/export-excel`} style={styles.btnDownload} download>
+          Export Results Workbook (Excel)
+        </a>
+
         <a href={`/api/admin/elections/${electionId}/export-json`} style={styles.btnDownload} download>
           Export as JSON (reimportable)
         </a>

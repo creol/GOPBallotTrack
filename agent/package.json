@@ -1,6 +1,6 @@
 {
   "name": "ballottrack-station-agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Scanning station agent — watches a folder and uploads ballot images to BallotTrack server",
   "main": "station-agent.js",
   "dependencies": {

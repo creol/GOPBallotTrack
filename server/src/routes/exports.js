@@ -4,6 +4,7 @@ const path = require('path');
 const archiver = require('archiver');
 const db = require('../db');
 const { exportImages, exportFull, getExportStatus } = require('../services/exportService');
+const { generateExcel } = require('../services/excelExportService');
 const { generateEventSummaryPdf, generateEventDetailPdf } = require('../pdf/eventResultsPdf');
 const { generateResultsPdf } = require('../pdf/resultsPdf');
 
@@ -145,6 +146,23 @@ router.get('/elections/:id/results-zip', async (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({ error: err.message || 'Internal server error' });
     }
+  }
+});
+
+// GET /api/admin/elections/:id/export-excel — Multi-tab .xlsx workbook
+router.get('/elections/:id/export-excel', async (req, res) => {
+  try {
+    const electionId = parseInt(req.params.id);
+    const { rows: [election] } = await db.query('SELECT name FROM elections WHERE id = $1', [electionId]);
+    if (!election) return res.status(404).json({ error: 'Election not found' });
+    const buffer = await generateExcel(electionId);
+    const slug = (election.name || 'election').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="results-${slug}.xlsx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Excel export error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 
