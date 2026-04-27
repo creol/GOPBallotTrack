@@ -256,6 +256,28 @@ function TVMode({ election, connected }) {
     if (activeIdx >= groupNames.length) setActiveIdx(0);
   }, [groupNames.length, activeIdx]);
 
+  // Decide which group(s) to render this tick. Declared before the auto-scroll
+  // useEffect because that effect's dep array reads `showGroupHeaders` (TDZ).
+  const visibleGroupNames = settings.layout_mode === 'rotating' && settings.rotation_seconds > 0
+    ? [groupNames[activeIdx] || groupNames[0]].filter(Boolean)
+    : groupNames;
+  const showGroupHeaders = settings.layout_mode !== 'all' && groupNames.length > 0;
+
+  // Measure the sticky main header so group headers can stick directly under it,
+  // and so the auto-scroll loop knows how much overflow is real-vs-hidden-by-stickies.
+  const mainHeaderRef = useRef(null);
+  const [mainHeaderH, setMainHeaderH] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      if (mainHeaderRef.current) setMainHeaderH(mainHeaderRef.current.offsetHeight);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    // Re-measure on next frame in case fonts/images shift the layout after mount.
+    const t = setTimeout(measure, 200);
+    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
+  }, [settings.logo_path, settings.logo_position, settings.custom_header, election.name]);
+
   // Auto-scroll: when the page content overflows the viewport, gently scroll the
   // window down N px per ~40ms tick (N = auto_scroll_speed, 1–10), pause at the
   // bottom, smooth-scroll back to top, repeat. Re-runs on activeIdx change so the
@@ -314,28 +336,6 @@ function TVMode({ election, connected }) {
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); clearTimeout(startTimer); };
   }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx, mainHeaderH, showGroupHeaders]);
-
-  // Decide which group(s) to render this tick.
-  const visibleGroupNames = settings.layout_mode === 'rotating' && settings.rotation_seconds > 0
-    ? [groupNames[activeIdx] || groupNames[0]].filter(Boolean)
-    : groupNames;
-  const showGroupHeaders = settings.layout_mode !== 'all' && groupNames.length > 0;
-
-  // Measure the sticky main header so group headers can stick directly under it.
-  // We re-measure on resize and whenever the logo/header text changes since both
-  // affect the rendered height.
-  const mainHeaderRef = useRef(null);
-  const [mainHeaderH, setMainHeaderH] = useState(0);
-  useEffect(() => {
-    const measure = () => {
-      if (mainHeaderRef.current) setMainHeaderH(mainHeaderRef.current.offsetHeight);
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    // Re-measure on next frame in case fonts/images shift the layout after mount.
-    const t = setTimeout(measure, 200);
-    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
-  }, [settings.logo_path, settings.logo_position, settings.custom_header, election.name]);
 
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
   const mobileUrl = `${window.location.origin}${window.location.pathname}`;
