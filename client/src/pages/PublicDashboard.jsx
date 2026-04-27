@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { QRCodeSVG } from 'qrcode.react';
 import api from '../api/client';
 import { formatRaceSchedule } from '../utils/dateFormat';
+import { fmtPct } from '../utils/percent';
 import { VersionTag } from '../components/AppHeader';
 
 function useWindowWidth() {
@@ -217,7 +218,7 @@ function TVMode({ election, connected, latestOnly }) {
                             <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%` }} />
                           </div>
                           <span style={tv.voteCount}>{r.vote_count}</span>
-                          <span style={tv.pct}>{pct.toFixed(1)}%</span>
+                          <span style={tv.pct}>{fmtPct(r.percentage, election.dashboard_decimals)}%</span>
                         </div>
                       );
                     })}
@@ -398,7 +399,7 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
                                 {r.candidate_name}
                                 {outcome && <span style={{ color: outcome.color, fontSize: '0.7rem', marginLeft: '0.35rem' }}>{outcome.label}</span>}
                               </span>
-                              <span style={{ color: '#666' }}>{r.vote_count} ({pct.toFixed(1)}%)</span>
+                              <span style={{ color: '#666' }}>{r.vote_count} ({fmtPct(r.percentage, election.dashboard_decimals)}%)</span>
                             </div>
                           );
                         })}

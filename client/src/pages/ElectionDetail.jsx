@@ -390,108 +390,106 @@ function ScannersSection({ electionId }) {
 }
 
 function DashboardsSection({ electionId }) {
-  const [tvLatestOnly, setTvLatestOnly] = useState(() => {
-    try { return localStorage.getItem(`dashboards.tvLatestOnly.${electionId}`) === '1'; } catch { return false; }
-  });
-  const toggleTvLatestOnly = (checked) => {
-    setTvLatestOnly(checked);
-    try { localStorage.setItem(`dashboards.tvLatestOnly.${electionId}`, checked ? '1' : '0'); } catch { /* ignore */ }
+  const [decimals, setDecimals] = useState(null);
+  const [savingDecimals, setSavingDecimals] = useState(false);
+
+  useEffect(() => {
+    api.get(`/admin/elections/${electionId}`)
+      .then(({ data }) => setDecimals(data.dashboard_decimals ?? 3))
+      .catch(() => setDecimals(3));
+  }, [electionId]);
+
+  const handleDecimalsChange = async (e) => {
+    const next = parseInt(e.target.value, 10);
+    setDecimals(next);
+    setSavingDecimals(true);
+    try {
+      await api.put(`/admin/elections/${electionId}`, { dashboard_decimals: next });
+    } catch {
+      alert('Failed to save decimal places.');
+    } finally {
+      setSavingDecimals(false);
+    }
   };
 
   const publicUrl = `${window.location.origin}/public/${electionId}`;
-  const tvUrl = `${publicUrl}?mode=tv${tvLatestOnly ? '&latest=1' : ''}`;
-  const adminUrl = `${window.location.origin}/admin/elections/${electionId}`;
-
-  const dashboards = [
-    {
-      title: 'Public Dashboard (Mobile)',
-      description: 'Touch-friendly view for attendees on phones. Shows race results, ballot SN search, and ballot image viewer.',
-      url: publicUrl,
-      icon: '📱',
-      color: '#2563eb',
-    },
-    {
-      title: 'Public Dashboard (TV)',
-      description: 'Full-screen results display for large screens. Dark theme, auto-updates via WebSocket when results are released.',
-      url: tvUrl,
-      icon: '📺',
-      color: '#7c3aed',
-    },
-    {
-      title: 'Admin Dashboard',
-      description: 'Election event management — races, ballots, scanning, confirmation, and exports.',
-      url: adminUrl,
-      icon: '⚙️',
-      color: '#16a34a',
-    },
-  ];
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => alert('URL copied!')).catch(() => {});
   };
 
+  // Sample percentage to demonstrate truncation. 33.33333% — the classic three-way split.
+  const sampleRaw = '33.33333';
+  const samplePreview = decimals == null ? '…' : (() => {
+    const [intPart, decPart = ''] = sampleRaw.split('.');
+    const t = decimals > 0 ? decPart.slice(0, decimals).replace(/0+$/, '') : '';
+    return t ? `${intPart}.${t}` : intPart;
+  })();
+
   return (
     <div>
       <h2>Dashboards</h2>
-      <p style={styles.muted}>Share these links with attendees and operators. All links work on the local network.</p>
+      <p style={styles.muted}>Share this link with attendees. It works on any device on the local network.</p>
 
       <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none', fontSize: '0.9rem' }}>
-          <input
-            type="checkbox"
-            checked={tvLatestOnly}
-            onChange={e => toggleTvLatestOnly(e.target.checked)}
-            style={{ width: 16, height: 16, cursor: 'pointer' }}
-          />
-          <span><strong>TV Dashboard:</strong> show only the latest round per race</span>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.9rem' }}>
+          <span><strong>Percentage decimal places:</strong></span>
+          <select
+            value={decimals ?? 3}
+            onChange={handleDecimalsChange}
+            disabled={decimals == null || savingDecimals}
+            style={{ padding: '0.3rem 0.5rem', fontSize: '0.9rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+          >
+            {[0, 1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <span style={{ ...styles.muted, fontSize: '0.82rem' }}>
+            Sample: <code>{sampleRaw}%</code> displays as <code>{samplePreview}%</code>
+          </span>
+          {savingDecimals && <span style={{ ...styles.muted, fontSize: '0.78rem' }}>Saving…</span>}
         </label>
         <p style={{ ...styles.muted, margin: '0.35rem 0 0', fontSize: '0.78rem' }}>
-          When checked, the TV dashboard URL below includes <code>&latest=1</code> and each race card collapses to just its most recent published round (or the final round if the race is finalized). Mobile dashboard is unaffected.
+          Percentages are <strong>always truncated, never rounded</strong> (party rule). Trailing zeros are stripped. Applies to every public and admin dashboard view for this election.
         </p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-        {dashboards.map(d => (
-          <div key={d.title} style={{
-            border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
-            borderLeft: `4px solid ${d.color}`, background: '#fff',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-              <span style={{ fontSize: '2rem' }}>{d.icon}</span>
-              <div style={{ flex: 1 }}>
-                <h3 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>{d.title}</h3>
-                <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 0.5rem' }}>{d.description}</p>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <code style={{
-                    background: '#f3f4f6', padding: '0.3rem 0.5rem', borderRadius: 4,
-                    fontSize: '0.78rem', color: '#374151', wordBreak: 'break-all', flex: 1,
-                  }}>{d.url}</code>
-                  <button style={styles.btnSmall} onClick={() => copyToClipboard(d.url)}>Copy</button>
-                  <a href={d.url} target="_blank" rel="noopener noreferrer"
-                    style={{ ...styles.btnPrimary, textDecoration: 'none', fontSize: '0.82rem', padding: '0.3rem 0.7rem' }}>
-                    Open
-                  </a>
-                </div>
-              </div>
-            </div>
-
-            {/* Thumbnail preview */}
-            <div style={{
-              marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 6,
-              overflow: 'hidden', height: 180, position: 'relative',
-            }}>
-              <iframe
-                src={d.url}
-                title={d.title}
-                style={{
-                  width: '200%', height: '200%', border: 'none',
-                  transform: 'scale(0.5)', transformOrigin: 'top left',
-                  pointerEvents: 'none',
-                }}
-              />
+      <div style={{
+        marginTop: '1rem',
+        border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
+        borderLeft: '4px solid #2563eb', background: '#fff',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+          <span style={{ fontSize: '2rem' }}>📱</span>
+          <div style={{ flex: 1 }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>Public Dashboard</h3>
+            <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 0.5rem' }}>Auto-detects mobile vs. TV based on screen width. Shows race results, ballot SN search, and ballot image viewer.</p>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <code style={{
+                background: '#f3f4f6', padding: '0.3rem 0.5rem', borderRadius: 4,
+                fontSize: '0.78rem', color: '#374151', wordBreak: 'break-all', flex: 1,
+              }}>{publicUrl}</code>
+              <button style={styles.btnSmall} onClick={() => copyToClipboard(publicUrl)}>Copy</button>
+              <a href={publicUrl} target="_blank" rel="noopener noreferrer"
+                style={{ ...styles.btnPrimary, textDecoration: 'none', fontSize: '0.82rem', padding: '0.3rem 0.7rem' }}>
+                Open
+              </a>
             </div>
           </div>
-        ))}
+        </div>
+
+        <div style={{
+          marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 6,
+          overflow: 'hidden', height: 180, position: 'relative',
+        }}>
+          <iframe
+            src={publicUrl}
+            title="Public Dashboard"
+            style={{
+              width: '200%', height: '200%', border: 'none',
+              transform: 'scale(0.5)', transformOrigin: 'top left',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
       </div>
     </div>
   );

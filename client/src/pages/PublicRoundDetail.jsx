@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client';
 import { VersionTag } from '../components/AppHeader';
+import { fmtPct } from '../utils/percent';
 
 export default function PublicRoundDetail() {
   const { electionId, roundId } = useParams();
@@ -35,7 +36,7 @@ export default function PublicRoundDetail() {
             <div key={r.candidate_id} style={styles.resultRow}>
               <div style={styles.candidateInfo}>
                 <span style={styles.candidateName}>{r.candidate_name}</span>
-                <span style={styles.voteLabel}>{r.vote_count} votes ({pct.toFixed(5)}%)</span>
+                <span style={styles.voteLabel}>{r.vote_count} votes ({fmtPct(r.percentage, data.election?.dashboard_decimals)}%)</span>
               </div>
               <div style={styles.barBg}>
                 <div style={{ ...styles.barFill, width: `${Math.min(pct, 100)}%` }} />

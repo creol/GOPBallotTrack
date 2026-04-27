@@ -89,7 +89,7 @@ router.get('/rounds/:id', async (req, res) => {
       'SELECT * FROM races WHERE id = $1', [round.race_id]
     );
     const { rows: [election] } = await db.query(
-      'SELECT id, name FROM elections WHERE id = $1', [race.election_id]
+      'SELECT id, name, dashboard_decimals FROM elections WHERE id = $1', [race.election_id]
     );
 
     // Get ballot serial count

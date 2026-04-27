@@ -216,7 +216,7 @@ router.get('/:electionId/rounds/:roundId', async (req, res) => {
     }
 
     const { rows: [election] } = await db.query(
-      'SELECT public_search_enabled, public_browse_enabled FROM elections WHERE id = $1',
+      'SELECT public_search_enabled, public_browse_enabled, dashboard_decimals FROM elections WHERE id = $1',
       [race.election_id]
     );
 
@@ -234,7 +234,7 @@ router.get('/:electionId/rounds/:roundId', async (req, res) => {
       [round.id]
     );
 
-    res.json({ round, race, election, results, serial_numbers: serials.map(s => s.serial_number), ballots: serials });
+    res.json({ round, race, election, results, serial_numbers: serials.map(s => s.serial_number), ballots: serials, dashboard_decimals: election?.dashboard_decimals });
   } catch (err) {
     console.error('Public round detail error:', err);
     res.status(500).json({ error: 'Internal server error' });

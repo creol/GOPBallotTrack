@@ -6,6 +6,7 @@ import ElectionLayout from '../components/ElectionLayout';
 import DashboardPreview from '../components/DashboardPreview';
 import SuperAdminPinModal from '../components/SuperAdminPinModal';
 import { useAuth } from '../context/AuthContext';
+import { fmtPct } from '../utils/percent';
 
 const STATUS_META = {
   pending_needs_action: { bg: '#fef3c7', color: '#92400e', label: 'Needs Action' },
@@ -377,6 +378,7 @@ export default function RoundDetail() {
               decisions={{}}
               withdrawn={new Set()}
               totalVotes={totalVotes}
+              decimals={round.race?.election?.dashboard_decimals}
             />
           ) : (
             <div style={styles.resultsPanel}>
@@ -393,7 +395,7 @@ export default function RoundDetail() {
                       <div style={{ ...styles.tvBar, width: `${Math.min(pct, 100)}%` }} />
                     </div>
                     <span style={styles.tvVoteCount}>{r.vote_count}</span>
-                    <span style={styles.tvPct}>{pct.toFixed(5)}%</span>
+                    <span style={styles.tvPct}>{fmtPct(r.percentage, round.race?.election?.dashboard_decimals)}%</span>
                   </div>
                 );
               })}

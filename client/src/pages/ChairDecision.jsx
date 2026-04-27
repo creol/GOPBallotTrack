@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
 import DashboardPreview from '../components/DashboardPreview';
+import { fmtPct } from '../utils/percent';
 
 const CANDIDATE_OUTCOMES = [
   { value: '', label: '— No decision —' },
@@ -210,7 +211,7 @@ export default function ChairDecision() {
                       <div style={styles.barBg}>
                         <div style={{ ...styles.barFill, width: `${Math.min(pct, 100)}%` }} />
                       </div>
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{pct.toFixed(5)}%</span>
+                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{fmtPct(r.percentage, data.election?.dashboard_decimals)}%</span>
                     </div>
                   </td>
                   <td style={styles.td}>
@@ -263,6 +264,7 @@ export default function ChairDecision() {
             decisions={decisions}
             withdrawn={withdrawn}
             totalVotes={data.total_votes}
+            decimals={data.election?.dashboard_decimals}
           />
         )}
       </div>
