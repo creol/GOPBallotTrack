@@ -293,17 +293,20 @@ router.get('/rounds/:id/passes', async (req, res) => {
   }
 });
 
-// GET /api/rounds/:id/reconciliation-counts — Images needing reconciliation, by station.
-// Unresolved = reviewed_ballots.outcome IS NULL. Grouped by the originating station.
+// GET /api/rounds/:id/reconciliation-counts — Images needing reconciliation, by station × pass.
+// Unresolved = reviewed_ballots.outcome IS NULL.
 router.get('/rounds/:id/reconciliation-counts', async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { rows } = await db.query(
-      `SELECT COALESCE(station_id, 'unknown') AS station_id, COUNT(*)::int AS pending
+      `SELECT
+         COALESCE(station_id, 'unknown') AS station_id,
+         pass_id,
+         COUNT(*)::int AS pending
        FROM reviewed_ballots
        WHERE round_id = $1 AND outcome IS NULL
-       GROUP BY COALESCE(station_id, 'unknown')
-       ORDER BY station_id`,
+       GROUP BY COALESCE(station_id, 'unknown'), pass_id
+       ORDER BY station_id, pass_id NULLS LAST`,
       [roundId]
     );
     res.json(rows);

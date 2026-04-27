@@ -657,14 +657,25 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
 
 // ─── Scans by Station table ────────────────────────────────────────────────
 function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
-  const reconMap = new Map((reconcileCounts || []).map(r => [r.station_id, r.pending || 0]));
+  // Per-station × per-pass needs-review map; key = `${station_id}|${pass_id ?? 'null'}`.
+  const reconCellMap = new Map();
+  (reconcileCounts || []).forEach(r => {
+    reconCellMap.set(`${r.station_id}|${r.pass_id ?? 'null'}`, r.pending || 0);
+  });
+  const reconRowTotal = (station) =>
+    (reconcileCounts || [])
+      .filter(r => r.station_id === station)
+      .reduce((s, r) => s + (r.pending || 0), 0);
+
   const stationIdSet = new Set((stationCounts || []).map(r => r.station_id));
-  reconMap.forEach((_, sid) => stationIdSet.add(sid));
+  (reconcileCounts || []).forEach(r => stationIdSet.add(r.station_id));
   if (stationIdSet.size === 0) return null;
 
   const nonDeletedPasses = passes.filter(p => p.status !== 'deleted');
   const passColumns = nonDeletedPasses.map(p => ({ id: p.id, label: `Pass ${p.pass_number}` }));
-  const hasUnbucketed = stationCounts.some(r => r.pass_id == null);
+  const hasUnbucketed =
+    stationCounts.some(r => r.pass_id == null) ||
+    (reconcileCounts || []).some(r => r.pass_id == null);
   if (hasUnbucketed) passColumns.push({ id: null, label: 'Unassigned' });
 
   const stationIds = Array.from(stationIdSet).sort();
@@ -673,10 +684,12 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
 
   const colTotal = (passId) =>
     stationCounts.filter(r => (r.pass_id ?? null) === passId).reduce((s, r) => s + (r.uploads || 0), 0);
+  const colReconTotal = (passId) =>
+    (reconcileCounts || []).filter(r => (r.pass_id ?? null) === passId).reduce((s, r) => s + (r.pending || 0), 0);
   const rowTotal = (station) =>
     stationCounts.filter(r => r.station_id === station).reduce((s, r) => s + (r.uploads || 0), 0);
   const grandTotal = stationCounts.reduce((s, r) => s + (r.uploads || 0), 0);
-  const reconTotal = Array.from(reconMap.values()).reduce((s, n) => s + n, 0);
+  const reconTotal = (reconcileCounts || []).reduce((s, r) => s + (r.pending || 0), 0);
 
   const th = { textAlign: 'left', padding: '0.5rem 0.75rem', background: '#f9fafb', fontSize: '0.82rem', borderBottom: '1px solid #e5e7eb', fontWeight: 700 };
   const td = { padding: '0.4rem 0.75rem', fontSize: '0.88rem', borderBottom: '1px solid #f3f4f6' };
@@ -700,13 +713,24 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
           </thead>
           <tbody>
             {stationIds.map(sid => {
-              const pending = reconMap.get(sid) || 0;
+              const pending = reconRowTotal(sid);
               return (
                 <tr key={sid}>
                   <td style={{ ...td, fontFamily: 'monospace' }}>{sid}</td>
-                  {passColumns.map(c => (
-                    <td key={c.id ?? 'null'} style={numeric}>{lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}</td>
-                  ))}
+                  {passColumns.map(c => {
+                    const uploads = lookup.get(`${sid}|${c.id ?? 'null'}`) || 0;
+                    const cellPending = reconCellMap.get(`${sid}|${c.id ?? 'null'}`) || 0;
+                    return (
+                      <td key={c.id ?? 'null'} style={numeric}>
+                        <div>{uploads}</div>
+                        {cellPending > 0 && (
+                          <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: 600 }}>
+                            {cellPending} need review
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
                   <td style={{ ...numeric, fontWeight: 700 }}>{rowTotal(sid)}</td>
                   <td style={{
                     ...numeric, fontWeight: 700,
@@ -718,9 +742,20 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
             })}
             <tr>
               <td style={{ ...td, fontWeight: 700, background: '#f9fafb' }}>Total</td>
-              {passColumns.map(c => (
-                <td key={c.id ?? 'null'} style={{ ...numeric, fontWeight: 700, background: '#f9fafb' }}>{colTotal(c.id ?? null)}</td>
-              ))}
+              {passColumns.map(c => {
+                const uploads = colTotal(c.id ?? null);
+                const colPending = colReconTotal(c.id ?? null);
+                return (
+                  <td key={c.id ?? 'null'} style={{ ...numeric, fontWeight: 700, background: '#f9fafb' }}>
+                    <div>{uploads}</div>
+                    {colPending > 0 && (
+                      <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: 600 }}>
+                        {colPending} need review
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
               <td style={{ ...numeric, fontWeight: 700, background: '#dbeafe', color: '#1e40af' }}>{grandTotal}</td>
               <td style={{
                 ...numeric, fontWeight: 700,
@@ -735,19 +770,29 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
       {/* Mobile card view — shown under 500px via CSS */}
       <div data-station-cards style={styles.stationCardList}>
         {stationIds.map(sid => {
-          const pending = reconMap.get(sid) || 0;
+          const pending = reconRowTotal(sid);
           return (
             <div key={sid} style={styles.stationCard}>
               <div style={styles.stationCardHeader}>
                 <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{sid}</span>
                 <span style={{ ...styles.pill }}>Total {rowTotal(sid)}</span>
               </div>
-              {passColumns.map(c => (
-                <div key={c.id ?? 'null'} style={styles.stationCardRow}>
-                  <span style={styles.muted}>{c.label}</span>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}</span>
-                </div>
-              ))}
+              {passColumns.map(c => {
+                const cellPending = reconCellMap.get(`${sid}|${c.id ?? 'null'}`) || 0;
+                return (
+                  <div key={c.id ?? 'null'} style={styles.stationCardRow}>
+                    <span style={styles.muted}>{c.label}</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                      {lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}
+                      {cellPending > 0 && (
+                        <span style={{ marginLeft: '0.4rem', color: '#b45309', fontSize: '0.78rem' }}>
+                          ({cellPending} need review)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
               <div style={styles.stationCardRow}>
                 <span style={styles.muted}>Needs Review</span>
                 <span style={{

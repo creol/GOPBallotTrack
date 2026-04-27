@@ -5,6 +5,8 @@ import ElectionLayout from '../components/ElectionLayout';
 import SuperAdminPinModal from '../components/SuperAdminPinModal';
 import { useAuth } from '../context/AuthContext';
 import { toInputDate, formatDate, formatTime12 } from '../utils/dateFormat';
+import RaceGroupSelect from '../components/RaceGroupSelect';
+import { DEFAULT_GROUP, normalizeGroup } from '../utils/raceGroups';
 
 const NAV_ITEMS = [
   { key: 'rounds', label: 'Rounds' },
@@ -25,7 +27,8 @@ export default function RaceDetail() {
   const [candidateName, setCandidateName] = useState('');
   const [paperColor, setPaperColor] = useState('');
   const [editing, setEditing] = useState(false);
-  const [raceForm, setRaceForm] = useState({ name: '', race_date: '', race_time: '', location: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', race_date: '', race_time: '', location: '', race_group: DEFAULT_GROUP });
+  const [allRaces, setAllRaces] = useState([]);
   const [editingCandidate, setEditingCandidate] = useState(null);
   const [editCandidateName, setEditCandidateName] = useState('');
   const [showRegenWarning, setShowRegenWarning] = useState(false);
@@ -55,6 +58,7 @@ export default function RaceDetail() {
   const fetchAll = async () => {
     const { data: election } = await api.get(`/admin/elections/${electionId}`);
     setElectionName(election.name || '');
+    setAllRaces(election.races || []);
     const found = election.races?.find(r => r.id === parseInt(raceId));
     if (found) {
       setRace(found);
@@ -63,6 +67,7 @@ export default function RaceDetail() {
         race_date: toInputDate(found.race_date),
         race_time: found.race_time || '',
         location: found.location || '',
+        race_group: normalizeGroup(found.race_group),
       });
     }
 
@@ -137,6 +142,7 @@ export default function RaceDetail() {
       race_date: raceForm.race_date || null,
       race_time: raceForm.race_time || null,
       location: raceForm.location || null,
+      race_group: raceForm.race_group || DEFAULT_GROUP,
     });
     setEditing(false);
     fetchAll();
@@ -272,6 +278,15 @@ export default function RaceDetail() {
             <input style={{ ...styles.input, flex: 1 }} type="time" value={raceForm.race_time} onChange={e => setRaceForm({ ...raceForm, race_time: e.target.value })} />
           </div>
           <input style={styles.input} placeholder="Location (optional)" value={raceForm.location} onChange={e => setRaceForm({ ...raceForm, location: e.target.value })} />
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <label style={{ fontSize: '0.85rem', color: '#374151' }}>Group:</label>
+            <RaceGroupSelect
+              value={raceForm.race_group}
+              onChange={(g) => setRaceForm({ ...raceForm, race_group: g })}
+              existing={allRaces}
+              style={{ flex: 1 }}
+            />
+          </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button style={styles.btnPrimary} type="submit">Save</button>
             <button style={styles.btnSmall} type="button" onClick={() => setEditing(false)}>Cancel</button>
@@ -282,6 +297,9 @@ export default function RaceDetail() {
           <div>
             <h1>{race.name}</h1>
             <p style={styles.muted}>
+              <span style={{ background: '#eef2ff', color: '#3730a3', padding: '0.1rem 0.5rem', borderRadius: 10, fontSize: '0.75rem', fontWeight: 600, marginRight: '0.5rem' }}>
+                {normalizeGroup(race.race_group)}
+              </span>
               {race.ballot_count && <>{race.ballot_count} ballots per round</>}
               {race.ballot_count && race.max_rounds && <> &nbsp;|&nbsp; </>}
               {race.max_rounds && <>{race.max_rounds} max rounds</>}

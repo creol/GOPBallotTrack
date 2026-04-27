@@ -72,11 +72,14 @@ router.get('/rounds/:id/reviewed-ballots', async (req, res) => {
       ? 'WHERE rb.round_id = $1 AND rb.outcome IS NULL'
       : 'WHERE rb.round_id = $1';
 
+    // LEFT JOIN on ballot_serials: a reviewed_ballots row whose original_serial_id
+    // is NULL (QR couldn't be decoded) or stale must still surface in the Tasks queue,
+    // otherwise the per-station "Needs Review" total disagrees with this list.
     const { rows } = await db.query(
       `SELECT rb.*, bs.serial_number,
               rbs.serial_number as replacement_serial_number
        FROM reviewed_ballots rb
-       JOIN ballot_serials bs ON bs.id = rb.original_serial_id
+       LEFT JOIN ballot_serials bs ON bs.id = rb.original_serial_id
        LEFT JOIN ballot_serials rbs ON rbs.id = rb.replacement_serial_id
        ${whereClause}
        ORDER BY rb.created_at DESC`,

@@ -10,7 +10,7 @@ const router = Router();
 // POST /api/admin/elections/:id/races — Create race
 router.post('/elections/:id/races', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors, race_date, race_time, location, public_search_enabled, public_browse_enabled } = req.body;
+    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors, race_date, race_time, location, public_search_enabled, public_browse_enabled, race_group } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     // Get next display_order
@@ -26,12 +26,13 @@ router.post('/elections/:id/races', async (req, res) => {
       if (election?.date) defaultDate = election.date;
     }
 
+    const trimmedGroup = (typeof race_group === 'string' ? race_group.trim() : '') || 'Other';
     const { rows: [race] } = await db.query(
-      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds, race_date, race_time, location, public_search_enabled, public_browse_enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds, race_date, race_time, location, public_search_enabled, public_browse_enabled, race_group)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
       [req.params.id, name, threshold_type || 'majority', threshold_value || null, max + 1,
        ballot_count || null, max_rounds || null, defaultDate, race_time || null, location || null,
-       public_search_enabled !== false, public_browse_enabled === true]
+       public_search_enabled !== false, public_browse_enabled === true, trimmedGroup]
     );
 
     // If ballot_count and max_rounds provided, auto-create rounds with SNs
@@ -71,7 +72,7 @@ router.get('/elections/:id/races', async (req, res) => {
 // PUT /api/admin/races/:id — Update race
 router.put('/races/:id', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled, dashboard_visible } = req.body;
+    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled, dashboard_visible, race_group } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
@@ -85,6 +86,10 @@ router.put('/races/:id', async (req, res) => {
     if (public_search_enabled !== undefined) { updates.push(`public_search_enabled = $${idx++}`); values.push(public_search_enabled); }
     if (public_browse_enabled !== undefined) { updates.push(`public_browse_enabled = $${idx++}`); values.push(public_browse_enabled); }
     if (dashboard_visible !== undefined) { updates.push(`dashboard_visible = $${idx++}`); values.push(!!dashboard_visible); }
+    if (race_group !== undefined) {
+      const trimmed = (typeof race_group === 'string' ? race_group.trim() : '') || 'Other';
+      updates.push(`race_group = $${idx++}`); values.push(trimmed);
+    }
 
     if (updates.length === 0) {
       const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [req.params.id]);

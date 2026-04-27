@@ -3,6 +3,8 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
 import { formatDate, toInputDate } from '../utils/dateFormat';
+import RaceGroupSelect from '../components/RaceGroupSelect';
+import { DEFAULT_GROUP } from '../utils/raceGroups';
 
 const NAV_ITEMS = [
   { key: 'races', label: 'Races' },
@@ -20,7 +22,7 @@ export default function ElectionDetail() {
   const [ballotBoxes, setBallotBoxes] = useState([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', date: '', description: '' });
-  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '', race_group: DEFAULT_GROUP });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
   const [raceRounds, setRaceRounds] = useState({});
@@ -69,8 +71,9 @@ export default function ElectionDetail() {
       race_date: raceForm.race_date || null,
       race_time: raceForm.race_time || null,
       location: raceForm.location || null,
+      race_group: raceForm.race_group || DEFAULT_GROUP,
     });
-    setRaceForm({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '' });
+    setRaceForm({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '', race_group: DEFAULT_GROUP });
     setShowRaceForm(false);
     navigate(`/admin/elections/${id}/races/${newRace.id}?tab=candidates`);
   };
@@ -214,6 +217,15 @@ export default function ElectionDetail() {
                   </div>
                   <input style={styles.input} placeholder="Location (optional)" value={raceForm.location}
                     onChange={e => setRaceForm({ ...raceForm, location: e.target.value })} />
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <label style={{ fontSize: '0.85rem', color: '#374151' }}>Group:</label>
+                    <RaceGroupSelect
+                      value={raceForm.race_group}
+                      onChange={(g) => setRaceForm({ ...raceForm, race_group: g })}
+                      existing={election.races || []}
+                      style={{ flex: 1 }}
+                    />
+                  </div>
                   <button style={{ ...styles.btnPrimary, alignSelf: 'flex-start' }} type="submit">Add Candidates →</button>
                 </form>
               )}
