@@ -301,19 +301,15 @@ function TVMode({ election, connected }) {
     let raf, paused = true, startTimer;
     startTimer = setTimeout(() => { paused = false; }, startDelayMs);
 
-    // ~60px is the typical rendered height of the sticky group header (with the
-    // configured uppercase styling + 2px border). Plus 40px breathing room so we
-    // only scroll when there's a real "bottom" worth showing.
-    const STICKY_GROUP_H = 60;
-    const BUFFER = 40;
+    // Don't trigger scroll for tiny overflows (a few px from rounding / measurement
+    // noise). 80px is roughly the height of one candidate row plus some padding,
+    // so anything below that is rounding error, not real "hidden content."
+    const SCROLL_THRESHOLD = 80;
 
     const tick = () => {
       if (!paused) {
-        const stickyTotal = mainHeaderH + (showGroupHeaders ? STICKY_GROUP_H : 0);
         const max = document.documentElement.scrollHeight - window.innerHeight;
-        // Don't scroll if overflow is below the sticky-overlap threshold — scrolling
-        // would only hide content behind the stickies without exposing anything new.
-        if (max <= stickyTotal + BUFFER) { raf = requestAnimationFrame(tick); return; }
+        if (max <= SCROLL_THRESHOLD) { raf = requestAnimationFrame(tick); return; }
         const next = window.scrollY + stepPx;
         if (next >= max) {
           paused = true;
@@ -336,7 +332,7 @@ function TVMode({ election, connected }) {
     };
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); clearTimeout(startTimer); };
-  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx, mainHeaderH, showGroupHeaders]);
+  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx]);
 
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
   const mobileUrl = `${window.location.origin}${window.location.pathname}`;
