@@ -401,14 +401,28 @@ function ScannersSection({ electionId }) {
   );
 }
 
+// Default settings shape for the public dashboard. Anything missing on the election
+// row falls back here at render time, so existing elections without the JSONB
+// populated still render the same as before.
+const DEFAULT_DASHBOARD_SETTINGS = {
+  layout_mode: 'all',          // 'all' | 'grouped' | 'rotating'
+  rotation_seconds: 0,          // 0 = no rotation; ignored unless layout_mode === 'rotating'
+  auto_scroll: true,            // marquee-style vertical scroll when content overflows
+};
+
 function DashboardsSection({ electionId }) {
   const [decimals, setDecimals] = useState(null);
   const [savingDecimals, setSavingDecimals] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   useEffect(() => {
     api.get(`/admin/elections/${electionId}`)
-      .then(({ data }) => setDecimals(data.dashboard_decimals ?? 3))
-      .catch(() => setDecimals(3));
+      .then(({ data }) => {
+        setDecimals(data.dashboard_decimals ?? 3);
+        setSettings({ ...DEFAULT_DASHBOARD_SETTINGS, ...(data.dashboard_settings || {}) });
+      })
+      .catch(() => { setDecimals(3); setSettings({ ...DEFAULT_DASHBOARD_SETTINGS }); });
   }, [electionId]);
 
   const handleDecimalsChange = async (e) => {
@@ -421,6 +435,20 @@ function DashboardsSection({ electionId }) {
       alert('Failed to save decimal places.');
     } finally {
       setSavingDecimals(false);
+    }
+  };
+
+  // Patch a subset of dashboard_settings; server merges into the JSONB column so
+  // siblings (colors, branding, etc.) stay intact across edits.
+  const patchSettings = async (patch) => {
+    setSettings(prev => ({ ...prev, ...patch }));
+    setSavingSettings(true);
+    try {
+      await api.put(`/admin/elections/${electionId}`, { dashboard_settings: patch });
+    } catch {
+      alert('Failed to save dashboard settings.');
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -463,6 +491,59 @@ function DashboardsSection({ electionId }) {
           Percentages are <strong>always truncated, never rounded</strong> (party rule). Trailing zeros are stripped. Applies to every public and admin dashboard view for this election.
         </p>
       </div>
+
+      {/* Wide-mode (TV) layout controls — applies only to the public dashboard at >1200px width or ?mode=tv. */}
+      {settings && (
+        <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+          <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Wide-mode Layout</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.5rem 1rem', alignItems: 'center', fontSize: '0.9rem' }}>
+            <label style={{ fontWeight: 600 }}>Display mode:</label>
+            <select
+              value={settings.layout_mode}
+              onChange={(e) => patchSettings({ layout_mode: e.target.value })}
+              disabled={savingSettings}
+              style={{ padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db', maxWidth: 360 }}
+            >
+              <option value="all">All races (no grouping)</option>
+              <option value="grouped">Grouped by category, all visible</option>
+              <option value="rotating">Rotate one category at a time</option>
+            </select>
+
+            <label style={{ fontWeight: 600 }}>Rotation interval:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="number"
+                min={0}
+                max={600}
+                step={1}
+                value={settings.rotation_seconds}
+                onChange={(e) => {
+                  const n = Math.max(0, Math.min(600, parseInt(e.target.value, 10) || 0));
+                  patchSettings({ rotation_seconds: n });
+                }}
+                disabled={savingSettings || settings.layout_mode !== 'rotating'}
+                style={{ width: 90, padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+              />
+              <span style={styles.muted}>seconds per category — 0 disables rotation and shows all categories at once.</span>
+            </div>
+
+            <label style={{ fontWeight: 600 }}>Auto-scroll:</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={!!settings.auto_scroll}
+                onChange={(e) => patchSettings({ auto_scroll: e.target.checked })}
+                disabled={savingSettings}
+              />
+              <span style={styles.muted}>Smoothly scroll the race grid when it overflows the screen.</span>
+            </label>
+          </div>
+          {savingSettings && <p style={{ ...styles.muted, fontSize: '0.78rem', margin: '0.4rem 0 0' }}>Saving…</p>}
+          <p style={{ ...styles.muted, margin: '0.4rem 0 0', fontSize: '0.78rem' }}>
+            Categories use the <strong>race group</strong> assigned to each race. Mobile mode is unaffected by these settings.
+          </p>
+        </div>
+      )}
 
       <div style={{
         marginTop: '1rem',

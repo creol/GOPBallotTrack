@@ -56,7 +56,7 @@ router.get('/:id', async (req, res) => {
 // PUT /api/admin/elections/:id — Update election
 router.put('/:id', async (req, res) => {
   try {
-    const { name, date, description, public_search_enabled, public_browse_enabled, dashboard_decimals } = req.body;
+    const { name, date, description, public_search_enabled, public_browse_enabled, dashboard_decimals, dashboard_settings } = req.body;
     const updates = ['updated_at = NOW()'];
     const values = [];
     let idx = 1;
@@ -72,6 +72,12 @@ router.put('/:id', async (req, res) => {
         return res.status(400).json({ error: 'dashboard_decimals must be an integer between 0 and 5' });
       }
       updates.push(`dashboard_decimals = $${idx++}`); values.push(d);
+    }
+    // Merge-patch into existing JSONB so partial updates from the admin UI don't
+    // overwrite unrelated fields (e.g. a color tweak shouldn't clear the layout mode).
+    if (dashboard_settings !== undefined && dashboard_settings !== null && typeof dashboard_settings === 'object') {
+      updates.push(`dashboard_settings = COALESCE(dashboard_settings, '{}'::jsonb) || $${idx++}::jsonb`);
+      values.push(JSON.stringify(dashboard_settings));
     }
 
     values.push(req.params.id);
