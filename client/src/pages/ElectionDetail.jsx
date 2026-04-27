@@ -404,6 +404,66 @@ function ScannersSection({ electionId }) {
 // Default settings shape for the public dashboard. Anything missing on the election
 // row falls back here at render time, so existing elections without the JSONB
 // populated still render the same as before.
+// Color palette slots — each slot is independently overridable by the admin and
+// applied at render time on the public dashboard. Values are CSS color strings
+// (hex or rgb()). Mirror this object in PublicDashboard.jsx — see DEFAULT_COLORS.
+const DEFAULT_COLORS = {
+  page_bg:                '#0f172a',
+  card_bg:                '#1e293b',
+  card_border:            '#334155',
+  header_text:            '#ffffff',
+  group_header_text:      '#fbbf24',
+  candidate_name:         '#e2e8f0',
+  vote_bar:               '#3b82f6',
+  vote_count_text:        '#ffffff',
+  pct_text:               '#94a3b8',
+  convention_winner_bg:   '#fef3c7',
+  convention_winner_text: '#b45309',
+  winner_bg:              '#fef3c7',
+  winner_text:            '#b45309',
+  advances_bg:            '#dcfce7',
+  advances_text:          '#166534',
+  advance_to_primary_bg:  '#dbeafe',
+  advance_to_primary_text:'#1e40af',
+  eliminated_bg:          '#fee2e2',
+  eliminated_text:        '#dc2626',
+  withdrew_bg:            '#f3f4f6',
+  withdrew_text:          '#6b7280',
+};
+
+// Human-friendly labels and grouping for the color picker UI.
+const COLOR_GROUPS = [
+  { title: 'Page & Cards', slots: [
+    ['page_bg', 'Page background'],
+    ['card_bg', 'Race card background'],
+    ['card_border', 'Race card border'],
+  ]},
+  { title: 'Text', slots: [
+    ['header_text', 'Election header text'],
+    ['group_header_text', 'Race group header'],
+    ['candidate_name', 'Candidate name'],
+    ['vote_count_text', 'Vote count'],
+    ['pct_text', 'Percentage'],
+  ]},
+  { title: 'Vote Bar', slots: [
+    ['vote_bar', 'Vote bar fill'],
+  ]},
+  { title: 'Outcome Badges', slots: [
+    ['convention_winner_bg', 'Convention Winner — background'],
+    ['convention_winner_text', 'Convention Winner — text'],
+    ['winner_bg', 'Winner — background'],
+    ['winner_text', 'Winner — text'],
+    ['advances_bg', 'Advances — background'],
+    ['advances_text', 'Advances — text'],
+    ['advance_to_primary_bg', 'Advances to Primary — background'],
+    ['advance_to_primary_text', 'Advances to Primary — text'],
+    ['eliminated_bg', 'Eliminated — background'],
+    ['eliminated_text', 'Eliminated — text'],
+    ['withdrew_bg', 'Withdrew — background'],
+    ['withdrew_text', 'Withdrew — text'],
+  ]},
+];
+
 const DEFAULT_DASHBOARD_SETTINGS = {
   layout_mode: 'all',          // 'all' | 'grouped' | 'rotating'
   rotation_seconds: 0,          // 0 = no rotation; ignored unless layout_mode === 'rotating'
@@ -412,6 +472,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   logo_path: '',                // public URL to uploaded logo
   logo_position: 'top_center',  // 'top_center' | 'inline_left' | 'inline_right' | 'none'
   show_vote_bar: true,          // toggle the visual vote-bar in result rows
+  colors: { ...DEFAULT_COLORS },
 };
 
 function DashboardsSection({ electionId }) {
@@ -560,6 +621,28 @@ function DashboardsSection({ electionId }) {
         />
       )}
 
+      {settings && (
+        <DashboardColorsPanel
+          settings={settings}
+          patchSettings={patchSettings}
+          savingSettings={savingSettings}
+        />
+      )}
+
+      {settings && (
+        <DashboardTemplatesPanel
+          settings={settings}
+          electionId={electionId}
+          onApplyTemplate={(tplSettings) => {
+            // Replace the settings entirely with the template (after merging defaults
+            // for any slots the template doesn't carry).
+            const next = { ...DEFAULT_DASHBOARD_SETTINGS, ...tplSettings, colors: { ...DEFAULT_COLORS, ...(tplSettings.colors || {}) } };
+            setSettings(next);
+            patchSettings(next);
+          }}
+        />
+      )}
+
       <div style={{
         marginTop: '1rem',
         border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
@@ -701,6 +784,199 @@ function DashboardBrandingPanel({ electionId, settings, patchSettings, savingSet
           <span style={styles.muted}>Show the visual percentage bar next to each candidate.</span>
         </label>
       </div>
+    </div>
+  );
+}
+
+// Color customization panel. Each slot has a native color picker plus a hex/rgb
+// text input — both update the same setting so the operator can paste a brand hex
+// or pick visually. Reset-to-default per slot and Reset-all keep escape hatches.
+function DashboardColorsPanel({ settings, patchSettings, savingSettings }) {
+  const colors = { ...DEFAULT_COLORS, ...(settings.colors || {}) };
+
+  const setColor = (key, value) => {
+    const next = { ...colors, [key]: value };
+    patchSettings({ colors: next });
+  };
+
+  // Convert any CSS color string (rgb(), named) to a #RRGGBB the color picker
+  // can preview. Falls back to the default for that slot if parsing fails.
+  const toHex = (val, fallback) => {
+    if (typeof val !== 'string') return fallback;
+    const t = val.trim();
+    if (/^#[0-9a-f]{6}$/i.test(t)) return t.toLowerCase();
+    if (/^#[0-9a-f]{3}$/i.test(t)) {
+      return '#' + t.slice(1).split('').map(c => c + c).join('').toLowerCase();
+    }
+    const m = t.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (m) {
+      const h = (n) => Math.max(0, Math.min(255, parseInt(n, 10))).toString(16).padStart(2, '0');
+      return '#' + h(m[1]) + h(m[2]) + h(m[3]);
+    }
+    return fallback;
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <h3 style={{ margin: 0, fontSize: '1rem' }}>Colors</h3>
+        <button onClick={() => patchSettings({ colors: { ...DEFAULT_COLORS } })} disabled={savingSettings}
+          style={{ padding: '0.3rem 0.7rem', background: '#fff', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+          Reset all to defaults
+        </button>
+      </div>
+      {COLOR_GROUPS.map(group => (
+        <div key={group.title} style={{ marginTop: '0.6rem' }}>
+          <div style={{ fontSize: '0.78rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{group.title}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.4rem 1rem' }}>
+            {group.slots.map(([key, label]) => {
+              const value = colors[key] ?? DEFAULT_COLORS[key];
+              const hex = toHex(value, DEFAULT_COLORS[key]);
+              return (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <input type="color" value={hex} onChange={(e) => setColor(key, e.target.value)}
+                    disabled={savingSettings}
+                    style={{ width: 36, height: 28, padding: 0, border: '1px solid #d1d5db', borderRadius: 4, background: 'none', cursor: 'pointer' }} />
+                  <input type="text" value={value} onChange={(e) => setColor(key, e.target.value)}
+                    disabled={savingSettings} placeholder="#RRGGBB or rgb(r,g,b)"
+                    style={{ width: 130, padding: '0.25rem 0.4rem', border: '1px solid #d1d5db', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.8rem' }} />
+                  <span style={{ fontSize: '0.82rem', flex: 1 }}>{label}</span>
+                  {value !== DEFAULT_COLORS[key] && (
+                    <button onClick={() => setColor(key, DEFAULT_COLORS[key])} disabled={savingSettings}
+                      title="Reset to default"
+                      style={{ padding: '0.15rem 0.4rem', background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '0.72rem' }}>↺</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Template management: save current settings as a named template, load a saved
+// template into this election, delete templates. Plus client-side download/import
+// of settings as a JSON file so the operator can carry a brand kit between systems.
+function DashboardTemplatesPanel({ settings, electionId, onApplyTemplate }) {
+  const [templates, setTemplates] = useState([]);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  const load = async () => {
+    try {
+      const { data } = await api.get('/admin/dashboard-templates');
+      setTemplates(data || []);
+    } catch {}
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleSave = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return alert('Enter a template name first.');
+    setBusy(true);
+    try {
+      await api.post('/admin/dashboard-templates', { name: trimmed, settings });
+      setName('');
+      await load();
+    } catch (err) {
+      alert('Save failed: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
+  const handleApply = async (tpl) => {
+    if (!confirm(`Apply template "${tpl.name}" to this election? Current settings will be overwritten.`)) return;
+    onApplyTemplate(tpl.settings);
+  };
+
+  const handleDelete = async (tpl) => {
+    if (!confirm(`Delete template "${tpl.name}"?`)) return;
+    try {
+      await api.delete(`/admin/dashboard-templates/${tpl.id}`);
+      await load();
+    } catch (err) {
+      alert('Delete failed: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dashboard-settings-${electionId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON shape');
+      if (!confirm('Apply imported settings to this election? Current settings will be overwritten.')) return;
+      onApplyTemplate(parsed);
+    } catch (err) {
+      alert('Import failed: ' + (err.message || 'Could not parse JSON'));
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+      <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Templates</h3>
+
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="New template name"
+          style={{ padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: 4, minWidth: 220 }} />
+        <button onClick={handleSave} disabled={busy || !name.trim()}
+          style={{ padding: '0.35rem 0.8rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+          Save current settings
+        </button>
+        <button onClick={handleDownload}
+          style={{ padding: '0.35rem 0.8rem', background: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: 4, cursor: 'pointer' }}>
+          Download as JSON
+        </button>
+        <input type="file" accept="application/json" ref={fileRef} style={{ display: 'none' }}
+          onChange={(e) => handleImportFile(e.target.files?.[0])} />
+        <button onClick={() => fileRef.current?.click()}
+          style={{ padding: '0.35rem 0.8rem', background: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: 4, cursor: 'pointer' }}>
+          Import from JSON
+        </button>
+      </div>
+
+      {templates.length === 0 ? (
+        <p style={{ ...styles.muted, margin: 0, fontSize: '0.82rem' }}>No saved templates yet. Save the current settings as a template to reuse them across elections.</p>
+      ) : (
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '0.4rem' }}>
+          {templates.map(tpl => (
+            <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0', borderBottom: '1px solid #f3f4f6' }}>
+              <span style={{ flex: 1, fontSize: '0.9rem' }}>{tpl.name}</span>
+              <button onClick={() => handleApply(tpl)}
+                style={{ padding: '0.25rem 0.6rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+                Apply
+              </button>
+              <button onClick={() => {
+                const blob = new Blob([JSON.stringify(tpl.settings, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `${tpl.name}.json`; a.click();
+                URL.revokeObjectURL(url);
+              }} style={{ padding: '0.25rem 0.6rem', background: '#fff', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+                Download
+              </button>
+              <button onClick={() => handleDelete(tpl)}
+                style={{ padding: '0.25rem 0.6rem', background: '#fff', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -28,6 +28,7 @@ const ballotDesignRouter = require('./routes/ballotDesign');
 const scannersRouter = require('./routes/scanners');
 const adminUsersRouter = require('./routes/adminUsers');
 const controlCenterRouter = require('./routes/controlCenter');
+const dashboardTemplatesRouter = require('./routes/dashboardTemplates');
 const testToolsRouter = require('./routes/testTools');
 const ballotSpecRecoveryRouter = require('./routes/ballotSpecRecovery');
 const stationsRouter = require('./routes/stations');
@@ -95,6 +96,7 @@ app.use('/api', scanLogsRouter); // Agent log upload (no auth) + admin log views
 
 // Admin API routes (requireAuth — any authenticated admin user)
 app.use('/api/admin/elections', requireAuth, electionsRouter);
+app.use('/api/admin/dashboard-templates', requireAuth, dashboardTemplatesRouter);
 app.use('/api/admin', requireAuth, racesRouter);
 app.use('/api/admin', requireAuth, roundsRouter);
 app.use('/api/admin', requireAuth, ballotBoxesRouter);

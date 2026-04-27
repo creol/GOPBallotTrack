@@ -8,6 +8,31 @@ import { fmtPct } from '../utils/percent';
 import { VersionTag } from '../components/AppHeader';
 import { normalizeGroup, sortGroupNames } from '../utils/raceGroups';
 
+// Mirror of DEFAULT_COLORS in ElectionDetail.jsx — keep these in sync.
+const DEFAULT_COLORS = {
+  page_bg:                '#0f172a',
+  card_bg:                '#1e293b',
+  card_border:            '#334155',
+  header_text:            '#ffffff',
+  group_header_text:      '#fbbf24',
+  candidate_name:         '#e2e8f0',
+  vote_bar:               '#3b82f6',
+  vote_count_text:        '#ffffff',
+  pct_text:               '#94a3b8',
+  convention_winner_bg:   '#fef3c7',
+  convention_winner_text: '#b45309',
+  winner_bg:              '#fef3c7',
+  winner_text:            '#b45309',
+  advances_bg:            '#dcfce7',
+  advances_text:          '#166534',
+  advance_to_primary_bg:  '#dbeafe',
+  advance_to_primary_text:'#1e40af',
+  eliminated_bg:          '#fee2e2',
+  eliminated_text:        '#dc2626',
+  withdrew_bg:            '#f3f4f6',
+  withdrew_text:          '#6b7280',
+};
+
 const DEFAULT_DASHBOARD_SETTINGS = {
   layout_mode: 'all',
   rotation_seconds: 0,
@@ -16,6 +41,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   logo_path: '',
   logo_position: 'top_center',
   show_vote_bar: true,
+  colors: { ...DEFAULT_COLORS },
 };
 
 function useWindowWidth() {
@@ -145,17 +171,18 @@ function removedBeforeRound(rounds, roundNumber) {
 // Renders the dashboard's top header per the branding settings: optional logo
 // (top center, inline left, inline right, or hidden) and either a custom header
 // string or the election name as fallback.
-function DashboardHeader({ settings, fallbackName }) {
+function DashboardHeader({ settings, fallbackName, colors }) {
   const text = (settings.custom_header || '').trim() || fallbackName;
   const pos = settings.logo_position || 'top_center';
   const hasLogo = !!settings.logo_path && pos !== 'none';
   const logoImg = hasLogo ? <img src={settings.logo_path} alt="" style={tv.logo} /> : null;
+  const titleStyle = { ...tv.title, color: colors?.header_text || tv.title.color };
 
   if (hasLogo && pos === 'top_center') {
     return (
       <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         {logoImg}
-        <h1 style={{ ...tv.title, marginTop: '0.75rem' }}>{text}</h1>
+        <h1 style={{ ...titleStyle, marginTop: '0.75rem' }}>{text}</h1>
       </div>
     );
   }
@@ -163,12 +190,12 @@ function DashboardHeader({ settings, fallbackName }) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.25rem', marginBottom: '1.5rem' }}>
         {pos === 'inline_left' && logoImg}
-        <h1 style={{ ...tv.title, margin: 0 }}>{text}</h1>
+        <h1 style={{ ...titleStyle, margin: 0 }}>{text}</h1>
         {pos === 'inline_right' && logoImg}
       </div>
     );
   }
-  return <h1 style={tv.title}>{text}</h1>;
+  return <h1 style={titleStyle}>{text}</h1>;
 }
 
 // ======================== TV MODE ========================
@@ -181,6 +208,25 @@ function TVMode({ election, connected }) {
     () => ({ ...DEFAULT_DASHBOARD_SETTINGS, ...(election.dashboard_settings || {}) }),
     [election.dashboard_settings]
   );
+  // Resolved color palette: merge admin overrides on top of the defaults so any
+  // missing slot still has a sane value.
+  const c = useMemo(
+    () => ({ ...DEFAULT_COLORS, ...(election.dashboard_settings?.colors || {}) }),
+    [election.dashboard_settings]
+  );
+  // Per-outcome badge colors are derived from the palette, not from the static
+  // OUTCOME_BADGES const, so admin color overrides flow through to badges.
+  const outcomeBadge = (outcome) => {
+    const map = {
+      eliminated: { bg: c.eliminated_bg, color: c.eliminated_text, label: 'Eliminated' },
+      withdrew: { bg: c.withdrew_bg, color: c.withdrew_text, label: 'Withdrew' },
+      advance: { bg: c.advances_bg, color: c.advances_text, label: 'Advances' },
+      convention_winner: { bg: c.convention_winner_bg, color: c.convention_winner_text, label: 'Convention Winner' },
+      winner: { bg: c.winner_bg, color: c.winner_text, label: 'Winner' },
+      advance_to_primary: { bg: c.advance_to_primary_bg, color: c.advance_to_primary_text, label: 'Advances to Primary' },
+    };
+    return map[outcome] || null;
+  };
 
   // Group races by race_group; preserves display_order within each group (the API
   // already returns races sorted by display_order).
@@ -252,9 +298,9 @@ function TVMode({ election, connected }) {
     const isVotingOpen = race.status_label === 'Voting Open';
 
     return (
-      <div key={race.id} style={{ ...tv.raceCard, borderColor: isVotingOpen ? '#16a34a' : '#334155', borderWidth: isVotingOpen ? 2 : 1 }}>
+      <div key={race.id} style={{ ...tv.raceCard, background: c.card_bg, borderColor: isVotingOpen ? '#16a34a' : c.card_border, borderWidth: isVotingOpen ? 2 : 1 }}>
         <div style={tv.raceHeader}>
-          <h2 style={tv.raceName}>{race.name}</h2>
+          <h2 style={{ ...tv.raceName, color: c.header_text }}>{race.name}</h2>
           <span style={{ ...tv.statusLabel, background: statusStyle.bg, color: statusStyle.color }}>
             {race.status_label}
           </span>
@@ -299,10 +345,10 @@ function TVMode({ election, connected }) {
               </div>
               {visibleResults.map(r => {
                 const pct = Number(r.percentage);
-                const outcome = OUTCOME_BADGES[r.outcome];
+                const outcome = outcomeBadge(r.outcome);
                 return (
                   <div key={r.candidate_id} style={{ ...tv.resultRow, opacity: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 0.5 : 1 }}>
-                    <span style={{ ...tv.candidateName, textDecoration: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 'line-through' : 'none' }}>
+                    <span style={{ ...tv.candidateName, color: c.candidate_name, textDecoration: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 'line-through' : 'none' }}>
                       {r.candidate_name}
                     </span>
                     {outcome && (
@@ -312,11 +358,11 @@ function TVMode({ election, connected }) {
                     )}
                     {settings.show_vote_bar !== false && (
                       <div style={tv.barContainer}>
-                        <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%` }} />
+                        <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%`, background: c.vote_bar }} />
                       </div>
                     )}
-                    <span style={tv.voteCount}>{r.vote_count}</span>
-                    <span style={tv.pct}>{fmtPct(r.percentage, election.dashboard_decimals)}%</span>
+                    <span style={{ ...tv.voteCount, color: c.vote_count_text }}>{r.vote_count}</span>
+                    <span style={{ ...tv.pct, color: c.pct_text }}>{fmtPct(r.percentage, election.dashboard_decimals)}%</span>
                   </div>
                 );
               })}
@@ -341,18 +387,18 @@ function TVMode({ election, connected }) {
   };
 
   return (
-    <div style={tv.container}>
+    <div style={{ ...tv.container, background: c.page_bg }}>
       {!connected && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: '#dc2626', color: '#fff', textAlign: 'center', padding: '0.5rem', fontWeight: 700, zIndex: 100 }}>
           Reconnecting...
         </div>
       )}
-      <DashboardHeader settings={settings} fallbackName={election.name} />
+      <DashboardHeader settings={settings} fallbackName={election.name} colors={c} />
 
       {visibleGroupNames.map(groupName => (
         <div key={groupName} style={{ marginBottom: '1.5rem' }}>
           {showGroupHeaders && (
-            <h2 style={tv.groupHeader}>{groupName}</h2>
+            <h2 style={{ ...tv.groupHeader, color: c.group_header_text }}>{groupName}</h2>
           )}
           {renderRaceGrid(groups[groupName] || [])}
         </div>
