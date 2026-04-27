@@ -261,6 +261,13 @@ function TVMode({ election, connected }) {
   // bottom, smooth-scroll back to top, repeat. Re-runs on activeIdx change so the
   // start-delay is re-applied at each category rotation; the scroll position is
   // also reset to the top so the next category starts from its first race.
+  //
+  // The sticky main header (and optionally a sticky group header) sits on top of
+  // the scroll viewport. As the page scrolls, content slides UNDER those stickies
+  // and is no longer visible. So if the content's overflow is smaller than the
+  // sticky offset + a buffer, scrolling at all just hides the top of the cards
+  // (e.g. the race names) without revealing anything meaningful at the bottom —
+  // skip auto-scroll entirely in that case.
   useEffect(() => {
     if (!settings.auto_scroll) return;
     const stepPx = Math.max(1, Math.min(10, settings.auto_scroll_speed || 1));
@@ -270,10 +277,20 @@ function TVMode({ election, connected }) {
     window.scrollTo(0, 0);
     let raf, paused = true, startTimer;
     startTimer = setTimeout(() => { paused = false; }, startDelayMs);
+
+    // ~60px is the typical rendered height of the sticky group header (with the
+    // configured uppercase styling + 2px border). Plus 40px breathing room so we
+    // only scroll when there's a real "bottom" worth showing.
+    const STICKY_GROUP_H = 60;
+    const BUFFER = 40;
+
     const tick = () => {
       if (!paused) {
+        const stickyTotal = mainHeaderH + (showGroupHeaders ? STICKY_GROUP_H : 0);
         const max = document.documentElement.scrollHeight - window.innerHeight;
-        if (max <= 4) { raf = requestAnimationFrame(tick); return; }
+        // Don't scroll if overflow is below the sticky-overlap threshold — scrolling
+        // would only hide content behind the stickies without exposing anything new.
+        if (max <= stickyTotal + BUFFER) { raf = requestAnimationFrame(tick); return; }
         const next = window.scrollY + stepPx;
         if (next >= max) {
           paused = true;
@@ -296,7 +313,7 @@ function TVMode({ election, connected }) {
     };
     raf = requestAnimationFrame(loop);
     return () => { cancelAnimationFrame(raf); clearTimeout(startTimer); };
-  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx]);
+  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx, mainHeaderH, showGroupHeaders]);
 
   // Decide which group(s) to render this tick.
   const visibleGroupNames = settings.layout_mode === 'rotating' && settings.rotation_seconds > 0
