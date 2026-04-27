@@ -42,6 +42,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   custom_header: '',
   logo_path: '',
   logo_position: 'top_center',
+  qr_position: 'bottom_right',
   show_vote_bar: true,
   colors: { ...DEFAULT_COLORS },
 };
@@ -471,14 +472,26 @@ function TVMode({ election, connected }) {
         </div>
       ))}
 
-      {/* QR code for mobile access */}
-      <div style={tv.qrCorner}>
-        <div style={tv.qrBox}>
-          <QRCodeSVG value={mobileUrl} size={120} bgColor="#1e293b" fgColor="#e2e8f0" level="M" />
-          <p style={tv.qrLabel}>Scan to view results</p>
-          <p style={tv.qrLabel}>on your phone</p>
-        </div>
-      </div>
+      {/* QR code for mobile access — corner is admin-configurable; 'hidden' skips render. */}
+      {settings.qr_position !== 'hidden' && (() => {
+        const pos = settings.qr_position || 'bottom_right';
+        // Top corners offset further down so the sticky main header doesn't overlap them.
+        const corner = {
+          bottom_right: { bottom: 20, right: 20 },
+          bottom_left:  { bottom: 20, left: 20 },
+          top_right:    { top: Math.max(20, mainHeaderH + 20), right: 20 },
+          top_left:     { top: Math.max(20, mainHeaderH + 20), left: 20 },
+        }[pos] || { bottom: 20, right: 20 };
+        return (
+          <div style={{ position: 'fixed', textAlign: 'center', zIndex: 50, ...corner }}>
+            <div style={tv.qrBox}>
+              <QRCodeSVG value={mobileUrl} size={120} bgColor={c.card_bg} fgColor={c.candidate_name} level="M" />
+              <p style={tv.qrLabel}>Scan to view results</p>
+              <p style={tv.qrLabel}>on your phone</p>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

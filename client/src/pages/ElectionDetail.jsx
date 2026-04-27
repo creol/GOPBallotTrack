@@ -473,6 +473,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   custom_header: '',            // empty = use election.name
   logo_path: '',                // public URL to uploaded logo
   logo_position: 'top_center',  // 'top_center' | 'inline_left' | 'inline_right' | 'none'
+  qr_position: 'bottom_right',  // 'bottom_right' | 'bottom_left' | 'top_right' | 'top_left' | 'hidden'
   show_vote_bar: true,          // toggle the visual vote-bar in result rows
   colors: { ...DEFAULT_COLORS },
 };
@@ -807,6 +808,20 @@ function DashboardBrandingPanel({ electionId, settings, patchSettings, savingSet
           <option value="inline_left">Inline left of the header</option>
           <option value="inline_right">Inline right of the header</option>
           <option value="none">Hidden</option>
+        </select>
+
+        <label style={{ fontWeight: 600 }}>QR code position:</label>
+        <select
+          value={settings.qr_position || 'bottom_right'}
+          onChange={(e) => patchSettings({ qr_position: e.target.value })}
+          disabled={savingSettings}
+          style={{ padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db', maxWidth: 280 }}
+        >
+          <option value="bottom_right">Bottom right</option>
+          <option value="bottom_left">Bottom left</option>
+          <option value="top_right">Top right</option>
+          <option value="top_left">Top left</option>
+          <option value="hidden">Hidden</option>
         </select>
 
         <label style={{ fontWeight: 600 }}>Vote bar:</label>
