@@ -37,6 +37,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   layout_mode: 'all',
   rotation_seconds: 0,
   auto_scroll: true,
+  auto_scroll_speed: 1,
   custom_header: '',
   logo_path: '',
   logo_position: 'top_center',
@@ -255,17 +256,19 @@ function TVMode({ election, connected }) {
   }, [groupNames.length, activeIdx]);
 
   // Auto-scroll: when the page content overflows the viewport, gently scroll the
-  // window down 1px per ~50ms, pause at the bottom, jump back to top, repeat. Pure
-  // window scroll keeps existing layout untouched and works regardless of grid mode.
+  // window down N px per ~40ms tick (N = auto_scroll_speed, 1–10), pause at the
+  // bottom, smooth-scroll back to top, repeat. Pure window scroll keeps existing
+  // layout untouched and lets `position: sticky` headers do their thing.
   useEffect(() => {
     if (!settings.auto_scroll) return;
-    let raf, paused = false, dir = 1;
+    const stepPx = Math.max(1, Math.min(10, settings.auto_scroll_speed || 1));
+    let raf, paused = false;
     const tick = () => {
       if (!paused) {
         const max = document.documentElement.scrollHeight - window.innerHeight;
         if (max <= 4) { raf = requestAnimationFrame(tick); return; }
-        const next = window.scrollY + dir;
-        if (dir > 0 && next >= max) {
+        const next = window.scrollY + stepPx;
+        if (next >= max) {
           paused = true;
           setTimeout(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); paused = false; }, 2500);
         } else {
@@ -281,13 +284,29 @@ function TVMode({ election, connected }) {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [settings.auto_scroll, settings.layout_mode, activeIdx]);
+  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.layout_mode, activeIdx]);
 
   // Decide which group(s) to render this tick.
   const visibleGroupNames = settings.layout_mode === 'rotating' && settings.rotation_seconds > 0
     ? [groupNames[activeIdx] || groupNames[0]].filter(Boolean)
     : groupNames;
   const showGroupHeaders = settings.layout_mode !== 'all' && groupNames.length > 0;
+
+  // Measure the sticky main header so group headers can stick directly under it.
+  // We re-measure on resize and whenever the logo/header text changes since both
+  // affect the rendered height.
+  const mainHeaderRef = useRef(null);
+  const [mainHeaderH, setMainHeaderH] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      if (mainHeaderRef.current) setMainHeaderH(mainHeaderRef.current.offsetHeight);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    // Re-measure on next frame in case fonts/images shift the layout after mount.
+    const t = setTimeout(measure, 200);
+    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
+  }, [settings.logo_path, settings.logo_position, settings.custom_header, election.name]);
 
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
   const mobileUrl = `${window.location.origin}${window.location.pathname}`;
@@ -393,12 +412,31 @@ function TVMode({ election, connected }) {
           Reconnecting...
         </div>
       )}
-      <DashboardHeader settings={settings} fallbackName={election.name} colors={c} />
+      <div ref={mainHeaderRef}
+        style={{
+          position: 'sticky', top: 0, zIndex: 30,
+          background: c.page_bg,
+          paddingBottom: '0.5rem',
+          // Negative margins counter the container's padding so the sticky strip
+          // covers the full viewport width and content doesn't peek through above.
+          marginLeft: '-2rem', marginRight: '-2rem', paddingLeft: '2rem', paddingRight: '2rem',
+          marginTop: '-2rem', paddingTop: '2rem',
+        }}>
+        <DashboardHeader settings={settings} fallbackName={election.name} colors={c} />
+      </div>
 
       {visibleGroupNames.map(groupName => (
         <div key={groupName} style={{ marginBottom: '1.5rem' }}>
           {showGroupHeaders && (
-            <h2 style={{ ...tv.groupHeader, color: c.group_header_text }}>{groupName}</h2>
+            <h2 style={{
+              ...tv.groupHeader,
+              color: c.group_header_text,
+              position: 'sticky',
+              top: mainHeaderH,
+              zIndex: 20,
+              background: c.page_bg,
+              marginLeft: '-2rem', marginRight: '-2rem', paddingLeft: '2rem', paddingRight: '2rem',
+            }}>{groupName}</h2>
           )}
           {renderRaceGrid(groups[groupName] || [])}
         </div>
