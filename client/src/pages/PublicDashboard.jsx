@@ -82,7 +82,7 @@ export default function PublicDashboard() {
     </div>
   );
 
-  if (isTvMode) return <><TVMode election={election} connected={connected} latestOnly={latestOnly} /><VersionTag /></>;
+  if (isTvMode) return <><TVMode election={election} connected={connected} /><VersionTag /></>;
   return (
     <><MobileMode
       election={election}
@@ -115,8 +115,26 @@ const STATUS_BADGE_STYLES = {
   'Race Complete': { bg: '#6366f1', color: '#fff' },
 };
 
+// Returns the set of candidate_ids who were eliminated or withdrew in any round
+// strictly before `roundNumber`. Used to drop those names from later rounds so the
+// dashboard only lists candidates still in contention at that point in the race.
+function removedBeforeRound(rounds, roundNumber) {
+  const removed = new Set();
+  for (const round of rounds || []) {
+    if (round.round_number >= roundNumber) continue;
+    for (const r of round.results || []) {
+      if (r.outcome === 'eliminated' || r.outcome === 'withdrew') {
+        removed.add(r.candidate_id);
+      }
+    }
+  }
+  return removed;
+}
+
 // ======================== TV MODE ========================
-function TVMode({ election, connected, latestOnly }) {
+// Wide-mode TV layout: show only the latest published round per race, and within
+// that round hide any candidates eliminated/withdrew in earlier rounds.
+function TVMode({ election, connected }) {
   const raceCount = election.races.length;
   const gridCols = raceCount <= 1 ? '1fr' : raceCount <= 2 ? 'repeat(2, 1fr)' : raceCount <= 4 ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(400px, 1fr))';
 
@@ -185,23 +203,24 @@ function TVMode({ election, connected, latestOnly }) {
                 </div>
               )}
 
-              {/* Published results */}
-              {(latestOnly && race.rounds.length > 0 ? [race.rounds[race.rounds.length - 1]] : race.rounds).map((round, ri, arr) => {
-                const isLastPublished = ri === arr.length - 1;
-                const isFinalRound = isLastPublished && race.status === 'results_finalized';
-                const advancingCandidates = round.results?.filter(r => r.outcome === 'advance' || r.outcome === 'convention_winner' || r.outcome === 'winner' || r.outcome === 'advance_to_primary') || [];
-
+              {/* Published results — TV mode shows ONLY the latest published round,
+                  and filters out candidates already removed in earlier rounds. */}
+              {race.rounds.length > 0 && (() => {
+                const round = race.rounds[race.rounds.length - 1];
+                const isFinalRound = race.status === 'results_finalized';
+                const removed = removedBeforeRound(race.rounds, round.round_number);
+                const visibleResults = (round.results || []).filter(r => !removed.has(r.candidate_id));
                 return (
                   <div key={round.id} style={tv.roundSection}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
                       <h3 style={{ ...tv.roundTitle, margin: 0 }}>Round {round.round_number}</h3>
                       {isFinalRound ? (
                         <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.85rem' }}>FINAL RESULTS</span>
-                      ) : isLastPublished && !isFinalRound ? (
+                      ) : (
                         <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Round Complete</span>
-                      ) : null}
+                      )}
                     </div>
-                    {round.results.map(r => {
+                    {visibleResults.map(r => {
                       const pct = Number(r.percentage);
                       const outcome = OUTCOME_BADGES[r.outcome];
                       return (
@@ -222,35 +241,6 @@ function TVMode({ election, connected, latestOnly }) {
                         </div>
                       );
                     })}
-                  </div>
-                );
-              })}
-
-              {/* Next round — show advancing candidates */}
-              {!latestOnly && race.next_round && race.status !== 'results_finalized' && race.rounds.length > 0 && (() => {
-                const lastRound = race.rounds[race.rounds.length - 1];
-                const advancing = lastRound.results?.filter(r => r.outcome && r.outcome !== 'eliminated' && r.outcome !== 'withdrew') || [];
-                return (
-                  <div style={{ ...tv.roundSection, borderTop: '1px solid #334155', paddingTop: '0.75rem' }}>
-                    <h3 style={{ ...tv.roundTitle, margin: '0 0 0.5rem' }}>
-                      Round {race.next_round.round_number}
-                      <span style={{ color: '#94a3b8', fontSize: '0.75rem', marginLeft: '0.5rem' }}>
-                        {race.next_round.status === 'voting_open' ? 'Voting Open' : 'Pending'}
-                      </span>
-                    </h3>
-                    {advancing.length > 0 ? (
-                      advancing.map(r => (
-                        <div key={r.candidate_id} style={{ padding: '0.2rem 0', color: '#cbd5e1', fontSize: '0.95rem' }}>
-                          {r.candidate_name}
-                        </div>
-                      ))
-                    ) : (
-                      race.candidates?.filter(c => c.status === 'active').map(c => (
-                        <div key={c.id} style={{ padding: '0.2rem 0', color: '#cbd5e1', fontSize: '0.95rem' }}>
-                          {c.name}
-                        </div>
-                      ))
-                    )}
                   </div>
                 );
               })()}
@@ -377,10 +367,12 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
                   </div>
                 )}
 
-                {/* Published rounds */}
+                {/* Published rounds — hide candidates eliminated/withdrew in earlier rounds */}
                 {race.rounds.map((round, ri) => {
                   const isLastPublished = ri === race.rounds.length - 1;
                   const isFinalRound = isLastPublished && race.status === 'results_finalized';
+                  const removed = removedBeforeRound(race.rounds, round.round_number);
+                  const visibleResults = (round.results || []).filter(r => !removed.has(r.candidate_id));
 
                   return (
                     <div key={round.id} style={mob.roundCard}>
@@ -390,7 +382,7 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
                           {isFinalRound && <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.75rem' }}>FINAL RESULTS</span>}
                           {isLastPublished && !isFinalRound && <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Round Complete</span>}
                         </div>
-                        {round.results.map(r => {
+                        {visibleResults.map(r => {
                           const pct = Number(r.percentage);
                           const outcome = OUTCOME_BADGES[r.outcome];
                           return (
