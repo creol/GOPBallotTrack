@@ -49,7 +49,7 @@ export default function BallotReviewQueue() {
 
   useEffect(() => { fetchReviews(); fetchCandidates(); }, [roundId, raceId, showResolved]);
 
-  const handleReview = async (reviewId, outcome, candidateId, replacementSerialId, notes, pinData) => {
+  const handleReview = async (reviewId, outcome, candidateId, replacementSerialId, notes, pinData, attachSerial) => {
     if (!reviewerName.trim()) {
       alert('Enter your name first');
       return;
@@ -61,6 +61,7 @@ export default function BallotReviewQueue() {
         replacement_serial_id: replacementSerialId || undefined,
         notes: notes || undefined,
         reviewed_by: reviewerName,
+        serial_number: attachSerial || undefined,
         ...(pinData || {}),
       });
       fetchReviews();
@@ -141,6 +142,12 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
   const [adminPin, setAdminPin] = useState('');
   const [adminUserId, setAdminUserId] = useState('');
   const [adminUsers, setAdminUsers] = useState([]);
+  // Orphan-attach state: this row has no SN because the agent couldn't decode the QR.
+  // Admin reads the printed SN, types it here, hits Verify, then counts/spoils as normal.
+  const isOrphan = !item.serial_number;
+  const [orphanSN, setOrphanSN] = useState('');
+  const [verifyState, setVerifyState] = useState(null); // null | { ok: bool, message, sn }
+  const [verifying, setVerifying] = useState(false);
   const isWrongRound = item.flag_reason === 'wrong_round';
   const flag = FLAG_COLORS[item.flag_reason] || FLAG_COLORS.uncertain;
   const scores = item.omr_scores || [];
@@ -153,14 +160,79 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
     }
   }, [isWrongRound]);
 
+  const verifySerial = async () => {
+    const sn = orphanSN.trim().toUpperCase();
+    if (!sn) { setVerifyState({ ok: false, message: 'Enter a serial number first.' }); return; }
+    setVerifying(true);
+    try {
+      const { data } = await api.get(`/rounds/${roundId}/serials/${encodeURIComponent(sn)}`);
+      if (!data.exists) {
+        setVerifyState({ ok: false, message: `Serial ${sn} is not a valid ballot for this round.` });
+      } else if (data.status === 'spoiled' || data.status === 'damaged') {
+        setVerifyState({ ok: false, message: `Serial ${sn} was previously marked ${data.status}; cannot be counted.` });
+      } else {
+        const samePassDup = (data.counted_in_passes || []).some(p => p.pass_id === item.pass_id);
+        if (samePassDup) {
+          setVerifyState({ ok: false, message: `Serial ${sn} was already counted in this pass — cannot count twice in the same pass.`, sn });
+        } else if ((data.counted_in_passes || []).length > 0) {
+          const passList = data.counted_in_passes.map(p => `Pass ${p.pass_number}`).join(', ');
+          setVerifyState({ ok: true, message: `✓ Valid SN. Already counted in ${passList} (different pass — OK to count here).`, sn });
+        } else {
+          setVerifyState({ ok: true, message: `✓ Valid unused SN — OK to count.`, sn });
+        }
+      }
+    } catch (err) {
+      setVerifyState({ ok: false, message: err.response?.data?.error || 'Verify failed.' });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // Counted/Spoiled/Remade need an attached SN. Reject is allowed without one.
+  const attachSN = isOrphan ? (verifyState?.ok ? verifyState.sn : null) : null;
+  const canAct = !isOrphan || !!attachSN;
+
   return (
     <div style={s.card}>
       <div style={s.cardHeader}>
-        <span style={s.sn}>{item.serial_number || 'Unknown SN'}</span>
+        <span style={s.sn}>{item.serial_number || (attachSN ? `${attachSN} (manually attached)` : 'No SN — QR not decoded')}</span>
         {item.flag_reason && (
           <span style={{ ...s.badge, background: flag.bg, color: flag.color }}>{flag.label}</span>
         )}
       </div>
+
+      {isOrphan && (
+        <div style={s.orphanPanel}>
+          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#374151' }}>
+            <strong>QR could not be read.</strong> Read the SN printed on the ballot below the QR code, type it here, and click Verify.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              style={{ ...s.input, fontFamily: 'monospace', textTransform: 'uppercase', flex: 1, minWidth: 160 }}
+              placeholder="Type the SN from the ballot"
+              value={orphanSN}
+              onChange={e => { setOrphanSN(e.target.value.toUpperCase()); setVerifyState(null); }}
+              onKeyDown={e => { if (e.key === 'Enter') verifySerial(); }}
+            />
+            <button style={s.btnVerify} onClick={verifySerial} disabled={verifying || !orphanSN.trim()}>
+              {verifying ? 'Verifying…' : 'Verify'}
+            </button>
+          </div>
+          {verifyState && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem 0.75rem',
+              borderRadius: 4,
+              fontSize: '0.85rem',
+              background: verifyState.ok ? '#dcfce7' : '#fef2f2',
+              color: verifyState.ok ? '#166534' : '#991b1b',
+              border: `1px solid ${verifyState.ok ? '#86efac' : '#fca5a5'}`,
+            }}>
+              {verifyState.message}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Ballot image */}
       {(item.image_path || item.photo_path) && (
@@ -219,18 +291,20 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
 
       {/* Action buttons */}
       <div style={s.actions}>
-        {/* Count for candidate */}
+        {/* Count for candidate — gated on having an attached SN for orphans */}
         {candidates.map(c => (
-          <button key={c.id} style={s.btnCount}
+          <button key={c.id} style={{ ...s.btnCount, opacity: canAct ? 1 : 0.5, cursor: canAct ? 'pointer' : 'not-allowed' }}
+            disabled={!canAct}
+            title={!canAct ? 'Verify the SN above first' : undefined}
             onClick={() => {
               if (isWrongRound) {
                 if (!adminUserId || !adminPin) {
                   alert('Admin PIN verification is required to count a wrong-round ballot');
                   return;
                 }
-                onReview(item.id, 'counted', c.id, null, notes, { admin_user_id: parseInt(adminUserId), pin: adminPin });
+                onReview(item.id, 'counted', c.id, null, notes, { admin_user_id: parseInt(adminUserId), pin: adminPin }, attachSN);
               } else {
-                onReview(item.id, 'counted', c.id, null, notes);
+                onReview(item.id, 'counted', c.id, null, notes, null, attachSN);
               }
             }}>
             Count for {c.name}
@@ -239,7 +313,10 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
 
         {/* Remade */}
         {!showRemade ? (
-          <button style={s.btnRemade} onClick={() => setShowRemade(true)}>
+          <button style={{ ...s.btnRemade, opacity: canAct ? 1 : 0.5, cursor: canAct ? 'pointer' : 'not-allowed' }}
+            disabled={!canAct}
+            title={!canAct ? 'Verify the SN above first' : undefined}
+            onClick={() => setShowRemade(true)}>
             Remade
           </button>
         ) : (
@@ -255,7 +332,7 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
               onClick={() => {
                 if (!selectedCandidate) return alert('Select a candidate');
                 if (!replacementSN) return alert('Enter a replacement SN');
-                onReview(item.id, 'remade', selectedCandidate, replacementSN, notes);
+                onReview(item.id, 'remade', selectedCandidate, replacementSN, notes, null, attachSN);
               }}>
               Confirm Remade
             </button>
@@ -263,7 +340,10 @@ function ReviewCard({ item, candidates, roundId, onReview }) {
           </div>
         )}
 
-        <button style={s.btnSpoil} onClick={() => onReview(item.id, 'spoiled', null, null, notes)}>
+        <button style={{ ...s.btnSpoil, opacity: canAct ? 1 : 0.5, cursor: canAct ? 'pointer' : 'not-allowed' }}
+          disabled={!canAct}
+          title={!canAct ? 'Verify the SN above first' : undefined}
+          onClick={() => onReview(item.id, 'spoiled', null, null, notes, null, attachSN)}>
           Spoiled
         </button>
         <button style={s.btnReject} onClick={() => onReview(item.id, 'rejected', null, null, notes)}>
@@ -299,4 +379,6 @@ const s = {
   btnSpoil: { padding: '0.5rem 0.75rem', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' },
   btnReject: { padding: '0.5rem 0.75rem', background: '#6b7280', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' },
   btnToggle: { padding: '0.4rem 0.8rem', background: '#e5e7eb', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' },
+  orphanPanel: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: '0.75rem', marginTop: '0.5rem', marginBottom: '0.5rem' },
+  btnVerify: { padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 },
 };

@@ -92,10 +92,54 @@ router.get('/rounds/:id/reviewed-ballots', async (req, res) => {
   }
 });
 
-// PUT /api/reviewed-ballots/:id — Update outcome, notes, photo
+// GET /api/rounds/:id/serials/:sn — Look up a serial in this round and report
+// whether it can be attached to an orphan reviewed_ballot. Used by the Verify button
+// in the Ballot Review Queue when the QR couldn't be decoded but the human read the SN.
+router.get('/rounds/:id/serials/:sn', async (req, res) => {
+  try {
+    const roundId = parseInt(req.params.id);
+    const sn = String(req.params.sn || '').trim().toUpperCase();
+    if (!sn) return res.status(400).json({ error: 'Serial number is required' });
+
+    const { rows: [bs] } = await db.query(
+      'SELECT id, status FROM ballot_serials WHERE serial_number = $1 AND round_id = $2',
+      [sn, roundId]
+    );
+    if (!bs) {
+      return res.json({ exists: false, serial_number: sn });
+    }
+
+    // Which passes (if any) already have a scan for this serial?
+    const { rows: counted } = await db.query(
+      `SELECT s.pass_id, p.pass_number
+         FROM scans s
+         JOIN passes p ON p.id = s.pass_id
+        WHERE s.ballot_serial_id = $1 AND p.status != 'deleted'
+        ORDER BY p.pass_number`,
+      [bs.id]
+    );
+
+    res.json({
+      exists: true,
+      serial_number: sn,
+      ballot_serial_id: bs.id,
+      status: bs.status,
+      counted_in_passes: counted.map(r => ({ pass_id: r.pass_id, pass_number: r.pass_number })),
+    });
+  } catch (err) {
+    console.error('Serial lookup error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/reviewed-ballots/:id — Update outcome, notes, photo. Optionally attaches a
+// serial_number to an orphan review row (one whose QR decode failed) before applying
+// the outcome — caller passes serial_number along with outcome+candidate_id, server
+// resolves the SN against ballot_serials, validates it's not already counted in the
+// same pass, and atomically attaches + counts in a single transaction.
 router.put('/reviewed-ballots/:id', upload.single('photo'), async (req, res) => {
   try {
-    const { outcome, notes, replacement_serial_id, candidate_id, reviewed_by } = req.body;
+    const { outcome, notes, replacement_serial_id, candidate_id, reviewed_by, serial_number } = req.body;
 
     const { rows: [existing] } = await db.query(
       'SELECT * FROM reviewed_ballots WHERE id = $1', [req.params.id]
@@ -108,6 +152,38 @@ router.put('/reviewed-ballots/:id', upload.single('photo'), async (req, res) => 
 
     if (outcome === 'counted' && !candidate_id) {
       return res.status(400).json({ error: 'candidate_id is required when outcome is counted' });
+    }
+
+    // Orphan-attach path: row has no original_serial_id and caller supplied an SN.
+    // Resolve, validate against the round, and (for counted) make sure it isn't already
+    // scanned in this same pass — but allow attach to an SN already counted in a
+    // different pass (multi-pass is normal: pass 1 and pass 2 each scan every ballot).
+    let attachedSerialId = null;
+    if (!existing.original_serial_id && serial_number) {
+      const sn = String(serial_number).trim().toUpperCase();
+      const { rows: [bs] } = await db.query(
+        'SELECT id, status FROM ballot_serials WHERE serial_number = $1 AND round_id = $2',
+        [sn, existing.round_id]
+      );
+      if (!bs) return res.status(404).json({ error: `Serial ${sn} is not a valid ballot for this round` });
+      if (bs.status === 'spoiled') return res.status(409).json({ error: `Serial ${sn} was previously marked spoiled and cannot be counted` });
+      if (bs.status === 'damaged') return res.status(409).json({ error: `Serial ${sn} was previously marked damaged (remade) and cannot be counted` });
+
+      if (outcome === 'counted' && existing.pass_id) {
+        const { rows: [dup] } = await db.query(
+          'SELECT id FROM scans WHERE pass_id = $1 AND ballot_serial_id = $2 LIMIT 1',
+          [existing.pass_id, bs.id]
+        );
+        if (dup) return res.status(409).json({ error: `Serial ${sn} was already counted in this pass — cannot count twice in the same pass` });
+      }
+
+      await db.query(
+        'UPDATE reviewed_ballots SET original_serial_id = $1 WHERE id = $2',
+        [bs.id, req.params.id]
+      );
+      attachedSerialId = bs.id;
+      // Refresh in-memory copy so applyOutcome sees the attached serial.
+      existing.original_serial_id = bs.id;
     }
 
     // Wrong-round ballots require admin PIN to count
@@ -124,6 +200,11 @@ router.put('/reviewed-ballots/:id', upload.single('photo'), async (req, res) => 
 
     if (outcome === 'remade' && !replacement_serial_id) {
       return res.status(400).json({ error: 'replacement_serial_id is required when outcome is remade' });
+    }
+
+    // Counted/spoiled/remade all need an SN to attach side-effects to.
+    if (outcome && outcome !== 'rejected' && !existing.original_serial_id) {
+      return res.status(400).json({ error: `Cannot mark this orphan ballot as ${outcome} without first attaching a serial number — pass serial_number in the request` });
     }
 
     const photoPath = req.file?.path || existing.photo_path;
@@ -145,10 +226,12 @@ router.put('/reviewed-ballots/:id', upload.single('photo'), async (req, res) => 
       await applyOutcome(req.params.id, outcome, candidate_id, replacement_serial_id, reviewed_by);
     }
 
+    // LEFT JOIN: a 'rejected' orphan never gets original_serial_id attached, so an
+    // INNER JOIN here would return zero rows and break the response.
     const { rows: [updated] } = await db.query(
       `SELECT rb.*, bs.serial_number
        FROM reviewed_ballots rb
-       JOIN ballot_serials bs ON bs.id = rb.original_serial_id
+       LEFT JOIN ballot_serials bs ON bs.id = rb.original_serial_id
        WHERE rb.id = $1`,
       [req.params.id]
     );
@@ -156,7 +239,7 @@ router.put('/reviewed-ballots/:id', upload.single('photo'), async (req, res) => 
     const io = req.app.get('io');
     if (io) io.emit('scan:reviewed', { id: updated.id, outcome, serial_number: updated.serial_number });
 
-    res.json(updated);
+    res.json({ ...updated, attached_serial_id: attachedSerialId });
   } catch (err) {
     console.error('Update reviewed ballot error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
