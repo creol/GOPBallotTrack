@@ -19,6 +19,9 @@ import PublicBrowseBallots from './pages/PublicBrowseBallots';
 import UserManagement from './pages/UserManagement';
 import StationSetup from './pages/StationSetup';
 import ScanLogs from './pages/ScanLogs';
+import AdminQuickstartGuide from './pages/guides/AdminQuickstartGuide';
+import ScanStationGuide from './pages/guides/ScanStationGuide';
+import ConventionFaqGuide from './pages/guides/ConventionFaqGuide';
 
 function ProtectedRoute({ children, auth, requiredRoles }) {
   if (!auth.checked) return null;
@@ -109,6 +112,17 @@ export default function App() {
           <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
             <UserManagement />
           </ProtectedRoute>
+        } />
+
+        {/* Convention guides — any authenticated user */}
+        <Route path="/admin/guides/admin-quickstart" element={
+          <ProtectedRoute auth={auth}><AdminQuickstartGuide /></ProtectedRoute>
+        } />
+        <Route path="/admin/guides/scan-station" element={
+          <ProtectedRoute auth={auth}><ScanStationGuide /></ProtectedRoute>
+        } />
+        <Route path="/admin/guides/faq" element={
+          <ProtectedRoute auth={auth}><ConventionFaqGuide /></ProtectedRoute>
         } />
 
         {/* Station setup + Scanner routes — no auth */}

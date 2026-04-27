@@ -7,6 +7,7 @@ export default function ElectionSidebar({ electionId }) {
   const [races, setRaces] = useState([]);
   const [raceRounds, setRaceRounds] = useState({});
   const [expandedRace, setExpandedRace] = useState(null);
+  const [dashboardsOpen, setDashboardsOpen] = useState(true);
   const location = useLocation();
 
   useEffect(() => {
@@ -112,9 +113,29 @@ export default function ElectionSidebar({ electionId }) {
       <Link to={`${basePath}?section=export`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
         Export
       </Link>
-      <Link to={`${basePath}?section=dashboards`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
-        Dashboards
-      </Link>
+      <div
+        style={{ ...s.navItem, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+        onClick={() => setDashboardsOpen(o => !o)}
+      >
+        <span style={{ marginRight: '0.35rem', fontSize: '0.7rem', color: '#9ca3af' }}>{dashboardsOpen ? '▾' : '▸'}</span>
+        <span style={{ flex: 1 }}>Dashboards</span>
+      </div>
+      {dashboardsOpen && (
+        <div style={s.nested}>
+          <Link to={`${basePath}?section=dashboards`} style={{ ...s.nestedItem, paddingLeft: '0.75rem' }}>
+            Public Dashboards
+          </Link>
+          <Link to="/admin/guides/admin-quickstart" style={{ ...s.nestedItem, paddingLeft: '0.75rem', ...(location.pathname === '/admin/guides/admin-quickstart' ? s.nestedItemActive : {}) }}>
+            Admin Quick Start
+          </Link>
+          <Link to="/admin/guides/scan-station" style={{ ...s.nestedItem, paddingLeft: '0.75rem', ...(location.pathname === '/admin/guides/scan-station' ? s.nestedItemActive : {}) }}>
+            Scan Station Guide
+          </Link>
+          <Link to="/admin/guides/faq" style={{ ...s.nestedItem, paddingLeft: '0.75rem', ...(location.pathname === '/admin/guides/faq' ? s.nestedItemActive : {}) }}>
+            Convention FAQ
+          </Link>
+        </div>
+      )}
       <Link to={`${basePath}/logs`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
         Scan Logs
       </Link>
