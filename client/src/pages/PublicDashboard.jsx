@@ -12,6 +12,10 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   layout_mode: 'all',
   rotation_seconds: 0,
   auto_scroll: true,
+  custom_header: '',
+  logo_path: '',
+  logo_position: 'top_center',
+  show_vote_bar: true,
 };
 
 function useWindowWidth() {
@@ -136,6 +140,35 @@ function removedBeforeRound(rounds, roundNumber) {
     }
   }
   return removed;
+}
+
+// Renders the dashboard's top header per the branding settings: optional logo
+// (top center, inline left, inline right, or hidden) and either a custom header
+// string or the election name as fallback.
+function DashboardHeader({ settings, fallbackName }) {
+  const text = (settings.custom_header || '').trim() || fallbackName;
+  const pos = settings.logo_position || 'top_center';
+  const hasLogo = !!settings.logo_path && pos !== 'none';
+  const logoImg = hasLogo ? <img src={settings.logo_path} alt="" style={tv.logo} /> : null;
+
+  if (hasLogo && pos === 'top_center') {
+    return (
+      <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+        {logoImg}
+        <h1 style={{ ...tv.title, marginTop: '0.75rem' }}>{text}</h1>
+      </div>
+    );
+  }
+  if (hasLogo && (pos === 'inline_left' || pos === 'inline_right')) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.25rem', marginBottom: '1.5rem' }}>
+        {pos === 'inline_left' && logoImg}
+        <h1 style={{ ...tv.title, margin: 0 }}>{text}</h1>
+        {pos === 'inline_right' && logoImg}
+      </div>
+    );
+  }
+  return <h1 style={tv.title}>{text}</h1>;
 }
 
 // ======================== TV MODE ========================
@@ -277,9 +310,11 @@ function TVMode({ election, connected }) {
                         {outcome.label}
                       </span>
                     )}
-                    <div style={tv.barContainer}>
-                      <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%` }} />
-                    </div>
+                    {settings.show_vote_bar !== false && (
+                      <div style={tv.barContainer}>
+                        <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%` }} />
+                      </div>
+                    )}
                     <span style={tv.voteCount}>{r.vote_count}</span>
                     <span style={tv.pct}>{fmtPct(r.percentage, election.dashboard_decimals)}%</span>
                   </div>
@@ -312,7 +347,7 @@ function TVMode({ election, connected }) {
           Reconnecting...
         </div>
       )}
-      <h1 style={tv.title}>{election.name}</h1>
+      <DashboardHeader settings={settings} fallbackName={election.name} />
 
       {visibleGroupNames.map(groupName => (
         <div key={groupName} style={{ marginBottom: '1.5rem' }}>
@@ -526,6 +561,7 @@ const tv = {
   voteCount: { width: 40, textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', color: '#fff' },
   pct: { width: 60, textAlign: 'right', color: '#94a3b8', fontSize: '0.9rem' },
   groupHeader: { color: '#fbbf24', fontSize: '1.6rem', margin: '0.25rem 0 0.75rem', borderBottom: '2px solid #334155', paddingBottom: '0.4rem', letterSpacing: '0.05em', textTransform: 'uppercase' },
+  logo: { maxHeight: 96, maxWidth: 320, objectFit: 'contain', display: 'inline-block' },
   qrCorner: { position: 'fixed', bottom: 20, right: 20, textAlign: 'center', zIndex: 50 },
   qrBox: { background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: '0.75rem' },
   qrLabel: { color: '#94a3b8', fontSize: '0.75rem', margin: '0.25rem 0 0' },

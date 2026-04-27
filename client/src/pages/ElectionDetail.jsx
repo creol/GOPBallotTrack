@@ -408,6 +408,10 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   layout_mode: 'all',          // 'all' | 'grouped' | 'rotating'
   rotation_seconds: 0,          // 0 = no rotation; ignored unless layout_mode === 'rotating'
   auto_scroll: true,            // marquee-style vertical scroll when content overflows
+  custom_header: '',            // empty = use election.name
+  logo_path: '',                // public URL to uploaded logo
+  logo_position: 'top_center',  // 'top_center' | 'inline_left' | 'inline_right' | 'none'
+  show_vote_bar: true,          // toggle the visual vote-bar in result rows
 };
 
 function DashboardsSection({ electionId }) {
@@ -545,6 +549,17 @@ function DashboardsSection({ electionId }) {
         </div>
       )}
 
+      {settings && (
+        <DashboardBrandingPanel
+          electionId={electionId}
+          settings={settings}
+          patchSettings={patchSettings}
+          savingSettings={savingSettings}
+          onUploadComplete={(logoPath) => setSettings(prev => ({ ...prev, logo_path: logoPath }))}
+          onLogoRemoved={() => setSettings(prev => ({ ...prev, logo_path: '' }))}
+        />
+      )}
+
       <div style={{
         marginTop: '1rem',
         border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
@@ -583,6 +598,108 @@ function DashboardsSection({ electionId }) {
             }}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Branding controls for the public dashboard. Logo file upload + position selector
+// + custom header text override + vote-bar visibility toggle.
+function DashboardBrandingPanel({ electionId, settings, patchSettings, savingSettings, onUploadComplete, onLogoRemoved }) {
+  const [uploading, setUploading] = useState(false);
+  const [headerDraft, setHeaderDraft] = useState(settings.custom_header || '');
+  useEffect(() => { setHeaderDraft(settings.custom_header || ''); }, [settings.custom_header]);
+
+  const handleLogoFile = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('logo', file);
+      const { data } = await api.post(`/admin/elections/${electionId}/dashboard-logo`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onUploadComplete(data.logo_path);
+    } catch (err) {
+      alert('Logo upload failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    if (!confirm('Remove the dashboard logo?')) return;
+    try {
+      await api.delete(`/admin/elections/${electionId}/dashboard-logo`);
+      onLogoRemoved();
+    } catch (err) {
+      alert('Failed to remove logo: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  // Cache-bust the preview when the logo changes since the URL is the same path.
+  const logoPreview = settings.logo_path
+    ? `${settings.logo_path}${settings.logo_path.includes('?') ? '&' : '?'}t=${Date.now()}`
+    : null;
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+      <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Branding</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.5rem 1rem', alignItems: 'center', fontSize: '0.9rem' }}>
+        <label style={{ fontWeight: 600 }}>Custom header:</label>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <input
+            type="text"
+            value={headerDraft}
+            onChange={(e) => setHeaderDraft(e.target.value)}
+            onBlur={() => { if (headerDraft !== (settings.custom_header || '')) patchSettings({ custom_header: headerDraft }); }}
+            placeholder="(blank = use Election Event Name)"
+            disabled={savingSettings}
+            style={{ flex: 1, maxWidth: 480, padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+          />
+        </div>
+
+        <label style={{ fontWeight: 600 }}>Logo:</label>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {logoPreview && (
+            <img src={logoPreview} alt="Logo preview"
+              style={{ height: 56, maxWidth: 180, background: '#fff', border: '1px solid #d1d5db', borderRadius: 4, padding: 4, objectFit: 'contain' }} />
+          )}
+          <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
+            onChange={(e) => handleLogoFile(e.target.files?.[0])}
+            disabled={uploading} />
+          {settings.logo_path && (
+            <button onClick={handleRemoveLogo} disabled={uploading}
+              style={{ padding: '0.3rem 0.6rem', background: '#fff', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' }}>
+              Remove
+            </button>
+          )}
+          {uploading && <span style={styles.muted}>Uploading…</span>}
+        </div>
+
+        <label style={{ fontWeight: 600 }}>Logo position:</label>
+        <select
+          value={settings.logo_position || 'top_center'}
+          onChange={(e) => patchSettings({ logo_position: e.target.value })}
+          disabled={savingSettings}
+          style={{ padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db', maxWidth: 280 }}
+        >
+          <option value="top_center">Top center (above the header)</option>
+          <option value="inline_left">Inline left of the header</option>
+          <option value="inline_right">Inline right of the header</option>
+          <option value="none">Hidden</option>
+        </select>
+
+        <label style={{ fontWeight: 600 }}>Vote bar:</label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.show_vote_bar !== false}
+            onChange={(e) => patchSettings({ show_vote_bar: e.target.checked })}
+            disabled={savingSettings}
+          />
+          <span style={styles.muted}>Show the visual percentage bar next to each candidate.</span>
+        </label>
       </div>
     </div>
   );
