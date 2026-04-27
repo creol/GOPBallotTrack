@@ -468,15 +468,17 @@ function TVMode({ election, connected }) {
         </div>
       ))}
 
-      {/* QR code for mobile access — corner is admin-configurable; 'hidden' skips render. */}
+      {/* QR code for mobile access — corner is admin-configurable; 'hidden' skips render.
+          Top corners pin to top: 20 so the QR sits inside the sticky header band
+          alongside the logo/title rather than below it (which used to cover the first
+          row of race cards or the group header). z-index is above the sticky strip. */}
       {settings.qr_position !== 'hidden' && (() => {
         const pos = settings.qr_position || 'bottom_right';
-        // Top corners offset further down so the sticky main header doesn't overlap them.
         const corner = {
           bottom_right: { bottom: 20, right: 20 },
           bottom_left:  { bottom: 20, left: 20 },
-          top_right:    { top: Math.max(20, mainHeaderH + 20), right: 20 },
-          top_left:     { top: Math.max(20, mainHeaderH + 20), left: 20 },
+          top_right:    { top: 20, right: 20 },
+          top_left:     { top: 20, left: 20 },
         }[pos] || { bottom: 20, right: 20 };
         return (
           <div style={{ position: 'fixed', textAlign: 'center', zIndex: 50, ...corner }}>
