@@ -9,6 +9,22 @@ const { requireAuth, requireStationToken, requireAuthOrStationToken } = require(
 
 const { APP_VERSION } = require('../version');
 
+const AGENT_SOURCE_PATH = path.join(__dirname, '..', '..', '..', 'agent', 'station-agent.js');
+
+// Read the AGENT_VERSION constant out of the agent source so the version reported
+// to stations always matches the source they download from /api/stations/agent-source.
+// Reporting the server's APP_VERSION here causes a constant-upgrade loop whenever the
+// two diverge (station fetches "new" version, downloads source still at the old version,
+// restarts, repeats).
+function readAgentVersion() {
+  try {
+    const src = fs.readFileSync(AGENT_SOURCE_PATH, 'utf8');
+    const m = src.match(/AGENT_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    if (m) return m[1];
+  } catch {}
+  return APP_VERSION;
+}
+
 const router = Router();
 
 // In-memory station assignments (reset on server restart)
@@ -152,17 +168,16 @@ router.get('/stations/download-bundle', requireAuthOrStationToken, (req, res) =>
 
 // GET /api/stations/agent-version — Current agent version (for auto-update check)
 router.get('/stations/agent-version', (req, res) => {
-  res.json({ version: APP_VERSION });
+  res.json({ version: readAgentVersion() });
 });
 
 // GET /api/stations/agent-source — Download latest station-agent.js source
 router.get('/stations/agent-source', (req, res) => {
-  const agentPath = path.join(__dirname, '..', '..', '..', 'agent', 'station-agent.js');
-  if (!fs.existsSync(agentPath)) {
+  if (!fs.existsSync(AGENT_SOURCE_PATH)) {
     return res.status(404).json({ error: 'Agent source not found' });
   }
   res.setHeader('Content-Type', 'text/plain');
-  res.sendFile(path.resolve(agentPath));
+  res.sendFile(path.resolve(AGENT_SOURCE_PATH));
 });
 
 // GET /api/stations/active-rounds — All rounds available for station assignment
