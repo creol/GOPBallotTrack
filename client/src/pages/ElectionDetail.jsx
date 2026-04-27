@@ -469,6 +469,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   rotation_seconds: 0,          // 0 = no rotation; ignored unless layout_mode === 'rotating'
   auto_scroll: true,            // marquee-style vertical scroll when content overflows
   auto_scroll_speed: 1,         // 1 (slow, ~25 px/s) – 10 (fast, ~250 px/s); ignored when auto_scroll = false
+  auto_scroll_start_delay: 3,   // seconds to wait at the top before scrolling begins (also re-applied after each category rotation)
   custom_header: '',            // empty = use election.name
   logo_path: '',                // public URL to uploaded logo
   logo_position: 'top_center',  // 'top_center' | 'inline_left' | 'inline_right' | 'none'
@@ -618,6 +619,24 @@ function DashboardsSection({ electionId }) {
               />
               <span style={{ fontFamily: 'monospace', minWidth: 30, textAlign: 'right' }}>{settings.auto_scroll_speed ?? 1}</span>
               <span style={styles.muted}>1 = slowest (~25 px/s), 10 = fastest (~250 px/s).</span>
+            </div>
+
+            <label style={{ fontWeight: 600 }}>Scroll start delay:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="number"
+                min={0}
+                max={120}
+                step={1}
+                value={settings.auto_scroll_start_delay ?? 3}
+                onChange={(e) => {
+                  const n = Math.max(0, Math.min(120, parseInt(e.target.value, 10) || 0));
+                  patchSettings({ auto_scroll_start_delay: n });
+                }}
+                disabled={savingSettings || !settings.auto_scroll}
+                style={{ width: 80, padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+              />
+              <span style={styles.muted}>seconds to pause at the top before scrolling — applied on first show and after every category rotation, so viewers can read the race names before they slide away.</span>
             </div>
           </div>
           {savingSettings && <p style={{ ...styles.muted, fontSize: '0.78rem', margin: '0.4rem 0 0' }}>Saving…</p>}

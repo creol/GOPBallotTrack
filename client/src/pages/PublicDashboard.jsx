@@ -38,6 +38,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   rotation_seconds: 0,
   auto_scroll: true,
   auto_scroll_speed: 1,
+  auto_scroll_start_delay: 3,
   custom_header: '',
   logo_path: '',
   logo_position: 'top_center',
@@ -257,12 +258,18 @@ function TVMode({ election, connected }) {
 
   // Auto-scroll: when the page content overflows the viewport, gently scroll the
   // window down N px per ~40ms tick (N = auto_scroll_speed, 1–10), pause at the
-  // bottom, smooth-scroll back to top, repeat. Pure window scroll keeps existing
-  // layout untouched and lets `position: sticky` headers do their thing.
+  // bottom, smooth-scroll back to top, repeat. Re-runs on activeIdx change so the
+  // start-delay is re-applied at each category rotation; the scroll position is
+  // also reset to the top so the next category starts from its first race.
   useEffect(() => {
     if (!settings.auto_scroll) return;
     const stepPx = Math.max(1, Math.min(10, settings.auto_scroll_speed || 1));
-    let raf, paused = false;
+    const startDelayMs = Math.max(0, (settings.auto_scroll_start_delay ?? 3) * 1000);
+    // Reset to top whenever the category changes so each rotation starts at the
+    // race-name list, not wherever the previous category happened to leave off.
+    window.scrollTo(0, 0);
+    let raf, paused = true, startTimer;
+    startTimer = setTimeout(() => { paused = false; }, startDelayMs);
     const tick = () => {
       if (!paused) {
         const max = document.documentElement.scrollHeight - window.innerHeight;
@@ -270,7 +277,12 @@ function TVMode({ election, connected }) {
         const next = window.scrollY + stepPx;
         if (next >= max) {
           paused = true;
-          setTimeout(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); paused = false; }, 2500);
+          setTimeout(() => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            // After looping back to the top, re-apply the start delay so viewers
+            // get the same read-time on the second pass through.
+            setTimeout(() => { paused = false; }, startDelayMs);
+          }, 2500);
         } else {
           window.scrollTo(0, next);
         }
@@ -283,8 +295,8 @@ function TVMode({ election, connected }) {
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.layout_mode, activeIdx]);
+    return () => { cancelAnimationFrame(raf); clearTimeout(startTimer); };
+  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx]);
 
   // Decide which group(s) to render this tick.
   const visibleGroupNames = settings.layout_mode === 'rotating' && settings.rotation_seconds > 0
