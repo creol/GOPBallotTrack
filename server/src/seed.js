@@ -184,7 +184,7 @@ async function seed() {
   // Confirmation record
   await db.query(
     `INSERT INTO round_confirmations (round_id, confirmed_by_role, confirmed_by_name, is_override, override_notes)
-     VALUES ($1, 'super_admin', 'Admin', false, null)`,
+     VALUES ($1, 'chair', 'Admin', false, null)`,
     [round1.id]
   );
 
