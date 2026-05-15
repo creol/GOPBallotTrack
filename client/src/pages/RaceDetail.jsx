@@ -5,6 +5,8 @@ import ElectionLayout from '../components/ElectionLayout';
 import SuperAdminPinModal from '../components/SuperAdminPinModal';
 import { useAuth } from '../context/AuthContext';
 import { toInputDate, formatDate, formatTime12 } from '../utils/dateFormat';
+import RaceGroupSelect from '../components/RaceGroupSelect';
+import { DEFAULT_GROUP, normalizeGroup } from '../utils/raceGroups';
 
 const NAV_ITEMS = [
   { key: 'rounds', label: 'Rounds' },
@@ -25,7 +27,8 @@ export default function RaceDetail() {
   const [candidateName, setCandidateName] = useState('');
   const [paperColor, setPaperColor] = useState('');
   const [editing, setEditing] = useState(false);
-  const [raceForm, setRaceForm] = useState({ name: '', race_date: '', race_time: '', location: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', race_date: '', race_time: '', location: '', race_group: DEFAULT_GROUP });
+  const [allRaces, setAllRaces] = useState([]);
   const [editingCandidate, setEditingCandidate] = useState(null);
   const [editCandidateName, setEditCandidateName] = useState('');
   const [showRegenWarning, setShowRegenWarning] = useState(false);
@@ -34,6 +37,19 @@ export default function RaceDetail() {
   const [withdrawTarget, setWithdrawTarget] = useState(null);
   const [withdrawPin, setWithdrawPin] = useState('');
   const [withdrawError, setWithdrawError] = useState(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryDesignations, setSummaryDesignations] = useState({});
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryError, setSummaryError] = useState(null);
+  const [summaryDecidingTotals, setSummaryDecidingTotals] = useState({});
+  // Ballot-spec recovery modal state ("Fix scan zones from PDF")
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryFile, setRecoveryFile] = useState(null);
+  const [recoveryPreview, setRecoveryPreview] = useState(null);
+  const [recoveryError, setRecoveryError] = useState(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryResult, setRecoveryResult] = useState(null);
+  const [recoveryOverride, setRecoveryOverride] = useState('');
   const [searchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useState(searchParams.get('tab') || 'rounds');
   const dragItem = useRef(null);
@@ -42,6 +58,7 @@ export default function RaceDetail() {
   const fetchAll = async () => {
     const { data: election } = await api.get(`/admin/elections/${electionId}`);
     setElectionName(election.name || '');
+    setAllRaces(election.races || []);
     const found = election.races?.find(r => r.id === parseInt(raceId));
     if (found) {
       setRace(found);
@@ -50,6 +67,7 @@ export default function RaceDetail() {
         race_date: toInputDate(found.race_date),
         race_time: found.race_time || '',
         location: found.location || '',
+        race_group: normalizeGroup(found.race_group),
       });
     }
 
@@ -124,6 +142,7 @@ export default function RaceDetail() {
       race_date: raceForm.race_date || null,
       race_time: raceForm.race_time || null,
       location: raceForm.location || null,
+      race_group: raceForm.race_group || DEFAULT_GROUP,
     });
     setEditing(false);
     fetchAll();
@@ -146,18 +165,62 @@ export default function RaceDetail() {
     });
   };
 
+  const openSummaryModal = async () => {
+    const designations = {};
+    candidates.forEach(c => { designations[c.id] = c.final_designation || ''; });
+    setSummaryDesignations(designations);
+    setSummaryError(null);
+
+    // Fetch the deciding round's vote totals to display next to each candidate.
+    let totals = {};
+    try {
+      const finalized = rounds.filter(r => r.status === 'round_finalized');
+      const target = finalized.length > 0
+        ? finalized[finalized.length - 1]
+        : (rounds.length > 0 ? rounds[rounds.length - 1] : null);
+      if (target) {
+        const { data } = await api.get(`/admin/rounds/${target.id}`);
+        const results = data?.results || data?.round_results || [];
+        results.forEach(r => { totals[r.candidate_id] = r.vote_count; });
+      }
+    } catch {
+      // No totals — modal still works without them.
+    }
+    setSummaryDecidingTotals(totals);
+    setSummaryOpen(true);
+  };
+
+  const handleGenerateSummary = async () => {
+    setSummaryBusy(true);
+    setSummaryError(null);
+    try {
+      const designations = candidates.map(c => ({
+        candidate_id: c.id,
+        designation: summaryDesignations[c.id] || null,
+      }));
+      await api.put(`/admin/races/${raceId}/final-designations`, { designations });
+      window.open(`/api/admin/races/${raceId}/summary-pdf`, '_blank');
+      await fetchAll();
+      setSummaryOpen(false);
+    } catch (err) {
+      setSummaryError(err.response?.data?.error || err.message || 'Failed to generate PDF');
+    } finally {
+      setSummaryBusy(false);
+    }
+  };
+
   const openFinalizeRace = () => setRacePinModal({
     title: `Finalize Race — ${race?.name || ''}`,
     description: 'This marks the race as finalized and cancels any remaining pending/ready rounds. No more rounds can be added. Requires Super Admin approval.',
     confirmLabel: 'Finalize Race',
     confirmStyle: 'danger',
     requireNotes: false,
-    onConfirm: async () => {
+    onConfirm: async ({ pin }) => {
       setRacePinModal(null);
       setRaceActionBusy(true);
       setRaceActionError(null);
       try {
-        await api.post(`/admin/control-center/race/${raceId}/finalize`);
+        await api.post(`/admin/control-center/race/${raceId}/finalize`, { pin });
         await fetchAll();
       } catch (err) {
         setRaceActionError(err.response?.data?.error || 'Finalize failed');
@@ -174,12 +237,12 @@ export default function RaceDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for reversing race finalization',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setRacePinModal(null);
       setRaceActionBusy(true);
       setRaceActionError(null);
       try {
-        await api.post(`/admin/control-center/race/${raceId}/reverse-finalize`, { notes });
+        await api.post(`/admin/control-center/race/${raceId}/reverse-finalize`, { pin, notes });
         await fetchAll();
       } catch (err) {
         setRaceActionError(err.response?.data?.error || 'Reverse failed');
@@ -215,6 +278,15 @@ export default function RaceDetail() {
             <input style={{ ...styles.input, flex: 1 }} type="time" value={raceForm.race_time} onChange={e => setRaceForm({ ...raceForm, race_time: e.target.value })} />
           </div>
           <input style={styles.input} placeholder="Location (optional)" value={raceForm.location} onChange={e => setRaceForm({ ...raceForm, location: e.target.value })} />
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <label style={{ fontSize: '0.85rem', color: '#374151' }}>Group:</label>
+            <RaceGroupSelect
+              value={raceForm.race_group}
+              onChange={(g) => setRaceForm({ ...raceForm, race_group: g })}
+              existing={allRaces}
+              style={{ flex: 1 }}
+            />
+          </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button style={styles.btnPrimary} type="submit">Save</button>
             <button style={styles.btnSmall} type="button" onClick={() => setEditing(false)}>Cancel</button>
@@ -225,6 +297,9 @@ export default function RaceDetail() {
           <div>
             <h1>{race.name}</h1>
             <p style={styles.muted}>
+              <span style={{ background: '#eef2ff', color: '#3730a3', padding: '0.1rem 0.5rem', borderRadius: 10, fontSize: '0.75rem', fontWeight: 600, marginRight: '0.5rem' }}>
+                {normalizeGroup(race.race_group)}
+              </span>
               {race.ballot_count && <>{race.ballot_count} ballots per round</>}
               {race.ballot_count && race.max_rounds && <> &nbsp;|&nbsp; </>}
               {race.max_rounds && <>{race.max_rounds} max rounds</>}
@@ -288,6 +363,26 @@ export default function RaceDetail() {
           )}
         </div>
       )}
+
+      {/* Print Official Race Summary — available to all admins */}
+      <div style={{
+        background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
+        padding: '0.6rem 1rem', marginBottom: '1rem',
+        display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.92rem' }}>Official Race Summary</div>
+          <div style={{ ...styles.muted, fontSize: '0.82rem' }}>
+            Mark official nominees / candidates progressing to primary, then print the official outcome PDF for this race.
+          </div>
+        </div>
+        <button
+          style={{ ...styles.btnPrimary, padding: '0.5rem 1rem', fontSize: '0.88rem' }}
+          onClick={openSummaryModal}
+        >
+          Print Race Summary
+        </button>
+      </div>
 
       {/* Tab switching for Rounds/Candidates */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
@@ -426,6 +521,23 @@ export default function RaceDetail() {
                 </div>
               ))}
 
+              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  style={styles.btnSecondary}
+                  onClick={() => {
+                    setRecoveryOpen(true);
+                    setRecoveryFile(null);
+                    setRecoveryPreview(null);
+                    setRecoveryError(null);
+                    setRecoveryResult(null);
+                  }}
+                  title="Use the printed PDF to rebuild the OMR scan zones for every round of this race. Use when scanning misreads votes because the printed paper doesn't match the on-disk spec."
+                >
+                  Fix scan zones from PDF
+                </button>
+              </div>
+
               <h3 style={{ marginTop: '1rem', fontSize: '0.95rem' }}>Add Additional Round</h3>
               <p style={styles.muted}>
                 {race.ballot_count
@@ -458,6 +570,136 @@ export default function RaceDetail() {
         onConfirm={racePinModal?.onConfirm || (() => {})}
       />
 
+      {/* Ballot-Spec Recovery Modal */}
+      {recoveryOpen && (
+        <RecoverySpecModal
+          raceId={raceId}
+          recoveryFile={recoveryFile}
+          recoveryPreview={recoveryPreview}
+          recoveryResult={recoveryResult}
+          recoveryError={recoveryError}
+          recoveryBusy={recoveryBusy}
+          recoveryOverride={recoveryOverride}
+          setRecoveryOverride={setRecoveryOverride}
+          onChooseFile={async (file) => {
+            setRecoveryFile(file);
+            setRecoveryPreview(null);
+            setRecoveryResult(null);
+            setRecoveryError(null);
+            setRecoveryOverride('');
+            if (!file) return;
+            await runRecoveryPreview(file, '', { setRecoveryBusy, setRecoveryPreview, setRecoveryError, raceId });
+          }}
+          onRetry={async () => {
+            if (!recoveryFile) return;
+            setRecoveryPreview(null);
+            setRecoveryError(null);
+            await runRecoveryPreview(recoveryFile, recoveryOverride, { setRecoveryBusy, setRecoveryPreview, setRecoveryError, raceId });
+          }}
+          onApply={async () => {
+            if (!recoveryFile) return;
+            setRecoveryBusy(true);
+            setRecoveryError(null);
+            try {
+              const fd = new FormData();
+              fd.append('file', recoveryFile);
+              fd.append('confirm', 'true');
+              if (recoveryOverride.trim()) {
+                fd.append('candidates_override', normalizeOverride(recoveryOverride));
+              }
+              const { data } = await api.post(
+                `/admin/races/${raceId}/recover-spec/apply`,
+                fd,
+                { headers: { 'Content-Type': 'multipart/form-data' } }
+              );
+              setRecoveryResult(data);
+              fetchAll();
+            } catch (err) {
+              setRecoveryError(err.response?.data?.error || err.message);
+            } finally {
+              setRecoveryBusy(false);
+            }
+          }}
+          onClose={() => {
+            setRecoveryOpen(false);
+            setRecoveryFile(null);
+            setRecoveryPreview(null);
+            setRecoveryError(null);
+            setRecoveryResult(null);
+            setRecoveryOverride('');
+          }}
+        />
+      )}
+
+      {/* Print Official Race Summary Modal */}
+      {summaryOpen && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modalCard, maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ margin: '0 0 0.25rem' }}>Print Official Race Summary</h3>
+            <p style={{ margin: '0 0 0.25rem', fontWeight: 600 }}>{race.name}</p>
+            <p style={{ margin: '0 0 1rem', color: '#6b7280', fontSize: '0.85rem', lineHeight: 1.45 }}>
+              Mark each candidate's official designation. These selections are saved as the race's official outcome and will appear on the printed PDF.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', columnGap: '0.5rem', rowGap: '0.4rem', alignItems: 'center', fontSize: '0.85rem', marginBottom: '1rem' }}>
+              <div style={{ fontWeight: 600, color: '#374151' }}>Candidate</div>
+              <div style={{ fontWeight: 600, color: '#374151', textAlign: 'center' }}>None</div>
+              <div style={{ fontWeight: 600, color: '#374151', textAlign: 'center' }}>Official Nominee</div>
+              <div style={{ fontWeight: 600, color: '#374151', textAlign: 'center' }}>Progress to Primary</div>
+              {candidates.map(c => {
+                const cur = summaryDesignations[c.id] || '';
+                const total = summaryDecidingTotals[c.id];
+                return [
+                  <div key={`${c.id}-name`} style={{ paddingRight: '0.5rem' }}>
+                    <div style={{ fontWeight: 500 }}>{c.name}</div>
+                    {total !== undefined && (
+                      <div style={{ ...styles.muted, fontSize: '0.78rem' }}>{total} votes</div>
+                    )}
+                  </div>,
+                  <div key={`${c.id}-none`} style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name={`des-${c.id}`}
+                      checked={cur === ''}
+                      onChange={() => setSummaryDesignations({ ...summaryDesignations, [c.id]: '' })}
+                    />
+                  </div>,
+                  <div key={`${c.id}-on`} style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name={`des-${c.id}`}
+                      checked={cur === 'official_nominee'}
+                      onChange={() => setSummaryDesignations({ ...summaryDesignations, [c.id]: 'official_nominee' })}
+                    />
+                  </div>,
+                  <div key={`${c.id}-pp`} style={{ textAlign: 'center' }}>
+                    <input
+                      type="radio"
+                      name={`des-${c.id}`}
+                      checked={cur === 'progress_to_primary'}
+                      onChange={() => setSummaryDesignations({ ...summaryDesignations, [c.id]: 'progress_to_primary' })}
+                    />
+                  </div>,
+                ];
+              })}
+            </div>
+
+            {summaryError && (
+              <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b', padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                {summaryError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button style={styles.btnSmall} onClick={() => setSummaryOpen(false)} disabled={summaryBusy}>Cancel</button>
+              <button style={styles.btnPrimary} onClick={handleGenerateSummary} disabled={summaryBusy}>
+                {summaryBusy ? 'Generating...' : 'Save & Generate PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Withdraw Confirmation Modal */}
       {withdrawTarget && (
         <div style={styles.modalOverlay}>
@@ -489,6 +731,236 @@ export default function RaceDetail() {
         </div>
       )}
     </ElectionLayout>
+  );
+}
+
+function normalizeOverride(text) {
+  return String(text || '')
+    .split(/\r?\n|\|/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join('|');
+}
+
+async function runRecoveryPreview(file, overrideText, { setRecoveryBusy, setRecoveryPreview, setRecoveryError, raceId }) {
+  setRecoveryBusy(true);
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (overrideText && overrideText.trim()) {
+      fd.append('candidates_override', normalizeOverride(overrideText));
+    }
+    const { data } = await api.post(
+      `/admin/races/${raceId}/recover-spec/preview`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    setRecoveryPreview(data);
+    if (!data.ok) setRecoveryError(data.error || 'Preview returned not-ok');
+  } catch (err) {
+    setRecoveryError(err.response?.data?.error || err.message);
+  } finally {
+    setRecoveryBusy(false);
+  }
+}
+
+function RecoverySpecModal({
+  raceId, recoveryFile, recoveryPreview, recoveryResult, recoveryError, recoveryBusy,
+  recoveryOverride, setRecoveryOverride,
+  onChooseFile, onRetry, onApply, onClose,
+}) {
+  const allMatched = recoveryPreview && Array.isArray(recoveryPreview.candidate_matches)
+    && recoveryPreview.candidate_matches.length > 0
+    && recoveryPreview.candidate_matches.every(m => m.db);
+
+  return (
+    <div style={styles.modalOverlay}>
+      <div style={{ ...styles.modalCard, maxWidth: 720, maxHeight: '90vh', overflowY: 'auto' }}>
+        <h3 style={{ margin: '0 0 0.25rem' }}>Fix scan zones from PDF</h3>
+        <p style={{ margin: '0 0 1rem', color: '#374151', lineHeight: 1.45, fontSize: '0.9rem' }}>
+          Upload the PDF that was actually sent to the printer. The server will read the QR + oval positions
+          directly from the PDF's drawing operators and rewrite the OMR <code>ballot-spec.json</code> for
+          <strong> every round of race {raceId}</strong>. Existing specs are backed up.
+        </p>
+
+        {!recoveryResult && (
+          <>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>
+                Printed ballot PDF
+              </label>
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={(e) => onChooseFile(e.target.files?.[0] || null)}
+                disabled={recoveryBusy}
+              />
+              {recoveryFile && (
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 4 }}>
+                  {recoveryFile.name} ({Math.round(recoveryFile.size / 1024)} KB)
+                </div>
+              )}
+            </div>
+
+            {recoveryBusy && !recoveryPreview && (
+              <p style={{ color: '#6b7280', fontSize: '0.9rem' }}>Reading PDF...</p>
+            )}
+
+            {recoveryError && !recoveryResult && (
+              <div style={styles.recoveryErrorBox}>
+                <strong>Error:</strong> {recoveryError}
+              </div>
+            )}
+
+            {/* Manual override: shown collapsed by default, auto-expanded when there's been an error */}
+            {recoveryFile && (
+              <details
+                style={{ marginBottom: '0.75rem', fontSize: '0.85rem' }}
+                open={!!recoveryError}
+              >
+                <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#374151' }}>
+                  Manual candidate names (override auto-detection)
+                </summary>
+                <p style={{ margin: '0.5rem 0', color: '#6b7280', fontSize: '0.82rem' }}>
+                  Use this if the auto-detection failed or picked the wrong ovals. Enter the candidate names
+                  in <strong>display order</strong>, one per line. They'll be assigned to the detected
+                  ovals top-to-bottom. The number of names must match the number of ovals on the ballot.
+                </p>
+                <textarea
+                  rows={5}
+                  style={{
+                    width: '100%', padding: '0.5rem', border: '1px solid #ccc',
+                    borderRadius: 4, fontSize: '0.85rem', fontFamily: 'system-ui, sans-serif',
+                    boxSizing: 'border-box',
+                  }}
+                  placeholder={'Jane Smith\nJohn Doe\nAlex Lee'}
+                  value={recoveryOverride}
+                  onChange={(e) => setRecoveryOverride(e.target.value)}
+                  disabled={recoveryBusy}
+                />
+                <div style={{ marginTop: '0.5rem' }}>
+                  <button
+                    style={{ ...styles.btnSmall, padding: '0.4rem 0.75rem' }}
+                    onClick={onRetry}
+                    disabled={recoveryBusy}
+                  >
+                    {recoveryBusy ? 'Re-running...' : 'Re-run preview with these names'}
+                  </button>
+                </div>
+              </details>
+            )}
+
+            {recoveryPreview && (
+              <div style={{ marginBottom: '0.75rem' }}>
+                <h4 style={styles.recoverySectionH4}>Detected layout</h4>
+                <div style={styles.recoveryFactRow}>
+                  <span style={styles.recoveryFactLabel}>Ballot size:</span>
+                  <code>{recoveryPreview.extraction?.ballot_size}</code>
+                </div>
+                <div style={styles.recoveryFactRow}>
+                  <span style={styles.recoveryFactLabel}>QR position (pts):</span>
+                  <code>
+                    x={recoveryPreview.extraction?.qr_position_pts?.x?.toFixed(2)} y={recoveryPreview.extraction?.qr_position_pts?.y?.toFixed(2)} {recoveryPreview.extraction?.qr_position_pts?.width?.toFixed(0)}×{recoveryPreview.extraction?.qr_position_pts?.height?.toFixed(0)}
+                  </code>
+                </div>
+
+                <h4 style={styles.recoverySectionH4}>Candidate matches</h4>
+                <table style={styles.recoveryTable}>
+                  <thead>
+                    <tr>
+                      <th style={styles.recoveryTh}>From PDF</th>
+                      <th style={styles.recoveryTh}>Matched DB candidate</th>
+                      <th style={styles.recoveryTh}>Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(recoveryPreview.candidate_matches || []).map((m, i) => (
+                      <tr key={i}>
+                        <td style={styles.recoveryTd}>{m.pdf_name}</td>
+                        <td style={styles.recoveryTd}>
+                          {m.db ? (
+                            <>
+                              <strong>{m.db.name}</strong>
+                              <span style={styles.recoveryMuted}> (id={m.db.id}{m.db.status === 'withdrawn' ? ', withdrawn' : ''})</span>
+                            </>
+                          ) : (
+                            <span style={{ color: '#dc2626', fontWeight: 600 }}>NO MATCH</span>
+                          )}
+                        </td>
+                        <td style={styles.recoveryTd}>
+                          {m.db ? (
+                            <span style={{ ...styles.recoveryMatchBadge, background: m.method === 'exact' ? '#d1fae5' : '#fef3c7', color: m.method === 'exact' ? '#065f46' : '#92400e' }}>
+                              {m.method}
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {recoveryPreview.missing_from_pdf?.length > 0 && (
+                  <div style={{ ...styles.recoveryWarnBox, marginTop: '0.5rem' }}>
+                    <strong>Note:</strong> {recoveryPreview.missing_from_pdf.length} DB candidate(s) have no oval on the printed paper:{' '}
+                    {recoveryPreview.missing_from_pdf.map(c => c.name).join(', ')}.
+                    {' '}This is OK if those candidates were added/withdrawn after printing — they just won't be scannable.
+                  </div>
+                )}
+
+                <h4 style={styles.recoverySectionH4}>Rounds that will be updated</h4>
+                {recoveryPreview.rounds_to_update?.length > 0 ? (
+                  <ul style={styles.recoveryList}>
+                    {recoveryPreview.rounds_to_update.map(r => (
+                      <li key={r.round_id} style={{ marginBottom: 2 }}>
+                        Round {r.round_number}{' '}
+                        <span style={styles.recoveryMuted}>(id={r.round_id})</span>
+                        {r.backup && <span style={styles.recoveryMuted}> — existing spec will be backed up</span>}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={styles.recoveryMuted}>No rounds found for this race.</p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {recoveryResult && recoveryResult.ok && (
+          <div style={styles.recoverySuccessBox}>
+            <h4 style={{ margin: '0 0 0.25rem', color: '#065f46' }}>Recovery applied</h4>
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem' }}>
+              Updated <strong>{recoveryResult.rounds_updated.length}</strong> round(s) of race {recoveryResult.race?.name}. Backups saved with extension <code>.broken-&lt;timestamp&gt;.json</code>.
+            </p>
+            <p style={{ margin: 0, fontSize: '0.85rem' }}>
+              <strong>Next:</strong> physically scan one printed ballot for this race with a known marked candidate to verify scanning aligns correctly.
+            </p>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          {recoveryResult ? (
+            <button style={styles.btnPrimary} onClick={onClose}>Close</button>
+          ) : (
+            <>
+              <button style={styles.btnSmall} onClick={onClose} disabled={recoveryBusy}>Cancel</button>
+              <button
+                style={{
+                  ...styles.btnPrimary,
+                  opacity: (allMatched && !recoveryBusy) ? 1 : 0.5,
+                  cursor: (allMatched && !recoveryBusy) ? 'pointer' : 'not-allowed',
+                }}
+                disabled={!allMatched || recoveryBusy}
+                onClick={onApply}
+                title={!allMatched ? 'All PDF candidates must match a DB candidate before applying' : 'Write the recovered spec to every round of this race'}
+              >
+                {recoveryBusy ? 'Applying...' : `Apply to all ${recoveryPreview?.rounds_to_update?.length || 0} round(s)`}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -570,6 +1042,33 @@ const styles = {
   modalCard: {
     background: '#fff', borderRadius: 12, padding: '2rem', width: '100%', maxWidth: 420,
     boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+  },
+
+  // Recovery modal styles
+  btnSecondary: {
+    padding: '0.5rem 1rem', background: '#fff', color: '#1f2937', border: '1px solid #d1d5db',
+    borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem',
+  },
+  recoverySectionH4: { margin: '0.75rem 0 0.4rem', fontSize: '0.92rem', color: '#1f2937' },
+  recoveryFactRow: { display: 'flex', gap: '0.5rem', fontSize: '0.85rem', marginBottom: 2, color: '#374151' },
+  recoveryFactLabel: { fontWeight: 600, minWidth: 130 },
+  recoveryTable: { width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' },
+  recoveryTh: { textAlign: 'left', padding: '0.35rem 0.5rem', borderBottom: '1px solid #e5e7eb', fontWeight: 600, color: '#1f2937' },
+  recoveryTd: { padding: '0.35rem 0.5rem', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top' },
+  recoveryMuted: { color: '#6b7280', fontSize: '0.82rem' },
+  recoveryMatchBadge: { padding: '1px 8px', borderRadius: 10, fontSize: '0.72rem', fontWeight: 600 },
+  recoveryList: { paddingLeft: '1.2rem', margin: 0, fontSize: '0.85rem', color: '#374151' },
+  recoveryErrorBox: {
+    background: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b',
+    padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.85rem', marginBottom: '0.75rem',
+  },
+  recoveryWarnBox: {
+    background: '#fef3c7', border: '1px solid #fbbf24', color: '#92400e',
+    padding: '0.5rem 0.75rem', borderRadius: 6, fontSize: '0.85rem',
+  },
+  recoverySuccessBox: {
+    background: '#d1fae5', border: '1px solid #6ee7b7',
+    padding: '0.75rem', borderRadius: 6, marginBottom: '0.5rem',
   },
 };
 

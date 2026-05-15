@@ -1,3 +1,5 @@
+import { fmtPct } from '../utils/percent';
+
 const OUTCOME_BADGES = {
   eliminated: { bg: '#fee2e2', color: '#dc2626', label: 'Eliminated' },
   withdrew: { bg: '#f3f4f6', color: '#6b7280', label: 'Withdrew' },
@@ -7,7 +9,7 @@ const OUTCOME_BADGES = {
   advance_to_primary: { bg: '#dbeafe', color: '#1e40af', label: 'Advances to Primary' },
 };
 
-export default function DashboardPreview({ electionName, raceName, roundNumber, results, decisions, withdrawn, totalVotes }) {
+export default function DashboardPreview({ electionName, raceName, roundNumber, results, decisions, withdrawn, totalVotes, decimals }) {
   return (
     <div style={s.panel}>
       <div style={s.header}>
@@ -37,7 +39,7 @@ export default function DashboardPreview({ electionName, raceName, roundNumber, 
               <div style={{ ...s.bar, width: `${Math.min(pct, 100)}%` }} />
             </div>
             <span style={s.voteCount}>{r.vote_count}</span>
-            <span style={s.pct}>{pct.toFixed(1)}%</span>
+            <span style={s.pct}>{fmtPct(r.percentage, decimals)}%</span>
           </div>
         );
       })}

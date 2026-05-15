@@ -6,6 +6,7 @@ import ElectionLayout from '../components/ElectionLayout';
 import DashboardPreview from '../components/DashboardPreview';
 import SuperAdminPinModal from '../components/SuperAdminPinModal';
 import { useAuth } from '../context/AuthContext';
+import { fmtPct } from '../utils/percent';
 
 const STATUS_META = {
   pending_needs_action: { bg: '#fef3c7', color: '#92400e', label: 'Needs Action' },
@@ -99,10 +100,10 @@ export default function RoundDetail() {
       confirmLabel: `Reset ${spoiledCount} Ballot${spoiledCount === 1 ? '' : 's'}`,
       confirmStyle: 'danger',
       requireNotes: false,
-      onConfirm: async ({ adminName }) => {
+      onConfirm: async ({ pin, adminName }) => {
         setResettingSpoiled(true);
         try {
-          await api.put(`/admin/rounds/${roundId}/reset-spoiled`, { reset_by: adminName });
+          await api.put(`/admin/rounds/${roundId}/reset-spoiled`, { pin, reset_by: adminName });
           refreshAll();
         } catch (err) {
           setGlobalError(err.response?.data?.error || 'Reset failed');
@@ -174,9 +175,9 @@ export default function RoundDetail() {
       confirmLabel: revertAction.label,
       confirmStyle: 'normal',
       requireNotes: false,
-      onConfirm: async () => {
+      onConfirm: async ({ pin }) => {
         setPinModal(null);
-        await postAction(revertAction.url);
+        await postAction(revertAction.url, { pin });
       },
     });
   };
@@ -187,9 +188,9 @@ export default function RoundDetail() {
     confirmLabel: 'Unpublish',
     confirmStyle: 'normal',
     requireNotes: false,
-    onConfirm: async () => {
+    onConfirm: async ({ pin }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/unpublish`);
+      await postAction(`/admin/control-center/round/${roundId}/unpublish`, { pin });
     },
   });
 
@@ -200,9 +201,9 @@ export default function RoundDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for recount',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/recount`, { notes });
+      await postAction(`/admin/control-center/round/${roundId}/recount`, { pin, notes });
     },
   });
 
@@ -213,9 +214,9 @@ export default function RoundDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for reversing finalization',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/reverse-finalize`, { notes });
+      await postAction(`/admin/control-center/round/${roundId}/reverse-finalize`, { pin, notes });
     },
   });
 
@@ -226,9 +227,9 @@ export default function RoundDetail() {
     confirmStyle: 'danger',
     requireNotes: true,
     notesLabel: 'Reason for voiding this round',
-    onConfirm: async ({ notes }) => {
+    onConfirm: async ({ pin, notes }) => {
       setPinModal(null);
-      await postAction(`/admin/control-center/round/${roundId}/void`, { notes });
+      await postAction(`/admin/control-center/round/${roundId}/void`, { pin, notes });
     },
   });
 
@@ -377,6 +378,7 @@ export default function RoundDetail() {
               decisions={{}}
               withdrawn={new Set()}
               totalVotes={totalVotes}
+              decimals={round.race?.election?.dashboard_decimals}
             />
           ) : (
             <div style={styles.resultsPanel}>
@@ -393,7 +395,7 @@ export default function RoundDetail() {
                       <div style={{ ...styles.tvBar, width: `${Math.min(pct, 100)}%` }} />
                     </div>
                     <span style={styles.tvVoteCount}>{r.vote_count}</span>
-                    <span style={styles.tvPct}>{pct.toFixed(5)}%</span>
+                    <span style={styles.tvPct}>{fmtPct(r.percentage, round.race?.election?.dashboard_decimals)}%</span>
                   </div>
                 );
               })}
@@ -605,7 +607,7 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
         <div key={p.id} style={styles.activePassCard}>
           <div style={styles.passLineLeft}>
             <span style={styles.passLabel}>Pass {p.pass_number}</span>
-            <span style={styles.pill} title="Total uploads (any outcome)">{p.upload_count ?? p.scan_count ?? 0} scans</span>
+            <PassTally pass={p} pillStyle={styles.pill} />
             <span style={styles.activeBadge}>Active</span>
           </div>
           {isSuperAdmin && (
@@ -623,7 +625,7 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
         <div key={p.id} style={styles.completedPassRow}>
           <div style={styles.passLineLeft}>
             <span style={{ fontWeight: 600 }}>Pass {p.pass_number}</span>
-            <span style={styles.muted} title="Total uploads (any outcome)">{p.upload_count ?? p.scan_count ?? 0} scans</span>
+            <PassTally pass={p} pillStyle={styles.muted} />
             <span style={styles.completeBadge}>✓ Complete</span>
           </div>
           {isSuperAdmin && (
@@ -653,16 +655,61 @@ function PassManager({ roundId, onUpdate, disabled = false, disabledReason = '' 
   );
 }
 
+// ─── Per-pass image tally ──────────────────────────────────────────────────
+// Reconciliation aid for the operator: every image the scanner produced should be
+// accounted for somewhere (counted, pending review, rejected, spoiled, or remade).
+// Format: "306 images · 288 counted · 17 pending · 1 rejected" — counted is always
+// shown, the other categories only appear when nonzero so the line stays tight.
+function PassTally({ pass, pillStyle }) {
+  const total = pass.upload_count ?? pass.scan_count ?? 0;
+  const counted = pass.scan_count ?? 0;
+  const pending = pass.review_pending ?? 0;
+  const rejected = pass.review_rejected ?? 0;
+  const spoiled = pass.review_spoiled ?? 0;
+  const remade = pass.review_remade ?? 0;
+  const accounted = counted + pending + rejected + spoiled + remade;
+  const unaccounted = Math.max(0, total - accounted);
+
+  const parts = [`${counted} counted`];
+  if (pending > 0)  parts.push(`${pending} pending`);
+  if (rejected > 0) parts.push(`${rejected} rejected`);
+  if (spoiled > 0)  parts.push(`${spoiled} spoiled`);
+  if (remade > 0)   parts.push(`${remade} remade`);
+  if (unaccounted > 0) parts.push(`${unaccounted} unmatched`);
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <span style={pillStyle} title="Total images uploaded for this pass (every scan, regardless of outcome)">
+        {total} image{total === 1 ? '' : 's'}
+      </span>
+      <span style={{ fontSize: '0.78rem', color: '#6b7280' }} title="Breakdown of every image in this pass">
+        {parts.join(' · ')}
+      </span>
+    </span>
+  );
+}
+
 // ─── Scans by Station table ────────────────────────────────────────────────
 function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
-  const reconMap = new Map((reconcileCounts || []).map(r => [r.station_id, r.pending || 0]));
+  // Per-station × per-pass needs-review map; key = `${station_id}|${pass_id ?? 'null'}`.
+  const reconCellMap = new Map();
+  (reconcileCounts || []).forEach(r => {
+    reconCellMap.set(`${r.station_id}|${r.pass_id ?? 'null'}`, r.pending || 0);
+  });
+  const reconRowTotal = (station) =>
+    (reconcileCounts || [])
+      .filter(r => r.station_id === station)
+      .reduce((s, r) => s + (r.pending || 0), 0);
+
   const stationIdSet = new Set((stationCounts || []).map(r => r.station_id));
-  reconMap.forEach((_, sid) => stationIdSet.add(sid));
+  (reconcileCounts || []).forEach(r => stationIdSet.add(r.station_id));
   if (stationIdSet.size === 0) return null;
 
   const nonDeletedPasses = passes.filter(p => p.status !== 'deleted');
   const passColumns = nonDeletedPasses.map(p => ({ id: p.id, label: `Pass ${p.pass_number}` }));
-  const hasUnbucketed = stationCounts.some(r => r.pass_id == null);
+  const hasUnbucketed =
+    stationCounts.some(r => r.pass_id == null) ||
+    (reconcileCounts || []).some(r => r.pass_id == null);
   if (hasUnbucketed) passColumns.push({ id: null, label: 'Unassigned' });
 
   const stationIds = Array.from(stationIdSet).sort();
@@ -671,10 +718,12 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
 
   const colTotal = (passId) =>
     stationCounts.filter(r => (r.pass_id ?? null) === passId).reduce((s, r) => s + (r.uploads || 0), 0);
+  const colReconTotal = (passId) =>
+    (reconcileCounts || []).filter(r => (r.pass_id ?? null) === passId).reduce((s, r) => s + (r.pending || 0), 0);
   const rowTotal = (station) =>
     stationCounts.filter(r => r.station_id === station).reduce((s, r) => s + (r.uploads || 0), 0);
   const grandTotal = stationCounts.reduce((s, r) => s + (r.uploads || 0), 0);
-  const reconTotal = Array.from(reconMap.values()).reduce((s, n) => s + n, 0);
+  const reconTotal = (reconcileCounts || []).reduce((s, r) => s + (r.pending || 0), 0);
 
   const th = { textAlign: 'left', padding: '0.5rem 0.75rem', background: '#f9fafb', fontSize: '0.82rem', borderBottom: '1px solid #e5e7eb', fontWeight: 700 };
   const td = { padding: '0.4rem 0.75rem', fontSize: '0.88rem', borderBottom: '1px solid #f3f4f6' };
@@ -698,13 +747,24 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
           </thead>
           <tbody>
             {stationIds.map(sid => {
-              const pending = reconMap.get(sid) || 0;
+              const pending = reconRowTotal(sid);
               return (
                 <tr key={sid}>
                   <td style={{ ...td, fontFamily: 'monospace' }}>{sid}</td>
-                  {passColumns.map(c => (
-                    <td key={c.id ?? 'null'} style={numeric}>{lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}</td>
-                  ))}
+                  {passColumns.map(c => {
+                    const uploads = lookup.get(`${sid}|${c.id ?? 'null'}`) || 0;
+                    const cellPending = reconCellMap.get(`${sid}|${c.id ?? 'null'}`) || 0;
+                    return (
+                      <td key={c.id ?? 'null'} style={numeric}>
+                        <div>{uploads}</div>
+                        {cellPending > 0 && (
+                          <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: 600 }}>
+                            {cellPending} need review
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
                   <td style={{ ...numeric, fontWeight: 700 }}>{rowTotal(sid)}</td>
                   <td style={{
                     ...numeric, fontWeight: 700,
@@ -716,9 +776,20 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
             })}
             <tr>
               <td style={{ ...td, fontWeight: 700, background: '#f9fafb' }}>Total</td>
-              {passColumns.map(c => (
-                <td key={c.id ?? 'null'} style={{ ...numeric, fontWeight: 700, background: '#f9fafb' }}>{colTotal(c.id ?? null)}</td>
-              ))}
+              {passColumns.map(c => {
+                const uploads = colTotal(c.id ?? null);
+                const colPending = colReconTotal(c.id ?? null);
+                return (
+                  <td key={c.id ?? 'null'} style={{ ...numeric, fontWeight: 700, background: '#f9fafb' }}>
+                    <div>{uploads}</div>
+                    {colPending > 0 && (
+                      <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: 600 }}>
+                        {colPending} need review
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
               <td style={{ ...numeric, fontWeight: 700, background: '#dbeafe', color: '#1e40af' }}>{grandTotal}</td>
               <td style={{
                 ...numeric, fontWeight: 700,
@@ -733,19 +804,29 @@ function StationCountsTable({ passes, stationCounts, reconcileCounts }) {
       {/* Mobile card view — shown under 500px via CSS */}
       <div data-station-cards style={styles.stationCardList}>
         {stationIds.map(sid => {
-          const pending = reconMap.get(sid) || 0;
+          const pending = reconRowTotal(sid);
           return (
             <div key={sid} style={styles.stationCard}>
               <div style={styles.stationCardHeader}>
                 <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{sid}</span>
                 <span style={{ ...styles.pill }}>Total {rowTotal(sid)}</span>
               </div>
-              {passColumns.map(c => (
-                <div key={c.id ?? 'null'} style={styles.stationCardRow}>
-                  <span style={styles.muted}>{c.label}</span>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}</span>
-                </div>
-              ))}
+              {passColumns.map(c => {
+                const cellPending = reconCellMap.get(`${sid}|${c.id ?? 'null'}`) || 0;
+                return (
+                  <div key={c.id ?? 'null'} style={styles.stationCardRow}>
+                    <span style={styles.muted}>{c.label}</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                      {lookup.get(`${sid}|${c.id ?? 'null'}`) || 0}
+                      {cellPending > 0 && (
+                        <span style={{ marginLeft: '0.4rem', color: '#b45309', fontSize: '0.78rem' }}>
+                          ({cellPending} need review)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
               <div style={styles.stationCardRow}>
                 <span style={styles.muted}>Needs Review</span>
                 <span style={{

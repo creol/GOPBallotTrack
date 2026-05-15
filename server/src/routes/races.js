@@ -3,13 +3,14 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db');
 const { generateSerials } = require('../services/serialGenerator');
+const { requireSuperAdminPin } = require('../middleware/auth');
 
 const router = Router();
 
 // POST /api/admin/elections/:id/races — Create race
 router.post('/elections/:id/races', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors, race_date, race_time, location, public_search_enabled, public_browse_enabled } = req.body;
+    const { name, threshold_type, threshold_value, ballot_count, max_rounds, paper_colors, race_date, race_time, location, public_search_enabled, public_browse_enabled, race_group } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     // Get next display_order
@@ -25,12 +26,13 @@ router.post('/elections/:id/races', async (req, res) => {
       if (election?.date) defaultDate = election.date;
     }
 
+    const trimmedGroup = (typeof race_group === 'string' ? race_group.trim() : '') || 'Other';
     const { rows: [race] } = await db.query(
-      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds, race_date, race_time, location, public_search_enabled, public_browse_enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      `INSERT INTO races (election_id, name, threshold_type, threshold_value, display_order, ballot_count, max_rounds, race_date, race_time, location, public_search_enabled, public_browse_enabled, race_group)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
       [req.params.id, name, threshold_type || 'majority', threshold_value || null, max + 1,
        ballot_count || null, max_rounds || null, defaultDate, race_time || null, location || null,
-       public_search_enabled !== false, public_browse_enabled === true]
+       public_search_enabled !== false, public_browse_enabled === true, trimmedGroup]
     );
 
     // If ballot_count and max_rounds provided, auto-create rounds with SNs
@@ -70,7 +72,7 @@ router.get('/elections/:id/races', async (req, res) => {
 // PUT /api/admin/races/:id — Update race
 router.put('/races/:id', async (req, res) => {
   try {
-    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled, dashboard_visible } = req.body;
+    const { name, threshold_type, threshold_value, race_date, race_time, location, public_search_enabled, public_browse_enabled, dashboard_visible, race_group } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
@@ -84,6 +86,10 @@ router.put('/races/:id', async (req, res) => {
     if (public_search_enabled !== undefined) { updates.push(`public_search_enabled = $${idx++}`); values.push(public_search_enabled); }
     if (public_browse_enabled !== undefined) { updates.push(`public_browse_enabled = $${idx++}`); values.push(public_browse_enabled); }
     if (dashboard_visible !== undefined) { updates.push(`dashboard_visible = $${idx++}`); values.push(!!dashboard_visible); }
+    if (race_group !== undefined) {
+      const trimmed = (typeof race_group === 'string' ? race_group.trim() : '') || 'Other';
+      updates.push(`race_group = $${idx++}`); values.push(trimmed);
+    }
 
     if (updates.length === 0) {
       const { rows: [race] } = await db.query('SELECT * FROM races WHERE id = $1', [req.params.id]);
@@ -266,8 +272,11 @@ router.put('/candidates/:id/withdraw', async (req, res) => {
   }
 });
 
-// PUT /api/admin/races/:id/outcome — Set race outcome
-router.put('/races/:id/outcome', async (req, res) => {
+// PUT /api/admin/races/:id/outcome — Set race outcome.
+// Terminal outcomes (winner, advances_primary, closed) flip the race to
+// results_finalized — destructive, so we re-verify the operator's PIN here
+// rather than trusting the client-side modal alone.
+router.put('/races/:id/outcome', requireSuperAdminPin, async (req, res) => {
   try {
     const { outcome, candidate_id, notes } = req.body;
     if (!outcome || !['winner', 'advances_next_round', 'advances_primary', 'closed'].includes(outcome)) {
@@ -278,6 +287,23 @@ router.put('/races/:id/outcome', async (req, res) => {
     const isTerminal = ['winner', 'advances_primary', 'closed'].includes(outcome);
     const newStatus = isTerminal ? 'results_finalized' : 'in_progress';
 
+    // Refuse to finalize a race while any round is still actively voting or
+    // tallying — auto-canceling those would erase live work (passes, scans,
+    // judge confirmations). The operator must finalize or void the active
+    // round first.
+    if (isTerminal) {
+      const { rows: blockingRounds } = await db.query(
+        "SELECT id, round_number, status FROM rounds WHERE race_id = $1 AND status IN ('voting_open', 'tallying') ORDER BY round_number",
+        [req.params.id]
+      );
+      if (blockingRounds.length > 0) {
+        const list = blockingRounds.map(r => `Round ${r.round_number} (${r.status})`).join(', ');
+        return res.status(400).json({
+          error: `Cannot finalize race — these rounds are still active: ${list}. Finalize or void them first.`,
+        });
+      }
+    }
+
     const { rows: [race] } = await db.query(
       `UPDATE races SET
         outcome = $1, outcome_candidate_id = $2, outcome_notes = $3,
@@ -287,10 +313,13 @@ router.put('/races/:id/outcome', async (req, res) => {
     );
     if (!race) return res.status(404).json({ error: 'Race not found' });
 
-    // Cancel pending rounds only for terminal outcomes
+    // For terminal outcomes, only cancel rounds that have no committed work yet.
+    // tallying / voting_open are protected by the guard above; round_finalized
+    // and canceled are left alone; voting_closed is preserved too because it
+    // means voting completed and the operator may still want to tally it.
     if (isTerminal) {
       await db.query(
-        "UPDATE rounds SET status = 'canceled' WHERE race_id = $1 AND status IN ('pending_needs_action', 'ready', 'tallying')",
+        "UPDATE rounds SET status = 'canceled' WHERE race_id = $1 AND status IN ('pending_needs_action', 'ready')",
         [req.params.id]
       );
     }
@@ -299,6 +328,62 @@ router.put('/races/:id/outcome', async (req, res) => {
   } catch (err) {
     console.error('Set race outcome error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/admin/races/:id/final-designations — Persist per-candidate official
+// designations (Official Nominee / Progress to Primary). Mutually exclusive per
+// candidate. Used when generating the official Race Summary PDF.
+// Body: { designations: [{ candidate_id, designation: 'official_nominee'|'progress_to_primary'|null }] }
+router.put('/races/:id/final-designations', async (req, res) => {
+  try {
+    const { designations } = req.body;
+    if (!Array.isArray(designations)) {
+      return res.status(400).json({ error: 'designations array is required' });
+    }
+    for (const d of designations) {
+      if (d.designation !== null && !['official_nominee', 'progress_to_primary'].includes(d.designation)) {
+        return res.status(400).json({ error: `Invalid designation: ${d.designation}` });
+      }
+    }
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const d of designations) {
+        await client.query(
+          'UPDATE candidates SET final_designation = $1 WHERE id = $2 AND race_id = $3',
+          [d.designation, d.candidate_id, req.params.id]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    const { rows } = await db.query(
+      'SELECT * FROM candidates WHERE race_id = $1 ORDER BY display_order',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Set final designations error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/admin/races/:id/summary-pdf — Download official Race Summary PDF
+router.get('/races/:id/summary-pdf', async (req, res) => {
+  try {
+    const { generateRaceSummaryPdf } = require('../pdf/raceSummaryPdf');
+    const { pdfPath, downloadName } = await generateRaceSummaryPdf(req.params.id);
+    res.download(pdfPath, downloadName);
+  } catch (err) {
+    console.error('Race summary PDF error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 

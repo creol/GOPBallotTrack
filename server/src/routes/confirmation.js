@@ -2,6 +2,7 @@ const { Router } = require('express');
 const {
   getComparison,
   confirmRound,
+  finalizeRound,
   releaseRound,
   getChairPreview,
   getChairDecision,
@@ -10,6 +11,7 @@ const {
   recordReconciliation,
 } = require('../services/confirmationService');
 const db = require('../db');
+const { requireSuperAdminPin } = require('../middleware/auth');
 
 const router = Router();
 
@@ -320,8 +322,35 @@ router.get('/rounds/:id/comparison', async (req, res) => {
   }
 });
 
-// POST /api/rounds/:id/confirm — Election Judge confirms the round
-router.post('/rounds/:id/confirm', async (req, res) => {
+// POST /api/rounds/:id/confirm — Election Judge records that the pass counts
+// have been reviewed and accepted. Saves an audit row and computes the
+// round_results, but does NOT change round status. The Chair finalizes the
+// round separately via POST /rounds/:id/finalize.
+router.post('/rounds/:id/confirm', requireSuperAdminPin, actuallyConfirmRound);
+
+// POST /api/rounds/:id/finalize — Chair flips the round to round_finalized.
+// Requires that a judge confirmation has already been recorded. PIN-gated.
+router.post('/rounds/:id/finalize', requireSuperAdminPin, async (req, res) => {
+  try {
+    const { finalized_by_name } = req.body;
+    if (!finalized_by_name) {
+      return res.status(400).json({ error: 'finalized_by_name is required' });
+    }
+    const result = await finalizeRound({
+      roundId: parseInt(req.params.id),
+      finalizedByName: finalized_by_name,
+    });
+    const io = req.app.get('io');
+    if (io) io.emit('round:finalized', { round_id: parseInt(req.params.id) });
+    res.json({ message: result.alreadyFinalized ? 'Round was already finalized' : 'Round finalized', ...result });
+  } catch (err) {
+    console.error('Finalize round error:', err);
+    const status = err.message.includes('required') || err.message.includes('cannot be finalized') || err.message.includes('must be confirmed') ? 400 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+async function actuallyConfirmRound(req, res) {
   try {
     const { confirmed_by_name } = req.body;
     if (!confirmed_by_name) {
@@ -344,10 +373,14 @@ router.post('/rounds/:id/confirm', async (req, res) => {
     const status = err.message.includes('required') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
-});
+}
 
-// POST /api/rounds/:id/confirm-override — Election Judge overrides a mismatch
-router.post('/rounds/:id/confirm-override', async (req, res) => {
+// POST /api/rounds/:id/confirm-override — Election Judge overrides a mismatch.
+// Same hard PIN gate as /confirm — overrides are even more sensitive, so we
+// never accept them without a fresh super-admin PIN.
+router.post('/rounds/:id/confirm-override', requireSuperAdminPin, actuallyConfirmOverride);
+
+async function actuallyConfirmOverride(req, res) {
   try {
     const { confirmed_by_name, override_notes } = req.body;
     if (!confirmed_by_name) {
@@ -373,7 +406,7 @@ router.post('/rounds/:id/confirm-override', async (req, res) => {
     const status = err.message.includes('required') ? 400 : 500;
     res.status(status).json({ error: err.message });
   }
-});
+}
 
 // GET /api/rounds/:id/chair-preview — What the public will see
 router.get('/rounds/:id/chair-preview', async (req, res) => {

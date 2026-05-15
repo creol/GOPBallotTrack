@@ -19,6 +19,9 @@ import PublicBrowseBallots from './pages/PublicBrowseBallots';
 import UserManagement from './pages/UserManagement';
 import StationSetup from './pages/StationSetup';
 import ScanLogs from './pages/ScanLogs';
+import AdminQuickstartGuide from './pages/guides/AdminQuickstartGuide';
+import ScanStationGuide from './pages/guides/ScanStationGuide';
+import ConventionFaqGuide from './pages/guides/ConventionFaqGuide';
 
 function ProtectedRoute({ children, auth, requiredRoles }) {
   if (!auth.checked) return null;
@@ -55,6 +58,11 @@ export default function App() {
     try { await api.post('/auth/logout'); } catch {}
     delete api.defaults.headers.common['Authorization'];
     setAuth({ role: null, token: null, user_id: null, name: null, checked: true });
+    // The /scan/:roundId route is intentionally unprotected so tally operators can use it
+    // without a login. That means clearing auth state alone won't redirect — do it explicitly
+    // so logging out from anywhere (Scanner included) always lands on /login and also tears
+    // down this page's websocket / polling timers as a side effect.
+    window.location.href = '/login';
   };
 
   const scannerUser = auth.name && auth.name.match(/^scan\d/i);
@@ -104,6 +112,17 @@ export default function App() {
           <ProtectedRoute auth={auth} requiredRoles={['super_admin']}>
             <UserManagement />
           </ProtectedRoute>
+        } />
+
+        {/* Convention guides — any authenticated user */}
+        <Route path="/admin/guides/admin-quickstart" element={
+          <ProtectedRoute auth={auth}><AdminQuickstartGuide /></ProtectedRoute>
+        } />
+        <Route path="/admin/guides/scan-station" element={
+          <ProtectedRoute auth={auth}><ScanStationGuide /></ProtectedRoute>
+        } />
+        <Route path="/admin/guides/faq" element={
+          <ProtectedRoute auth={auth}><ConventionFaqGuide /></ProtectedRoute>
         } />
 
         {/* Station setup + Scanner routes — no auth */}

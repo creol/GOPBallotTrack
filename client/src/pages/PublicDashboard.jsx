@@ -1,10 +1,51 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { QRCodeSVG } from 'qrcode.react';
 import api from '../api/client';
 import { formatRaceSchedule } from '../utils/dateFormat';
+import { fmtPct } from '../utils/percent';
 import { VersionTag } from '../components/AppHeader';
+import { normalizeGroup, sortGroupNames } from '../utils/raceGroups';
+
+// Mirror of DEFAULT_COLORS in ElectionDetail.jsx — keep these in sync.
+const DEFAULT_COLORS = {
+  page_bg:                '#0f172a',
+  card_bg:                '#1e293b',
+  card_border:            '#334155',
+  header_text:            '#ffffff',
+  group_header_text:      '#fbbf24',
+  candidate_name:         '#e2e8f0',
+  vote_bar:               '#3b82f6',
+  vote_count_text:        '#ffffff',
+  pct_text:               '#94a3b8',
+  convention_winner_bg:   '#fef3c7',
+  convention_winner_text: '#b45309',
+  winner_bg:              '#fef3c7',
+  winner_text:            '#b45309',
+  advances_bg:            '#dcfce7',
+  advances_text:          '#166534',
+  advance_to_primary_bg:  '#dbeafe',
+  advance_to_primary_text:'#1e40af',
+  eliminated_bg:          '#fee2e2',
+  eliminated_text:        '#dc2626',
+  withdrew_bg:            '#f3f4f6',
+  withdrew_text:          '#6b7280',
+};
+
+const DEFAULT_DASHBOARD_SETTINGS = {
+  layout_mode: 'all',
+  rotation_seconds: 0,
+  auto_scroll: true,
+  auto_scroll_speed: 1,
+  auto_scroll_start_delay: 3,
+  custom_header: '',
+  logo_path: '',
+  logo_position: 'top_center',
+  qr_position: 'bottom_right',
+  show_vote_bar: true,
+  colors: { ...DEFAULT_COLORS },
+};
 
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
@@ -22,6 +63,7 @@ export default function PublicDashboard() {
   const navigate = useNavigate();
   const windowWidth = useWindowWidth();
   const isTvMode = searchParams.get('mode') === 'tv' || windowWidth > 1200;
+  const latestOnly = searchParams.get('latest') === '1';
 
   const [election, setElection] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -113,158 +155,342 @@ const STATUS_BADGE_STYLES = {
   'Race Complete': { bg: '#6366f1', color: '#fff' },
 };
 
+// Returns the set of candidate_ids who were eliminated or withdrew in any round
+// strictly before `roundNumber`. Used to drop those names from later rounds so the
+// dashboard only lists candidates still in contention at that point in the race.
+function removedBeforeRound(rounds, roundNumber) {
+  const removed = new Set();
+  for (const round of rounds || []) {
+    if (round.round_number >= roundNumber) continue;
+    for (const r of round.results || []) {
+      if (r.outcome === 'eliminated' || r.outcome === 'withdrew') {
+        removed.add(r.candidate_id);
+      }
+    }
+  }
+  return removed;
+}
+
+// Renders the dashboard's top header per the branding settings: optional logo
+// (top center, inline left, inline right, or hidden) and either a custom header
+// string or the election name as fallback.
+function DashboardHeader({ settings, fallbackName, colors }) {
+  const text = (settings.custom_header || '').trim() || fallbackName;
+  const pos = settings.logo_position || 'top_center';
+  const hasLogo = !!settings.logo_path && pos !== 'none';
+  const logoImg = hasLogo ? <img src={settings.logo_path} alt="" style={tv.logo} /> : null;
+  const titleStyle = { ...tv.title, color: colors?.header_text || tv.title.color };
+
+  if (hasLogo && pos === 'top_center') {
+    return (
+      <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+        {logoImg}
+        <h1 style={{ ...titleStyle, marginTop: '0.75rem' }}>{text}</h1>
+      </div>
+    );
+  }
+  if (hasLogo && (pos === 'inline_left' || pos === 'inline_right')) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.25rem', marginBottom: '1.5rem' }}>
+        {pos === 'inline_left' && logoImg}
+        <h1 style={{ ...titleStyle, margin: 0 }}>{text}</h1>
+        {pos === 'inline_right' && logoImg}
+      </div>
+    );
+  }
+  return <h1 style={titleStyle}>{text}</h1>;
+}
+
 // ======================== TV MODE ========================
+// Wide-mode TV layout: shows only the latest published round per race. Honors
+// dashboard_settings on the election: layout_mode (all / grouped / rotating),
+// rotation_seconds (cycle interval per category), auto_scroll (marquee scroll
+// when content overflows the viewport).
 function TVMode({ election, connected }) {
-  const raceCount = election.races.length;
-  const gridCols = raceCount <= 1 ? '1fr' : raceCount <= 2 ? 'repeat(2, 1fr)' : raceCount <= 4 ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(400px, 1fr))';
+  const settings = useMemo(
+    () => ({ ...DEFAULT_DASHBOARD_SETTINGS, ...(election.dashboard_settings || {}) }),
+    [election.dashboard_settings]
+  );
+  // Resolved color palette: merge admin overrides on top of the defaults so any
+  // missing slot still has a sane value.
+  const c = useMemo(
+    () => ({ ...DEFAULT_COLORS, ...(election.dashboard_settings?.colors || {}) }),
+    [election.dashboard_settings]
+  );
+  // Per-outcome badge colors are derived from the palette, not from the static
+  // OUTCOME_BADGES const, so admin color overrides flow through to badges.
+  const outcomeBadge = (outcome) => {
+    const map = {
+      eliminated: { bg: c.eliminated_bg, color: c.eliminated_text, label: 'Eliminated' },
+      withdrew: { bg: c.withdrew_bg, color: c.withdrew_text, label: 'Withdrew' },
+      advance: { bg: c.advances_bg, color: c.advances_text, label: 'Advances' },
+      convention_winner: { bg: c.convention_winner_bg, color: c.convention_winner_text, label: 'Convention Winner' },
+      winner: { bg: c.winner_bg, color: c.winner_text, label: 'Winner' },
+      advance_to_primary: { bg: c.advance_to_primary_bg, color: c.advance_to_primary_text, label: 'Advances to Primary' },
+    };
+    return map[outcome] || null;
+  };
+
+  // Group races by race_group; preserves display_order within each group (the API
+  // already returns races sorted by display_order).
+  const { groups, groupNames } = useMemo(() => {
+    const byGroup = {};
+    for (const race of election.races) {
+      const g = normalizeGroup(race.race_group);
+      if (!byGroup[g]) byGroup[g] = [];
+      byGroup[g].push(race);
+    }
+    return { groups: byGroup, groupNames: sortGroupNames(Object.keys(byGroup)) };
+  }, [election.races]);
+
+  // Rotation: cycle the active category index every N seconds. Disabled when
+  // layout_mode != 'rotating' or rotation_seconds <= 0.
+  const [activeIdx, setActiveIdx] = useState(0);
+  useEffect(() => {
+    if (settings.layout_mode !== 'rotating' || settings.rotation_seconds <= 0 || groupNames.length <= 1) return;
+    const ms = settings.rotation_seconds * 1000;
+    const t = setInterval(() => setActiveIdx(i => (i + 1) % groupNames.length), ms);
+    return () => clearInterval(t);
+  }, [settings.layout_mode, settings.rotation_seconds, groupNames.length]);
+  // Reset rotation index if the group list shrinks below the current index.
+  useEffect(() => {
+    if (activeIdx >= groupNames.length) setActiveIdx(0);
+  }, [groupNames.length, activeIdx]);
+
+  // Decide which group(s) to render this tick. Declared before the auto-scroll
+  // useEffect because that effect's dep array reads `showGroupHeaders` (TDZ).
+  const visibleGroupNames = settings.layout_mode === 'rotating' && settings.rotation_seconds > 0
+    ? [groupNames[activeIdx] || groupNames[0]].filter(Boolean)
+    : groupNames;
+  const showGroupHeaders = settings.layout_mode !== 'all' && groupNames.length > 0;
+
+  // Measure the sticky main header so group headers can stick directly under it,
+  // and so the auto-scroll loop knows how much overflow is real-vs-hidden-by-stickies.
+  const mainHeaderRef = useRef(null);
+  const [mainHeaderH, setMainHeaderH] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      if (mainHeaderRef.current) setMainHeaderH(mainHeaderRef.current.offsetHeight);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    // Re-measure on next frame in case fonts/images shift the layout after mount.
+    const t = setTimeout(measure, 200);
+    return () => { window.removeEventListener('resize', measure); clearTimeout(t); };
+  }, [settings.logo_path, settings.logo_position, settings.custom_header, election.name]);
+
+  // Auto-scroll: when the page content overflows the viewport, gently scroll the
+  // window down N px per ~40ms tick (N = auto_scroll_speed, 1–10), pause at the
+  // bottom, smooth-scroll back to top, repeat. Re-runs on activeIdx change so the
+  // start-delay is re-applied at each category rotation; the scroll position is
+  // also reset to the top so the next category starts from its first race.
+  //
+  // The sticky main header (and optionally a sticky group header) sits on top of
+  // the scroll viewport. As the page scrolls, content slides UNDER those stickies
+  // and is no longer visible. So if the content's overflow is smaller than the
+  // sticky offset + a buffer, scrolling at all just hides the top of the cards
+  // (e.g. the race names) without revealing anything meaningful at the bottom —
+  // skip auto-scroll entirely in that case.
+  useEffect(() => {
+    if (!settings.auto_scroll) return;
+    const stepPx = Math.max(1, Math.min(10, settings.auto_scroll_speed || 1));
+    const startDelayMs = Math.max(0, (settings.auto_scroll_start_delay ?? 3) * 1000);
+    // 80px ≈ one candidate row + padding. Below that, overflow is rounding noise;
+    // skip the scroll entirely so we don't slide stuff under the sticky header
+    // for no visible benefit.
+    const SCROLL_THRESHOLD = 80;
+    // Step every 40ms regardless of frame rate, so speed doesn't depend on screen Hz.
+    const TICK_INTERVAL_MS = 40;
+
+    // Reset to top on every (re-)mount so a rotation starts at the first race.
+    window.scrollTo(0, 0);
+
+    let paused = true;
+    let startTimer = setTimeout(() => { paused = false; }, startDelayMs);
+    let bottomTimer = null;
+    let resumeTimer = null;
+    const interval = setInterval(() => {
+      if (paused) return;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      if (max <= SCROLL_THRESHOLD) return;
+      const next = window.scrollY + stepPx;
+      if (next >= max) {
+        // Reached the bottom: pause for 2.5s, scroll back to top, then re-apply
+        // the start delay so viewers get the same read-time on the second pass.
+        paused = true;
+        bottomTimer = setTimeout(() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          resumeTimer = setTimeout(() => { paused = false; }, startDelayMs);
+        }, 2500);
+      } else {
+        window.scrollTo(0, next);
+      }
+    }, TICK_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(startTimer);
+      if (bottomTimer) clearTimeout(bottomTimer);
+      if (resumeTimer) clearTimeout(resumeTimer);
+    };
+  }, [settings.auto_scroll, settings.auto_scroll_speed, settings.auto_scroll_start_delay, settings.layout_mode, activeIdx]);
 
   // Build mobile dashboard URL from current location (same path, no ?mode=tv)
   const mobileUrl = `${window.location.origin}${window.location.pathname}`;
 
+  const renderRaceCard = (race) => {
+    const cr = race.current_round;
+    const statusStyle = STATUS_BADGE_STYLES[race.status_label] || STATUS_BADGE_STYLES['Awaiting Vote'];
+    const isVotingOpen = race.status_label === 'Voting Open';
+
+    return (
+      <div key={race.id} style={{ ...tv.raceCard, background: c.card_bg, borderColor: isVotingOpen ? '#16a34a' : c.card_border, borderWidth: isVotingOpen ? 2 : 1 }}>
+        <div style={tv.raceHeader}>
+          <h2 style={{ ...tv.raceName, color: c.header_text }}>{race.name}</h2>
+          <span style={{ ...tv.statusLabel, background: statusStyle.bg, color: statusStyle.color }}>
+            {race.status_label}
+          </span>
+        </div>
+
+        {(race.race_date || race.race_time || race.location) && (
+          <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>
+            {formatRaceSchedule(race.race_date, race.race_time, race.location)}
+          </p>
+        )}
+
+        {isVotingOpen && cr && (
+          <div style={tv.votingBanner}>VOTING OPEN — Round {cr.round_number}</div>
+        )}
+        {race.status_label === 'Voting Closed' && (
+          <div style={{ ...tv.votingBanner, background: '#f59e0b' }}>VOTING CLOSED</div>
+        )}
+        {(race.status_label === 'Tallying') && cr && (
+          <div style={{ ...tv.votingBanner, background: '#3b82f6' }}>TALLYING — Round {cr.round_number}</div>
+        )}
+
+        {race.rounds.length === 0 && race.candidates && race.candidates.length > 0 && (
+          <div style={{ marginTop: '0.5rem' }}>
+            {race.candidates.filter(c => c.status === 'active').map(c => (
+              <div key={c.id} style={{ padding: '0.3rem 0', color: '#cbd5e1', fontSize: '1rem' }}>{c.name}</div>
+            ))}
+          </div>
+        )}
+
+        {race.rounds.length > 0 && (() => {
+          const round = race.rounds[race.rounds.length - 1];
+          const isFinalRound = race.status === 'results_finalized';
+          const removed = removedBeforeRound(race.rounds, round.round_number);
+          const visibleResults = (round.results || []).filter(r => !removed.has(r.candidate_id));
+          return (
+            <div key={round.id} style={tv.roundSection}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                <h3 style={{ ...tv.roundTitle, margin: 0 }}>Round {round.round_number}</h3>
+                {isFinalRound
+                  ? <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.85rem' }}>FINAL RESULTS</span>
+                  : <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Round Complete</span>}
+              </div>
+              {visibleResults.map(r => {
+                const pct = Number(r.percentage);
+                const outcome = outcomeBadge(r.outcome);
+                return (
+                  <div key={r.candidate_id} style={{ ...tv.resultRow, opacity: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 0.5 : 1 }}>
+                    <span style={{ ...tv.candidateName, color: c.candidate_name, textDecoration: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 'line-through' : 'none' }}>
+                      {r.candidate_name}
+                    </span>
+                    {outcome && (
+                      <span style={{ background: outcome.bg, color: outcome.color, padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700, marginRight: '0.5rem' }}>
+                        {outcome.label}
+                      </span>
+                    )}
+                    {settings.show_vote_bar !== false && (
+                      <div style={tv.barContainer}>
+                        <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%`, background: c.vote_bar }} />
+                      </div>
+                    )}
+                    <span style={{ ...tv.voteCount, color: c.vote_count_text }}>{r.vote_count}</span>
+                    <span style={{ ...tv.pct, color: c.pct_text }}>{fmtPct(r.percentage, election.dashboard_decimals)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </div>
+    );
+  };
+
+  // Build a grid for one set of races. Column layout matches the prior single-grid
+  // behavior so a Grouped or Rotating render of 4 races looks the same as the old
+  // ungrouped 4-race grid.
+  const renderRaceGrid = (races) => {
+    const n = races.length;
+    const gridCols = n <= 1 ? '1fr' : n <= 4 ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(400px, 1fr))';
+    return (
+      <div style={{ ...tv.grid, gridTemplateColumns: gridCols }}>
+        {races.map(renderRaceCard)}
+      </div>
+    );
+  };
+
   return (
-    <div style={tv.container}>
+    <div style={{ ...tv.container, background: c.page_bg }}>
       {!connected && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: '#dc2626', color: '#fff', textAlign: 'center', padding: '0.5rem', fontWeight: 700, zIndex: 100 }}>
           Reconnecting...
         </div>
       )}
-      <h1 style={tv.title}>{election.name}</h1>
-
-      <div style={{ ...tv.grid, gridTemplateColumns: gridCols }}>
-        {election.races.map(race => {
-          const cr = race.current_round;
-          const statusStyle = STATUS_BADGE_STYLES[race.status_label] || STATUS_BADGE_STYLES['Awaiting Vote'];
-          const isVotingOpen = race.status_label === 'Voting Open';
-
-          return (
-            <div key={race.id} style={{ ...tv.raceCard, borderColor: isVotingOpen ? '#16a34a' : '#334155', borderWidth: isVotingOpen ? 2 : 1 }}>
-              <div style={tv.raceHeader}>
-                <h2 style={tv.raceName}>{race.name}</h2>
-                <span style={{ ...tv.statusLabel, background: statusStyle.bg, color: statusStyle.color }}>
-                  {race.status_label}
-                </span>
-              </div>
-
-              {(race.race_date || race.race_time || race.location) && (
-                <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>
-                  {formatRaceSchedule(race.race_date, race.race_time, race.location)}
-                </p>
-              )}
-
-              {/* Voting Open banner */}
-              {isVotingOpen && cr && (
-                <div style={tv.votingBanner}>
-                  VOTING OPEN — Round {cr.round_number}
-                </div>
-              )}
-
-              {/* Voting Closed banner */}
-              {race.status_label === 'Voting Closed' && (
-                <div style={{ ...tv.votingBanner, background: '#f59e0b' }}>
-                  VOTING CLOSED
-                </div>
-              )}
-
-              {/* Tallying banner */}
-              {(race.status_label === 'Tallying') && cr && (
-                <div style={{ ...tv.votingBanner, background: '#3b82f6' }}>
-                  TALLYING — Round {cr.round_number}
-                </div>
-              )}
-
-              {/* Candidate list (shown when no published results yet) */}
-              {race.rounds.length === 0 && race.candidates && race.candidates.length > 0 && (
-                <div style={{ marginTop: '0.5rem' }}>
-                  {race.candidates.filter(c => c.status === 'active').map(c => (
-                    <div key={c.id} style={{ padding: '0.3rem 0', color: '#cbd5e1', fontSize: '1rem' }}>
-                      {c.name}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Published results */}
-              {race.rounds.map((round, ri) => {
-                const isLastPublished = ri === race.rounds.length - 1;
-                const isFinalRound = isLastPublished && race.status === 'results_finalized';
-                const advancingCandidates = round.results?.filter(r => r.outcome === 'advance' || r.outcome === 'convention_winner' || r.outcome === 'winner' || r.outcome === 'advance_to_primary') || [];
-
-                return (
-                  <div key={round.id} style={tv.roundSection}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                      <h3 style={{ ...tv.roundTitle, margin: 0 }}>Round {round.round_number}</h3>
-                      {isFinalRound ? (
-                        <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.85rem' }}>FINAL RESULTS</span>
-                      ) : isLastPublished && !isFinalRound ? (
-                        <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Round Complete</span>
-                      ) : null}
-                    </div>
-                    {round.results.map(r => {
-                      const pct = Number(r.percentage);
-                      const outcome = OUTCOME_BADGES[r.outcome];
-                      return (
-                        <div key={r.candidate_id} style={{ ...tv.resultRow, opacity: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 0.5 : 1 }}>
-                          <span style={{ ...tv.candidateName, textDecoration: (r.outcome === 'eliminated' || r.outcome === 'withdrew') ? 'line-through' : 'none' }}>
-                            {r.candidate_name}
-                          </span>
-                          {outcome && (
-                            <span style={{ background: outcome.bg, color: outcome.color, padding: '1px 6px', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700, marginRight: '0.5rem' }}>
-                              {outcome.label}
-                            </span>
-                          )}
-                          <div style={tv.barContainer}>
-                            <div style={{ ...tv.bar, width: `${Math.min(pct, 100)}%` }} />
-                          </div>
-                          <span style={tv.voteCount}>{r.vote_count}</span>
-                          <span style={tv.pct}>{pct.toFixed(1)}%</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              {/* Next round — show advancing candidates */}
-              {race.next_round && race.status !== 'results_finalized' && race.rounds.length > 0 && (() => {
-                const lastRound = race.rounds[race.rounds.length - 1];
-                const advancing = lastRound.results?.filter(r => r.outcome && r.outcome !== 'eliminated' && r.outcome !== 'withdrew') || [];
-                return (
-                  <div style={{ ...tv.roundSection, borderTop: '1px solid #334155', paddingTop: '0.75rem' }}>
-                    <h3 style={{ ...tv.roundTitle, margin: '0 0 0.5rem' }}>
-                      Round {race.next_round.round_number}
-                      <span style={{ color: '#94a3b8', fontSize: '0.75rem', marginLeft: '0.5rem' }}>
-                        {race.next_round.status === 'voting_open' ? 'Voting Open' : 'Pending'}
-                      </span>
-                    </h3>
-                    {advancing.length > 0 ? (
-                      advancing.map(r => (
-                        <div key={r.candidate_id} style={{ padding: '0.2rem 0', color: '#cbd5e1', fontSize: '0.95rem' }}>
-                          {r.candidate_name}
-                        </div>
-                      ))
-                    ) : (
-                      race.candidates?.filter(c => c.status === 'active').map(c => (
-                        <div key={c.id} style={{ padding: '0.2rem 0', color: '#cbd5e1', fontSize: '0.95rem' }}>
-                          {c.name}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          );
-        })}
+      <div ref={mainHeaderRef}
+        style={{
+          position: 'sticky', top: 0, zIndex: 30,
+          background: c.page_bg,
+          paddingBottom: '0.5rem',
+          // Negative margins counter the container's padding so the sticky strip
+          // covers the full viewport width and content doesn't peek through above.
+          marginLeft: '-2rem', marginRight: '-2rem', paddingLeft: '2rem', paddingRight: '2rem',
+          marginTop: '-2rem', paddingTop: '2rem',
+        }}>
+        <DashboardHeader settings={settings} fallbackName={election.name} colors={c} />
       </div>
 
-      {/* QR code for mobile access */}
-      <div style={tv.qrCorner}>
-        <div style={tv.qrBox}>
-          <QRCodeSVG value={mobileUrl} size={120} bgColor="#1e293b" fgColor="#e2e8f0" level="M" />
-          <p style={tv.qrLabel}>Scan to view results</p>
-          <p style={tv.qrLabel}>on your phone</p>
+      {visibleGroupNames.map(groupName => (
+        <div key={groupName} style={{ marginBottom: '1.5rem' }}>
+          {showGroupHeaders && (
+            <h2 style={{
+              ...tv.groupHeader,
+              color: c.group_header_text,
+              position: 'sticky',
+              top: mainHeaderH,
+              zIndex: 20,
+              background: c.page_bg,
+              marginLeft: '-2rem', marginRight: '-2rem', paddingLeft: '2rem', paddingRight: '2rem',
+            }}>{groupName}</h2>
+          )}
+          {renderRaceGrid(groups[groupName] || [])}
         </div>
-      </div>
+      ))}
+
+      {/* QR code for mobile access — corner is admin-configurable; 'hidden' skips render.
+          Top corners pin to top: 20 so the QR sits inside the sticky header band
+          alongside the logo/title rather than below it (which used to cover the first
+          row of race cards or the group header). z-index is above the sticky strip. */}
+      {settings.qr_position !== 'hidden' && (() => {
+        const pos = settings.qr_position || 'bottom_right';
+        const corner = {
+          bottom_right: { bottom: 20, right: 20 },
+          bottom_left:  { bottom: 20, left: 20 },
+          top_right:    { top: 20, right: 20 },
+          top_left:     { top: 20, left: 20 },
+        }[pos] || { bottom: 20, right: 20 };
+        return (
+          <div style={{ position: 'fixed', textAlign: 'center', zIndex: 50, ...corner }}>
+            <div style={tv.qrBox}>
+              <QRCodeSVG value={mobileUrl} size={120} bgColor={c.card_bg} fgColor={c.candidate_name} level="M" />
+              <p style={tv.qrLabel}>Scan to view results</p>
+              <p style={tv.qrLabel}>on your phone</p>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -375,10 +601,12 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
                   </div>
                 )}
 
-                {/* Published rounds */}
+                {/* Published rounds — hide candidates eliminated/withdrew in earlier rounds */}
                 {race.rounds.map((round, ri) => {
                   const isLastPublished = ri === race.rounds.length - 1;
                   const isFinalRound = isLastPublished && race.status === 'results_finalized';
+                  const removed = removedBeforeRound(race.rounds, round.round_number);
+                  const visibleResults = (round.results || []).filter(r => !removed.has(r.candidate_id));
 
                   return (
                     <div key={round.id} style={mob.roundCard}>
@@ -388,7 +616,7 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
                           {isFinalRound && <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.75rem' }}>FINAL RESULTS</span>}
                           {isLastPublished && !isFinalRound && <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Round Complete</span>}
                         </div>
-                        {round.results.map(r => {
+                        {visibleResults.map(r => {
                           const pct = Number(r.percentage);
                           const outcome = OUTCOME_BADGES[r.outcome];
                           return (
@@ -397,7 +625,7 @@ function MobileMode({ election, electionId, searchSN, setSearchSN, searchResult,
                                 {r.candidate_name}
                                 {outcome && <span style={{ color: outcome.color, fontSize: '0.7rem', marginLeft: '0.35rem' }}>{outcome.label}</span>}
                               </span>
-                              <span style={{ color: '#666' }}>{r.vote_count} ({pct.toFixed(1)}%)</span>
+                              <span style={{ color: '#666' }}>{r.vote_count} ({fmtPct(r.percentage, election.dashboard_decimals)}%)</span>
                             </div>
                           );
                         })}
@@ -457,6 +685,8 @@ const tv = {
   bar: { height: '100%', background: 'linear-gradient(90deg, #3b82f6, #60a5fa)', borderRadius: 10, transition: 'width 0.8s ease' },
   voteCount: { width: 40, textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', color: '#fff' },
   pct: { width: 60, textAlign: 'right', color: '#94a3b8', fontSize: '0.9rem' },
+  groupHeader: { color: '#fbbf24', fontSize: '1.6rem', margin: '0.25rem 0 0.75rem', borderBottom: '2px solid #334155', paddingBottom: '0.4rem', letterSpacing: '0.05em', textTransform: 'uppercase' },
+  logo: { maxHeight: 96, maxWidth: 320, objectFit: 'contain', display: 'inline-block' },
   qrCorner: { position: 'fixed', bottom: 20, right: 20, textAlign: 'center', zIndex: 50 },
   qrBox: { background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: '0.75rem' },
   qrLabel: { color: '#94a3b8', fontSize: '0.75rem', margin: '0.25rem 0 0' },

@@ -3,6 +3,8 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
 import { formatDate, toInputDate } from '../utils/dateFormat';
+import RaceGroupSelect from '../components/RaceGroupSelect';
+import { DEFAULT_GROUP } from '../utils/raceGroups';
 
 const NAV_ITEMS = [
   { key: 'races', label: 'Races' },
@@ -20,7 +22,7 @@ export default function ElectionDetail() {
   const [ballotBoxes, setBallotBoxes] = useState([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', date: '', description: '' });
-  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '' });
+  const [raceForm, setRaceForm] = useState({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '', race_group: DEFAULT_GROUP });
   const [showRaceForm, setShowRaceForm] = useState(false);
   const [boxCount, setBoxCount] = useState('');
   const [raceRounds, setRaceRounds] = useState({});
@@ -69,8 +71,9 @@ export default function ElectionDetail() {
       race_date: raceForm.race_date || null,
       race_time: raceForm.race_time || null,
       location: raceForm.location || null,
+      race_group: raceForm.race_group || DEFAULT_GROUP,
     });
-    setRaceForm({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '' });
+    setRaceForm({ name: '', ballot_count: '', max_rounds: '', race_date: '', race_time: '', location: '', race_group: DEFAULT_GROUP });
     setShowRaceForm(false);
     navigate(`/admin/elections/${id}/races/${newRace.id}?tab=candidates`);
   };
@@ -214,6 +217,15 @@ export default function ElectionDetail() {
                   </div>
                   <input style={styles.input} placeholder="Location (optional)" value={raceForm.location}
                     onChange={e => setRaceForm({ ...raceForm, location: e.target.value })} />
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <label style={{ fontSize: '0.85rem', color: '#374151' }}>Group:</label>
+                    <RaceGroupSelect
+                      value={raceForm.race_group}
+                      onChange={(g) => setRaceForm({ ...raceForm, race_group: g })}
+                      existing={election.races || []}
+                      style={{ flex: 1 }}
+                    />
+                  </div>
                   <button style={{ ...styles.btnPrimary, alignSelf: 'flex-start' }} type="submit">Add Candidates →</button>
                 </form>
               )}
@@ -389,87 +401,633 @@ function ScannersSection({ electionId }) {
   );
 }
 
-function DashboardsSection({ electionId }) {
-  const publicUrl = `${window.location.origin}/public/${electionId}`;
-  const tvUrl = `${publicUrl}?mode=tv`;
-  const adminUrl = `${window.location.origin}/admin/elections/${electionId}`;
+// Default settings shape for the public dashboard. Anything missing on the election
+// row falls back here at render time, so existing elections without the JSONB
+// populated still render the same as before.
+// Color palette slots — each slot is independently overridable by the admin and
+// applied at render time on the public dashboard. Values are CSS color strings
+// (hex or rgb()). Mirror this object in PublicDashboard.jsx — see DEFAULT_COLORS.
+const DEFAULT_COLORS = {
+  page_bg:                '#0f172a',
+  card_bg:                '#1e293b',
+  card_border:            '#334155',
+  header_text:            '#ffffff',
+  group_header_text:      '#fbbf24',
+  candidate_name:         '#e2e8f0',
+  vote_bar:               '#3b82f6',
+  vote_count_text:        '#ffffff',
+  pct_text:               '#94a3b8',
+  convention_winner_bg:   '#fef3c7',
+  convention_winner_text: '#b45309',
+  winner_bg:              '#fef3c7',
+  winner_text:            '#b45309',
+  advances_bg:            '#dcfce7',
+  advances_text:          '#166534',
+  advance_to_primary_bg:  '#dbeafe',
+  advance_to_primary_text:'#1e40af',
+  eliminated_bg:          '#fee2e2',
+  eliminated_text:        '#dc2626',
+  withdrew_bg:            '#f3f4f6',
+  withdrew_text:          '#6b7280',
+};
 
-  const dashboards = [
-    {
-      title: 'Public Dashboard (Mobile)',
-      description: 'Touch-friendly view for attendees on phones. Shows race results, ballot SN search, and ballot image viewer.',
-      url: publicUrl,
-      icon: '📱',
-      color: '#2563eb',
-    },
-    {
-      title: 'Public Dashboard (TV)',
-      description: 'Full-screen results display for large screens. Dark theme, auto-updates via WebSocket when results are released.',
-      url: tvUrl,
-      icon: '📺',
-      color: '#7c3aed',
-    },
-    {
-      title: 'Admin Dashboard',
-      description: 'Election event management — races, ballots, scanning, confirmation, and exports.',
-      url: adminUrl,
-      icon: '⚙️',
-      color: '#16a34a',
-    },
-  ];
+// Human-friendly labels and grouping for the color picker UI.
+const COLOR_GROUPS = [
+  { title: 'Page & Cards', slots: [
+    ['page_bg', 'Page background'],
+    ['card_bg', 'Race card background'],
+    ['card_border', 'Race card border'],
+  ]},
+  { title: 'Text', slots: [
+    ['header_text', 'Election header text'],
+    ['group_header_text', 'Race group header'],
+    ['candidate_name', 'Candidate name'],
+    ['vote_count_text', 'Vote count'],
+    ['pct_text', 'Percentage'],
+  ]},
+  { title: 'Vote Bar', slots: [
+    ['vote_bar', 'Vote bar fill'],
+  ]},
+  { title: 'Outcome Badges', slots: [
+    ['convention_winner_bg', 'Convention Winner — background'],
+    ['convention_winner_text', 'Convention Winner — text'],
+    ['winner_bg', 'Winner — background'],
+    ['winner_text', 'Winner — text'],
+    ['advances_bg', 'Advances — background'],
+    ['advances_text', 'Advances — text'],
+    ['advance_to_primary_bg', 'Advances to Primary — background'],
+    ['advance_to_primary_text', 'Advances to Primary — text'],
+    ['eliminated_bg', 'Eliminated — background'],
+    ['eliminated_text', 'Eliminated — text'],
+    ['withdrew_bg', 'Withdrew — background'],
+    ['withdrew_text', 'Withdrew — text'],
+  ]},
+];
+
+const DEFAULT_DASHBOARD_SETTINGS = {
+  layout_mode: 'all',          // 'all' | 'grouped' | 'rotating'
+  rotation_seconds: 0,          // 0 = no rotation; ignored unless layout_mode === 'rotating'
+  auto_scroll: true,            // marquee-style vertical scroll when content overflows
+  auto_scroll_speed: 1,         // 1 (slow, ~25 px/s) – 10 (fast, ~250 px/s); ignored when auto_scroll = false
+  auto_scroll_start_delay: 3,   // seconds to wait at the top before scrolling begins (also re-applied after each category rotation)
+  custom_header: '',            // empty = use election.name
+  logo_path: '',                // public URL to uploaded logo
+  logo_position: 'top_center',  // 'top_center' | 'inline_left' | 'inline_right' | 'none'
+  qr_position: 'bottom_right',  // 'bottom_right' | 'bottom_left' | 'top_right' | 'top_left' | 'hidden'
+  show_vote_bar: true,          // toggle the visual vote-bar in result rows
+  colors: { ...DEFAULT_COLORS },
+};
+
+function DashboardsSection({ electionId }) {
+  const [decimals, setDecimals] = useState(null);
+  const [savingDecimals, setSavingDecimals] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  useEffect(() => {
+    api.get(`/admin/elections/${electionId}`)
+      .then(({ data }) => {
+        setDecimals(data.dashboard_decimals ?? 3);
+        setSettings({ ...DEFAULT_DASHBOARD_SETTINGS, ...(data.dashboard_settings || {}) });
+      })
+      .catch(() => { setDecimals(3); setSettings({ ...DEFAULT_DASHBOARD_SETTINGS }); });
+  }, [electionId]);
+
+  const handleDecimalsChange = async (e) => {
+    const next = parseInt(e.target.value, 10);
+    setDecimals(next);
+    setSavingDecimals(true);
+    try {
+      await api.put(`/admin/elections/${electionId}`, { dashboard_decimals: next });
+    } catch {
+      alert('Failed to save decimal places.');
+    } finally {
+      setSavingDecimals(false);
+    }
+  };
+
+  // Patch a subset of dashboard_settings; server merges into the JSONB column so
+  // siblings (colors, branding, etc.) stay intact across edits.
+  const patchSettings = async (patch) => {
+    setSettings(prev => ({ ...prev, ...patch }));
+    setSavingSettings(true);
+    try {
+      await api.put(`/admin/elections/${electionId}`, { dashboard_settings: patch });
+    } catch {
+      alert('Failed to save dashboard settings.');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const publicUrl = `${window.location.origin}/public/${electionId}`;
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text).then(() => alert('URL copied!')).catch(() => {});
   };
 
+  // Sample percentage to demonstrate truncation. 33.33333% — the classic three-way split.
+  const sampleRaw = '33.33333';
+  const samplePreview = decimals == null ? '…' : (() => {
+    const [intPart, decPart = ''] = sampleRaw.split('.');
+    const t = decimals > 0 ? decPart.slice(0, decimals).replace(/0+$/, '') : '';
+    return t ? `${intPart}.${t}` : intPart;
+  })();
+
   return (
     <div>
       <h2>Dashboards</h2>
-      <p style={styles.muted}>Share these links with attendees and operators. All links work on the local network.</p>
+      <p style={styles.muted}>Share this link with attendees. It works on any device on the local network.</p>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-        {dashboards.map(d => (
-          <div key={d.title} style={{
-            border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
-            borderLeft: `4px solid ${d.color}`, background: '#fff',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-              <span style={{ fontSize: '2rem' }}>{d.icon}</span>
-              <div style={{ flex: 1 }}>
-                <h3 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>{d.title}</h3>
-                <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 0.5rem' }}>{d.description}</p>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <code style={{
-                    background: '#f3f4f6', padding: '0.3rem 0.5rem', borderRadius: 4,
-                    fontSize: '0.78rem', color: '#374151', wordBreak: 'break-all', flex: 1,
-                  }}>{d.url}</code>
-                  <button style={styles.btnSmall} onClick={() => copyToClipboard(d.url)}>Copy</button>
-                  <a href={d.url} target="_blank" rel="noopener noreferrer"
-                    style={{ ...styles.btnPrimary, textDecoration: 'none', fontSize: '0.82rem', padding: '0.3rem 0.7rem' }}>
-                    Open
-                  </a>
-                </div>
-              </div>
+      <div style={{ marginTop: '0.75rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.9rem' }}>
+          <span><strong>Percentage decimal places:</strong></span>
+          <select
+            value={decimals ?? 3}
+            onChange={handleDecimalsChange}
+            disabled={decimals == null || savingDecimals}
+            style={{ padding: '0.3rem 0.5rem', fontSize: '0.9rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+          >
+            {[0, 1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <span style={{ ...styles.muted, fontSize: '0.82rem' }}>
+            Sample: <code>{sampleRaw}%</code> displays as <code>{samplePreview}%</code>
+          </span>
+          {savingDecimals && <span style={{ ...styles.muted, fontSize: '0.78rem' }}>Saving…</span>}
+        </label>
+        <p style={{ ...styles.muted, margin: '0.35rem 0 0', fontSize: '0.78rem' }}>
+          Percentages are <strong>always truncated, never rounded</strong> (party rule). Trailing zeros are stripped. Applies to every public and admin dashboard view for this election.
+        </p>
+      </div>
+
+      {/* Wide-mode (TV) layout controls — applies only to the public dashboard at >1200px width or ?mode=tv. */}
+      {settings && (
+        <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+          <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Wide-mode Layout</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.5rem 1rem', alignItems: 'center', fontSize: '0.9rem' }}>
+            <label style={{ fontWeight: 600 }}>Display mode:</label>
+            <select
+              value={settings.layout_mode}
+              onChange={(e) => patchSettings({ layout_mode: e.target.value })}
+              disabled={savingSettings}
+              style={{ padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db', maxWidth: 360 }}
+            >
+              <option value="all">All races (no grouping)</option>
+              <option value="grouped">Grouped by category, all visible</option>
+              <option value="rotating">Rotate one category at a time</option>
+            </select>
+
+            <label style={{ fontWeight: 600 }}>Rotation interval:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="number"
+                min={0}
+                max={600}
+                step={1}
+                value={settings.rotation_seconds}
+                onChange={(e) => {
+                  const n = Math.max(0, Math.min(600, parseInt(e.target.value, 10) || 0));
+                  patchSettings({ rotation_seconds: n });
+                }}
+                disabled={savingSettings || settings.layout_mode !== 'rotating'}
+                style={{ width: 90, padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+              />
+              <span style={styles.muted}>seconds per category — 0 disables rotation and shows all categories at once.</span>
             </div>
 
-            {/* Thumbnail preview */}
-            <div style={{
-              marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 6,
-              overflow: 'hidden', height: 180, position: 'relative',
-            }}>
-              <iframe
-                src={d.url}
-                title={d.title}
-                style={{
-                  width: '200%', height: '200%', border: 'none',
-                  transform: 'scale(0.5)', transformOrigin: 'top left',
-                  pointerEvents: 'none',
-                }}
+            <label style={{ fontWeight: 600 }}>Auto-scroll:</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={!!settings.auto_scroll}
+                onChange={(e) => patchSettings({ auto_scroll: e.target.checked })}
+                disabled={savingSettings}
               />
+              <span style={styles.muted}>Smoothly scroll the race grid when it overflows the screen.</span>
+            </label>
+
+            <label style={{ fontWeight: 600 }}>Scroll speed:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={1}
+                value={settings.auto_scroll_speed ?? 1}
+                onChange={(e) => patchSettings({ auto_scroll_speed: parseInt(e.target.value, 10) })}
+                disabled={savingSettings || !settings.auto_scroll}
+                style={{ width: 200 }}
+              />
+              <span style={{ fontFamily: 'monospace', minWidth: 30, textAlign: 'right' }}>{settings.auto_scroll_speed ?? 1}</span>
+              <span style={styles.muted}>1 = slowest (~25 px/s), 10 = fastest (~250 px/s).</span>
+            </div>
+
+            <label style={{ fontWeight: 600 }}>Scroll start delay:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="number"
+                min={0}
+                max={120}
+                step={1}
+                value={settings.auto_scroll_start_delay ?? 3}
+                onChange={(e) => {
+                  const n = Math.max(0, Math.min(120, parseInt(e.target.value, 10) || 0));
+                  patchSettings({ auto_scroll_start_delay: n });
+                }}
+                disabled={savingSettings || !settings.auto_scroll}
+                style={{ width: 80, padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+              />
+              <span style={styles.muted}>seconds to pause at the top before scrolling — applied on first show and after every category rotation, so viewers can read the race names before they slide away.</span>
             </div>
           </div>
-        ))}
+          {savingSettings && <p style={{ ...styles.muted, fontSize: '0.78rem', margin: '0.4rem 0 0' }}>Saving…</p>}
+          <p style={{ ...styles.muted, margin: '0.4rem 0 0', fontSize: '0.78rem' }}>
+            Categories use the <strong>race group</strong> assigned to each race. Mobile mode is unaffected by these settings.
+          </p>
+        </div>
+      )}
+
+      {settings && (
+        <DashboardBrandingPanel
+          electionId={electionId}
+          settings={settings}
+          patchSettings={patchSettings}
+          savingSettings={savingSettings}
+          onUploadComplete={(logoPath) => setSettings(prev => ({ ...prev, logo_path: logoPath }))}
+          onLogoRemoved={() => setSettings(prev => ({ ...prev, logo_path: '' }))}
+        />
+      )}
+
+      {settings && (
+        <DashboardColorsPanel
+          settings={settings}
+          patchSettings={patchSettings}
+          savingSettings={savingSettings}
+        />
+      )}
+
+      {settings && (
+        <DashboardTemplatesPanel
+          settings={settings}
+          electionId={electionId}
+          onApplyTemplate={(tplSettings) => {
+            // Replace the settings entirely with the template (after merging defaults
+            // for any slots the template doesn't carry).
+            const next = { ...DEFAULT_DASHBOARD_SETTINGS, ...tplSettings, colors: { ...DEFAULT_COLORS, ...(tplSettings.colors || {}) } };
+            setSettings(next);
+            patchSettings(next);
+          }}
+        />
+      )}
+
+      <div style={{
+        marginTop: '1rem',
+        border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem',
+        borderLeft: '4px solid #2563eb', background: '#fff',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+          <span style={{ fontSize: '2rem' }}>📱</span>
+          <div style={{ flex: 1 }}>
+            <h3 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>Public Dashboard</h3>
+            <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 0.5rem' }}>Auto-detects mobile vs. TV based on screen width. Shows race results, ballot SN search, and ballot image viewer.</p>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <code style={{
+                background: '#f3f4f6', padding: '0.3rem 0.5rem', borderRadius: 4,
+                fontSize: '0.78rem', color: '#374151', wordBreak: 'break-all', flex: 1,
+              }}>{publicUrl}</code>
+              <button style={styles.btnSmall} onClick={() => copyToClipboard(publicUrl)}>Copy</button>
+              <a href={publicUrl} target="_blank" rel="noopener noreferrer"
+                style={{ ...styles.btnPrimary, textDecoration: 'none', fontSize: '0.82rem', padding: '0.3rem 0.7rem' }}>
+                Open
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: 6,
+          overflow: 'hidden', height: 180, position: 'relative',
+        }}>
+          <iframe
+            src={publicUrl}
+            title="Public Dashboard"
+            style={{
+              width: '200%', height: '200%', border: 'none',
+              transform: 'scale(0.5)', transformOrigin: 'top left',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
       </div>
+    </div>
+  );
+}
+
+// Branding controls for the public dashboard. Logo file upload + position selector
+// + custom header text override + vote-bar visibility toggle.
+function DashboardBrandingPanel({ electionId, settings, patchSettings, savingSettings, onUploadComplete, onLogoRemoved }) {
+  const [uploading, setUploading] = useState(false);
+  const [headerDraft, setHeaderDraft] = useState(settings.custom_header || '');
+  useEffect(() => { setHeaderDraft(settings.custom_header || ''); }, [settings.custom_header]);
+
+  const handleLogoFile = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('logo', file);
+      const { data } = await api.post(`/admin/elections/${electionId}/dashboard-logo`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onUploadComplete(data.logo_path);
+    } catch (err) {
+      alert('Logo upload failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    if (!confirm('Remove the dashboard logo?')) return;
+    try {
+      await api.delete(`/admin/elections/${electionId}/dashboard-logo`);
+      onLogoRemoved();
+    } catch (err) {
+      alert('Failed to remove logo: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  // Cache-bust the preview when the logo changes since the URL is the same path.
+  const logoPreview = settings.logo_path
+    ? `${settings.logo_path}${settings.logo_path.includes('?') ? '&' : '?'}t=${Date.now()}`
+    : null;
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+      <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Branding</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.5rem 1rem', alignItems: 'center', fontSize: '0.9rem' }}>
+        <label style={{ fontWeight: 600 }}>Custom header:</label>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <input
+            type="text"
+            value={headerDraft}
+            onChange={(e) => setHeaderDraft(e.target.value)}
+            onBlur={() => { if (headerDraft !== (settings.custom_header || '')) patchSettings({ custom_header: headerDraft }); }}
+            placeholder="(blank = use Election Event Name)"
+            disabled={savingSettings}
+            style={{ flex: 1, maxWidth: 480, padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db' }}
+          />
+        </div>
+
+        <label style={{ fontWeight: 600 }}>Logo:</label>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {logoPreview && (
+            <img src={logoPreview} alt="Logo preview"
+              style={{ height: 56, maxWidth: 180, background: '#fff', border: '1px solid #d1d5db', borderRadius: 4, padding: 4, objectFit: 'contain' }} />
+          )}
+          <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
+            onChange={(e) => handleLogoFile(e.target.files?.[0])}
+            disabled={uploading} />
+          {settings.logo_path && (
+            <button onClick={handleRemoveLogo} disabled={uploading}
+              style={{ padding: '0.3rem 0.6rem', background: '#fff', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem' }}>
+              Remove
+            </button>
+          )}
+          {uploading && <span style={styles.muted}>Uploading…</span>}
+        </div>
+
+        <label style={{ fontWeight: 600 }}>Logo position:</label>
+        <select
+          value={settings.logo_position || 'top_center'}
+          onChange={(e) => patchSettings({ logo_position: e.target.value })}
+          disabled={savingSettings}
+          style={{ padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db', maxWidth: 280 }}
+        >
+          <option value="top_center">Top center (above the header)</option>
+          <option value="inline_left">Inline left of the header</option>
+          <option value="inline_right">Inline right of the header</option>
+          <option value="none">Hidden</option>
+        </select>
+
+        <label style={{ fontWeight: 600 }}>QR code position:</label>
+        <select
+          value={settings.qr_position || 'bottom_right'}
+          onChange={(e) => patchSettings({ qr_position: e.target.value })}
+          disabled={savingSettings}
+          style={{ padding: '0.3rem 0.5rem', borderRadius: 4, border: '1px solid #d1d5db', maxWidth: 280 }}
+        >
+          <option value="bottom_right">Bottom right</option>
+          <option value="bottom_left">Bottom left</option>
+          <option value="top_right">Top right</option>
+          <option value="top_left">Top left</option>
+          <option value="hidden">Hidden</option>
+        </select>
+
+        <label style={{ fontWeight: 600 }}>Vote bar:</label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <input
+            type="checkbox"
+            checked={settings.show_vote_bar !== false}
+            onChange={(e) => patchSettings({ show_vote_bar: e.target.checked })}
+            disabled={savingSettings}
+          />
+          <span style={styles.muted}>Show the visual percentage bar next to each candidate.</span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// Color customization panel. Each slot has a native color picker plus a hex/rgb
+// text input — both update the same setting so the operator can paste a brand hex
+// or pick visually. Reset-to-default per slot and Reset-all keep escape hatches.
+function DashboardColorsPanel({ settings, patchSettings, savingSettings }) {
+  const colors = { ...DEFAULT_COLORS, ...(settings.colors || {}) };
+
+  const setColor = (key, value) => {
+    const next = { ...colors, [key]: value };
+    patchSettings({ colors: next });
+  };
+
+  // Convert any CSS color string (rgb(), named) to a #RRGGBB the color picker
+  // can preview. Falls back to the default for that slot if parsing fails.
+  const toHex = (val, fallback) => {
+    if (typeof val !== 'string') return fallback;
+    const t = val.trim();
+    if (/^#[0-9a-f]{6}$/i.test(t)) return t.toLowerCase();
+    if (/^#[0-9a-f]{3}$/i.test(t)) {
+      return '#' + t.slice(1).split('').map(c => c + c).join('').toLowerCase();
+    }
+    const m = t.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (m) {
+      const h = (n) => Math.max(0, Math.min(255, parseInt(n, 10))).toString(16).padStart(2, '0');
+      return '#' + h(m[1]) + h(m[2]) + h(m[3]);
+    }
+    return fallback;
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <h3 style={{ margin: 0, fontSize: '1rem' }}>Colors</h3>
+        <button onClick={() => patchSettings({ colors: { ...DEFAULT_COLORS } })} disabled={savingSettings}
+          style={{ padding: '0.3rem 0.7rem', background: '#fff', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+          Reset all to defaults
+        </button>
+      </div>
+      {COLOR_GROUPS.map(group => (
+        <div key={group.title} style={{ marginTop: '0.6rem' }}>
+          <div style={{ fontSize: '0.78rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{group.title}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.4rem 1rem' }}>
+            {group.slots.map(([key, label]) => {
+              const value = colors[key] ?? DEFAULT_COLORS[key];
+              const hex = toHex(value, DEFAULT_COLORS[key]);
+              return (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <input type="color" value={hex} onChange={(e) => setColor(key, e.target.value)}
+                    disabled={savingSettings}
+                    style={{ width: 36, height: 28, padding: 0, border: '1px solid #d1d5db', borderRadius: 4, background: 'none', cursor: 'pointer' }} />
+                  <input type="text" value={value} onChange={(e) => setColor(key, e.target.value)}
+                    disabled={savingSettings} placeholder="#RRGGBB or rgb(r,g,b)"
+                    style={{ width: 130, padding: '0.25rem 0.4rem', border: '1px solid #d1d5db', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.8rem' }} />
+                  <span style={{ fontSize: '0.82rem', flex: 1 }}>{label}</span>
+                  {value !== DEFAULT_COLORS[key] && (
+                    <button onClick={() => setColor(key, DEFAULT_COLORS[key])} disabled={savingSettings}
+                      title="Reset to default"
+                      style={{ padding: '0.15rem 0.4rem', background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '0.72rem' }}>↺</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Template management: save current settings as a named template, load a saved
+// template into this election, delete templates. Plus client-side download/import
+// of settings as a JSON file so the operator can carry a brand kit between systems.
+function DashboardTemplatesPanel({ settings, electionId, onApplyTemplate }) {
+  const [templates, setTemplates] = useState([]);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  const load = async () => {
+    try {
+      const { data } = await api.get('/admin/dashboard-templates');
+      setTemplates(data || []);
+    } catch {}
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleSave = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return alert('Enter a template name first.');
+    setBusy(true);
+    try {
+      await api.post('/admin/dashboard-templates', { name: trimmed, settings });
+      setName('');
+      await load();
+    } catch (err) {
+      alert('Save failed: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
+  const handleApply = async (tpl) => {
+    if (!confirm(`Apply template "${tpl.name}" to this election? Current settings will be overwritten.`)) return;
+    onApplyTemplate(tpl.settings);
+  };
+
+  const handleDelete = async (tpl) => {
+    if (!confirm(`Delete template "${tpl.name}"?`)) return;
+    try {
+      await api.delete(`/admin/dashboard-templates/${tpl.id}`);
+      await load();
+    } catch (err) {
+      alert('Delete failed: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dashboard-settings-${electionId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON shape');
+      if (!confirm('Apply imported settings to this election? Current settings will be overwritten.')) return;
+      onApplyTemplate(parsed);
+    } catch (err) {
+      alert('Import failed: ' + (err.message || 'Could not parse JSON'));
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+      <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Templates</h3>
+
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="New template name"
+          style={{ padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: 4, minWidth: 220 }} />
+        <button onClick={handleSave} disabled={busy || !name.trim()}
+          style={{ padding: '0.35rem 0.8rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+          Save current settings
+        </button>
+        <button onClick={handleDownload}
+          style={{ padding: '0.35rem 0.8rem', background: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: 4, cursor: 'pointer' }}>
+          Download as JSON
+        </button>
+        <input type="file" accept="application/json" ref={fileRef} style={{ display: 'none' }}
+          onChange={(e) => handleImportFile(e.target.files?.[0])} />
+        <button onClick={() => fileRef.current?.click()}
+          style={{ padding: '0.35rem 0.8rem', background: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: 4, cursor: 'pointer' }}>
+          Import from JSON
+        </button>
+      </div>
+
+      {templates.length === 0 ? (
+        <p style={{ ...styles.muted, margin: 0, fontSize: '0.82rem' }}>No saved templates yet. Save the current settings as a template to reuse them across elections.</p>
+      ) : (
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '0.4rem' }}>
+          {templates.map(tpl => (
+            <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0', borderBottom: '1px solid #f3f4f6' }}>
+              <span style={{ flex: 1, fontSize: '0.9rem' }}>{tpl.name}</span>
+              <button onClick={() => handleApply(tpl)}
+                style={{ padding: '0.25rem 0.6rem', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+                Apply
+              </button>
+              <button onClick={() => {
+                const blob = new Blob([JSON.stringify(tpl.settings, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `${tpl.name}.json`; a.click();
+                URL.revokeObjectURL(url);
+              }} style={{ padding: '0.25rem 0.6rem', background: '#fff', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+                Download
+              </button>
+              <button onClick={() => handleDelete(tpl)}
+                style={{ padding: '0.25rem 0.6rem', background: '#fff', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 4, cursor: 'pointer', fontSize: '0.82rem' }}>
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -659,8 +1217,21 @@ function ExportSection({ electionId }) {
           </button>
         )}
 
+        <a href={`/api/admin/elections/${electionId}/export-excel`} style={styles.btnDownload} download>
+          Export Results Workbook (Excel)
+        </a>
+
         <a href={`/api/admin/elections/${electionId}/export-json`} style={styles.btnDownload} download>
           Export as JSON (reimportable)
+        </a>
+
+        <a
+          href={`/api/admin/elections/${electionId}/export-json?include_ballots=1`}
+          style={styles.btnDownload}
+          download
+          title="Bundles election structure + ballot files (PDFs, ballot-spec.json) so the duplicate keeps the same scan zones without regenerating"
+        >
+          Export Clone (with ballot files)
         </a>
       </div>
       {(imageStatus === 'error' || fullStatus === 'error') && (

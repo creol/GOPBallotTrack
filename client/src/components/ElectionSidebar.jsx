@@ -1,12 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import api from '../api/client';
+import { normalizeGroup, sortGroupNames } from '../utils/raceGroups';
 
 export default function ElectionSidebar({ electionId }) {
   const [election, setElection] = useState(null);
   const [races, setRaces] = useState([]);
   const [raceRounds, setRaceRounds] = useState({});
   const [expandedRace, setExpandedRace] = useState(null);
+  const [closedGroups, setClosedGroups] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`raceGroups.closed.${electionId}`);
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set();
+  });
+  const [docsOpen, setDocsOpen] = useState(true);
   const location = useLocation();
 
   useEffect(() => {
@@ -36,10 +45,38 @@ export default function ElectionSidebar({ electionId }) {
 
   // Determine active state from URL
   const path = location.pathname;
-  const isActive = (href) => path === href;
+  const basePath = `/admin/elections/${electionId}`;
   const isActivePrefix = (href) => path.startsWith(href);
 
-  const basePath = `/admin/elections/${electionId}`;
+  // Group races by race_group, in preconfigured-then-alphabetical order.
+  const { groupedRaces, groupOrder, activeGroup } = useMemo(() => {
+    const map = {};
+    let activeRaceId = null;
+    const m = path.match(/\/races\/(\d+)/);
+    if (m) activeRaceId = parseInt(m[1]);
+    let active = null;
+    for (const r of races) {
+      const g = normalizeGroup(r.race_group);
+      if (!map[g]) map[g] = [];
+      map[g].push(r);
+      if (r.id === activeRaceId) active = g;
+    }
+    return { groupedRaces: map, groupOrder: sortGroupNames(Object.keys(map)), activeGroup: active };
+  }, [races, path]);
+
+  const toggleGroup = (g) => {
+    setClosedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g);
+      else next.add(g);
+      try { localStorage.setItem(`raceGroups.closed.${electionId}`, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+
+  // Group containing the active race auto-expands even if user previously closed it,
+  // so that navigating to a race always reveals it in the sidebar.
+  const isGroupOpen = (g) => g === activeGroup || !closedGroups.has(g);
 
   return (
     <nav style={s.sidebar} data-election-sidebar>
@@ -48,54 +85,69 @@ export default function ElectionSidebar({ electionId }) {
         {election?.name || 'Loading...'}
       </div>
 
-      {/* Races with nested rounds/candidates */}
+      {/* Races, grouped */}
       <Link to={basePath} style={{ ...s.sectionLabel, textDecoration: 'none', color: '#2563eb', cursor: 'pointer' }}>Races</Link>
-      {races.map(race => {
-        const raceUrl = `${basePath}/races/${race.id}`;
-        const isExpanded = expandedRace === race.id;
-        const isCurrentRace = isActivePrefix(raceUrl);
-        const rounds = raceRounds[race.id] || [];
-
+      {groupOrder.map((groupName) => {
+        const groupRaces = groupedRaces[groupName] || [];
+        const open = isGroupOpen(groupName);
         return (
-          <div key={race.id}>
+          <div key={groupName}>
             <div
-              style={{ ...s.navItem, ...(isCurrentRace ? s.navItemActive : {}), cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-              onClick={() => setExpandedRace(isExpanded ? null : race.id)}
+              style={{ ...s.groupHeader, cursor: 'pointer' }}
+              onClick={() => toggleGroup(groupName)}
             >
-              <span style={{ marginRight: '0.35rem', fontSize: '0.7rem', color: '#9ca3af' }}>{isExpanded ? '▾' : '▸'}</span>
-              <Link to={`${raceUrl}?tab=rounds`} style={{ color: 'inherit', textDecoration: 'none', flex: 1 }} onClick={e => e.stopPropagation()}>
-                {race.name}
-              </Link>
+              <span style={{ marginRight: '0.35rem', fontSize: '0.7rem', color: '#9ca3af' }}>{open ? '▾' : '▸'}</span>
+              <span style={{ flex: 1 }}>{groupName}</span>
+              <span style={s.groupCount}>{groupRaces.length}</span>
             </div>
 
-            {isExpanded && (
-              <div style={s.nested}>
-                {/* Rounds section */}
-                <div style={s.subSectionLabel}>Rounds</div>
-                {rounds.length === 0 && <div style={{ ...s.nestedItem, color: '#9ca3af', fontStyle: 'italic' }}>No rounds</div>}
-                {rounds.map(round => {
-                  const roundUrl = `${raceUrl}/rounds/${round.id}`;
-                  return (
-                    <Link
-                      key={round.id}
-                      to={roundUrl}
-                      style={{ ...s.nestedItem, paddingLeft: '1rem', ...(isActivePrefix(roundUrl) ? s.nestedItemActive : {}) }}
-                    >
-                      Round {round.round_number}
-                      <span style={s.statusDot(round.status)} />
+            {open && groupRaces.map((race) => {
+              const raceUrl = `${basePath}/races/${race.id}`;
+              const isExpanded = expandedRace === race.id;
+              const isCurrentRace = isActivePrefix(raceUrl);
+              const rounds = raceRounds[race.id] || [];
+
+              return (
+                <div key={race.id}>
+                  <div
+                    style={{ ...s.navItem, ...s.groupedNavItem, ...(isCurrentRace ? s.navItemActive : {}), cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                    onClick={() => setExpandedRace(isExpanded ? null : race.id)}
+                  >
+                    <span style={{ marginRight: '0.35rem', fontSize: '0.7rem', color: '#9ca3af' }}>{isExpanded ? '▾' : '▸'}</span>
+                    <Link to={`${raceUrl}?tab=rounds`} style={{ color: 'inherit', textDecoration: 'none', flex: 1 }} onClick={(e) => e.stopPropagation()}>
+                      {race.name}
                     </Link>
-                  );
-                })}
-                {/* Candidates section */}
-                <div style={s.subSectionLabel}>Candidates</div>
-                <Link
-                  to={`${raceUrl}?tab=candidates`}
-                  style={{ ...s.nestedItem, paddingLeft: '1rem', ...(path.includes(raceUrl) && path.includes('tab=candidates') ? s.nestedItemActive : {}) }}
-                >
-                  Manage
-                </Link>
-              </div>
-            )}
+                  </div>
+
+                  {isExpanded && (
+                    <div style={s.nested}>
+                      <div style={s.subSectionLabel}>Rounds</div>
+                      {rounds.length === 0 && <div style={{ ...s.nestedItem, color: '#9ca3af', fontStyle: 'italic' }}>No rounds</div>}
+                      {rounds.map((round) => {
+                        const roundUrl = `${raceUrl}/rounds/${round.id}`;
+                        return (
+                          <Link
+                            key={round.id}
+                            to={roundUrl}
+                            style={{ ...s.nestedItem, paddingLeft: '1rem', ...(isActivePrefix(roundUrl) ? s.nestedItemActive : {}) }}
+                          >
+                            Round {round.round_number}
+                            <span style={s.statusDot(round.status)} />
+                          </Link>
+                        );
+                      })}
+                      <div style={s.subSectionLabel}>Candidates</div>
+                      <Link
+                        to={`${raceUrl}?tab=candidates`}
+                        style={{ ...s.nestedItem, paddingLeft: '1rem', ...(path.includes(raceUrl) && path.includes('tab=candidates') ? s.nestedItemActive : {}) }}
+                      >
+                        Manage
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         );
       })}
@@ -118,6 +170,27 @@ export default function ElectionSidebar({ electionId }) {
       <Link to={`${basePath}/logs`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
         Scan Logs
       </Link>
+
+      <div
+        style={{ ...s.navItem, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+        onClick={() => setDocsOpen((o) => !o)}
+      >
+        <span style={{ marginRight: '0.35rem', fontSize: '0.7rem', color: '#9ca3af' }}>{docsOpen ? '▾' : '▸'}</span>
+        <span style={{ flex: 1 }}>Documentation</span>
+      </div>
+      {docsOpen && (
+        <div style={s.nested}>
+          <Link to="/admin/guides/admin-quickstart" style={{ ...s.nestedItem, paddingLeft: '0.75rem', ...(path === '/admin/guides/admin-quickstart' ? s.nestedItemActive : {}) }}>
+            Admin Quick Start
+          </Link>
+          <Link to="/admin/guides/scan-station" style={{ ...s.nestedItem, paddingLeft: '0.75rem', ...(path === '/admin/guides/scan-station' ? s.nestedItemActive : {}) }}>
+            Scan Station Guide
+          </Link>
+          <Link to="/admin/guides/faq" style={{ ...s.nestedItem, paddingLeft: '0.75rem', ...(path === '/admin/guides/faq' ? s.nestedItemActive : {}) }}>
+            Convention FAQ
+          </Link>
+        </div>
+      )}
     </nav>
   );
 }
@@ -153,6 +226,21 @@ const s = {
   navItemActive: {
     background: '#eff6ff', borderLeft: '3px solid #2563eb',
     color: '#1d4ed8', fontWeight: 600,
+  },
+  groupHeader: {
+    display: 'flex', alignItems: 'center',
+    padding: '0.35rem 0.75rem',
+    fontSize: '0.78rem', fontWeight: 600, color: '#374151',
+    textTransform: 'uppercase', letterSpacing: '0.03em',
+  },
+  groupCount: {
+    background: '#e5e7eb', color: '#6b7280',
+    fontSize: '0.65rem', fontWeight: 700,
+    padding: '0.05rem 0.4rem', borderRadius: 8,
+    minWidth: 20, textAlign: 'center',
+  },
+  groupedNavItem: {
+    paddingLeft: '1.25rem',
   },
   nested: {
     marginLeft: '1rem', borderLeft: '2px solid #e5e7eb', paddingLeft: '0.5rem',

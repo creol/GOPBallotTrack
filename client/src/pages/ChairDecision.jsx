@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import ElectionLayout from '../components/ElectionLayout';
 import DashboardPreview from '../components/DashboardPreview';
+import { fmtPct } from '../utils/percent';
 
 const CANDIDATE_OUTCOMES = [
   { value: '', label: '— No decision —' },
@@ -120,50 +121,30 @@ export default function ChairDecision() {
     }
   };
 
+  // Server-side PIN gate is the source of truth — every destructive endpoint below
+  // re-verifies the operator's super-admin PIN against their session and rejects with
+  // 401 if it doesn't match. We surface that 401 as the modal error so a wrong PIN
+  // can never silently succeed (which is what the old client-only pre-check allowed).
   const verifyPinAndExecute = async (action) => {
     if (!actionPin) { setActionError('PIN is required'); return; }
-    try {
-      await api.post('/auth/login', { role: 'admin', pin: actionPin });
-    } catch {
-      setActionError('Invalid PIN');
-      return;
-    }
     setActionError(null);
+    const pin = actionPin;
 
     try {
       if (action === 'next_round') {
         await handleApplyDecisions();
-        // Finalize the round so it can be published from the Round page
-        await api.post(`/admin/rounds/${roundId}/confirm`, { confirmed_by_name: actionPin ? 'admin' : 'admin' });
+        // Chair-side finalization — flips the round to round_finalized.
+        // The Election Judge confirm step (Confirmation.jsx) only records the
+        // audit; the actual status change happens here, only with a valid PIN.
+        await api.post(`/admin/rounds/${roundId}/finalize`, { pin, finalized_by_name: 'admin' });
         setShowAction(null);
         setActionPin('');
         navigate(`/admin/elections/${electionId}/races/${raceId}`);
-      } else if (action === 'finalize') {
-        await handleApplyDecisions();
-        // Determine outcome from decisions
-        const winnerEntry = Object.entries(decisions).find(([, o]) => o === 'winner' || o === 'convention_winner');
-        const primaryEntry = Object.entries(decisions).find(([, o]) => o === 'advance_to_primary');
-        if (winnerEntry) {
-          await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'winner', candidate_id: parseInt(winnerEntry[0]) });
-        } else if (primaryEntry) {
-          await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'advances_primary' });
-        } else {
-          await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'closed', notes: 'Race finalized' });
-        }
-        alert('Race finalized.');
-        setShowAction(null);
-        setActionPin('');
-        fetchData();
-      } else if (action === 'cancel') {
-        const notes = prompt('Reason for canceling (required):');
-        if (!notes) { setActionError('Reason is required'); return; }
-        await api.put(`/admin/races/${raceId}/outcome`, { outcome: 'closed', notes });
-        alert('Race canceled.');
-        setShowAction(null);
-        setActionPin('');
-        fetchData();
       }
     } catch (err) {
+      // Server returns 401 with "Invalid Super Admin PIN" when the PIN doesn't match
+      // the logged-in user. Show the server's message verbatim so the operator knows
+      // whether it was the PIN or something else.
       setActionError(err.response?.data?.error || 'Action failed');
     }
   };
@@ -230,7 +211,7 @@ export default function ChairDecision() {
                       <div style={styles.barBg}>
                         <div style={{ ...styles.barFill, width: `${Math.min(pct, 100)}%` }} />
                       </div>
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{pct.toFixed(5)}%</span>
+                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{fmtPct(r.percentage, data.election?.dashboard_decimals)}%</span>
                     </div>
                   </td>
                   <td style={styles.td}>
@@ -283,6 +264,7 @@ export default function ChairDecision() {
             decisions={decisions}
             withdrawn={withdrawn}
             totalVotes={data.total_votes}
+            decimals={data.election?.dashboard_decimals}
           />
         )}
       </div>
@@ -296,12 +278,6 @@ export default function ChairDecision() {
           <button style={styles.btnPrimary} onClick={() => { setShowAction('next_round'); setActionPin(''); setActionError(null); }}>
             Finalize Round & Move to Next
           </button>
-          <button style={styles.btnSuccess} onClick={() => { setShowAction('finalize'); setActionPin(''); setActionError(null); }}>
-            Finalize Race
-          </button>
-          <button style={styles.btnDangerLarge} onClick={() => { setShowAction('cancel'); setActionPin(''); setActionError(null); }}>
-            Cancel Race
-          </button>
         </div>
 
         {/* PIN Modal */}
@@ -310,13 +286,9 @@ export default function ChairDecision() {
             <div style={styles.modalCard}>
               <h3 style={{ margin: '0 0 0.5rem' }}>
                 {showAction === 'next_round' && 'Finalize Round & Move to Next'}
-                {showAction === 'finalize' && 'Finalize Race'}
-                {showAction === 'cancel' && 'Cancel Race'}
               </h3>
               <p style={{ color: '#4b5563', margin: '0 0 1rem', fontSize: '0.9rem' }}>
                 {showAction === 'next_round' && 'This will save candidate decisions, finalize this round, and return to the race page. The round will be available for publishing from the Round page.'}
-                {showAction === 'finalize' && 'This will apply all candidate decisions and close the race. This cannot be undone.'}
-                {showAction === 'cancel' && 'This will cancel the race. A reason is required. This cannot be undone.'}
               </p>
               {hasDecisions && (
                 <div style={{ background: '#f3f4f6', borderRadius: 6, padding: '0.5rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.82rem' }}>
@@ -343,7 +315,7 @@ export default function ChairDecision() {
               {actionError && <p style={{ color: '#dc2626', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{actionError}</p>}
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
                 <button
-                  style={showAction === 'cancel' ? styles.btnDangerLarge : styles.btnPrimary}
+                  style={styles.btnPrimary}
                   onClick={() => verifyPinAndExecute(showAction)}
                 >
                   Confirm

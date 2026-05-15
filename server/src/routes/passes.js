@@ -151,6 +151,39 @@ router.delete('/passes/:id', requireSuperAdminForPass, async (req, res) => {
       [req.params.id]
     );
 
+    // Reviewed ballots tied to this pass need to be removed too — otherwise they
+    // remain stuck in the review queue pointing at a deleted pass. For resolved
+    // outcomes that mutated ballot_serials.status (remade/spoiled), revert the
+    // status before deletion. ('counted' is handled by the scan-deletion +
+    // serial-reset loop below; 'rejected' never changed status.)
+    const { rows: reviewsToCleanup } = await client.query(
+      `SELECT id, outcome, original_serial_id, replacement_serial_id
+       FROM reviewed_ballots WHERE pass_id = $1`,
+      [req.params.id]
+    );
+
+    for (const r of reviewsToCleanup) {
+      if (r.outcome === 'remade') {
+        await client.query(
+          "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'damaged'",
+          [r.original_serial_id]
+        );
+        if (r.replacement_serial_id) {
+          await client.query(
+            "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'counted'",
+            [r.replacement_serial_id]
+          );
+        }
+      } else if (r.outcome === 'spoiled') {
+        await client.query(
+          "UPDATE ballot_serials SET status = 'unused' WHERE id = $1 AND status = 'spoiled'",
+          [r.original_serial_id]
+        );
+      }
+    }
+
+    await client.query('DELETE FROM reviewed_ballots WHERE pass_id = $1', [req.params.id]);
+
     await client.query(
       `UPDATE passes SET status = 'deleted', deleted_reason = $1 WHERE id = $2`,
       [deleted_reason, req.params.id]
@@ -183,7 +216,9 @@ router.delete('/passes/:id', requireSuperAdminForPass, async (req, res) => {
     const io = req.app.get('io');
     if (io) io.emit('pass:deleted', { pass_id: pass.id, round_id: pass.round_id });
 
-    res.json({ message: `Pass ${pass.pass_number} deleted — ${scannedSerials.length} ballot serials reset to unused` });
+    res.json({
+      message: `Pass ${pass.pass_number} deleted — ${scannedSerials.length} ballot serials reset to unused, ${reviewsToCleanup.length} reviewed ballots removed`,
+    });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error('Delete pass error:', err);
@@ -237,15 +272,24 @@ router.put('/passes/:id/reopen', requireSuperAdminForPass, async (req, res) => {
 });
 
 // GET /api/rounds/:id/passes — List passes with scan counts.
-// scan_count = rows in `scans` (successfully-counted votes).
+// scan_count   = rows in `scans` (successfully-counted votes).
 // upload_count = rows in `scan_uploads` (every agent upload regardless of outcome,
-// including flagged, duplicate, wrong_round, etc.) — used for the Total Scans display.
+//                including flagged, duplicate, wrong_round, etc.) — the physical
+//                "how many images did the scanner produce" number used for paper-count
+//                reconciliation by the operator.
+// review_*     = breakdown of reviewed_ballots outcomes per pass, so the UI can render
+//                "306 images · 288 counted · 1 rejected · N pending" and the operator
+//                can confirm every image is accounted for somewhere.
 router.get('/rounds/:id/passes', async (req, res) => {
   try {
     const { rows: passes } = await db.query(
       `SELECT p.*,
          (SELECT COUNT(*) FROM scans s WHERE s.pass_id = p.id)::int AS scan_count,
-         (SELECT COUNT(*) FROM scan_uploads su WHERE su.pass_id = p.id)::int AS upload_count
+         (SELECT COUNT(*) FROM scan_uploads su WHERE su.pass_id = p.id)::int AS upload_count,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome IS NULL)::int    AS review_pending,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome = 'rejected')::int AS review_rejected,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome = 'spoiled')::int  AS review_spoiled,
+         (SELECT COUNT(*) FROM reviewed_ballots rb WHERE rb.pass_id = p.id AND rb.outcome = 'remade')::int   AS review_remade
        FROM passes p
        WHERE p.round_id = $1 AND p.status != 'deleted'
        ORDER BY p.pass_number`,
@@ -258,17 +302,20 @@ router.get('/rounds/:id/passes', async (req, res) => {
   }
 });
 
-// GET /api/rounds/:id/reconciliation-counts — Images needing reconciliation, by station.
-// Unresolved = reviewed_ballots.outcome IS NULL. Grouped by the originating station.
+// GET /api/rounds/:id/reconciliation-counts — Images needing reconciliation, by station × pass.
+// Unresolved = reviewed_ballots.outcome IS NULL.
 router.get('/rounds/:id/reconciliation-counts', async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { rows } = await db.query(
-      `SELECT COALESCE(station_id, 'unknown') AS station_id, COUNT(*)::int AS pending
+      `SELECT
+         COALESCE(station_id, 'unknown') AS station_id,
+         pass_id,
+         COUNT(*)::int AS pending
        FROM reviewed_ballots
        WHERE round_id = $1 AND outcome IS NULL
-       GROUP BY COALESCE(station_id, 'unknown')
-       ORDER BY station_id`,
+       GROUP BY COALESCE(station_id, 'unknown'), pass_id
+       ORDER BY station_id, pass_id NULLS LAST`,
       [roundId]
     );
     res.json(rows);

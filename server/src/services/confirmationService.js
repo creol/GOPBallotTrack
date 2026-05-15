@@ -119,10 +119,13 @@ async function computeResults(roundId) {
 }
 
 /**
- * Confirm a round (judge action).
+ * Election Judge confirmation step — records that a judge has reviewed the
+ * pass comparison and accepts the counts. Computes the round_results so the
+ * Chair page has data to display, but does NOT change round status. The
+ * round only becomes round_finalized when the Chair explicitly finalizes it
+ * from the chair-decision page.
  */
 async function confirmRound({ roundId, confirmedByName, isOverride, overrideNotes }) {
-  // Verify at least 2 complete passes
   const { rows: passes } = await db.query(
     "SELECT * FROM passes WHERE round_id = $1 AND status = 'complete'",
     [roundId]
@@ -131,24 +134,50 @@ async function confirmRound({ roundId, confirmedByName, isOverride, overrideNote
     throw new Error('At least 2 completed passes are required before confirmation');
   }
 
-  // Compute results
   const results = await computeResults(roundId);
 
-  // Record confirmation
   await db.query(
     `INSERT INTO round_confirmations (round_id, confirmed_by_role, confirmed_by_name, is_override, override_notes)
      VALUES ($1, $2, $3, $4, $5)`,
     [roundId, 'judge', confirmedByName, isOverride, overrideNotes || null]
   );
 
-  // Update round status to round_finalized
+  return results;
+}
+
+/**
+ * Chair finalization step — flips the round to round_finalized so it can be
+ * published. Requires that a judge confirmation has already been recorded
+ * (or, equivalently, that the round is past tallying with computed results).
+ */
+async function finalizeRound({ roundId, finalizedByName }) {
+  const { rows: [round] } = await db.query('SELECT status FROM rounds WHERE id = $1', [roundId]);
+  if (!round) throw new Error('Round not found');
+  if (round.status === 'round_finalized') {
+    return { roundId, finalizedByName, alreadyFinalized: true };
+  }
+  if (!['tallying', 'voting_closed'].includes(round.status)) {
+    throw new Error(`Round cannot be finalized from status '${round.status}'`);
+  }
+
+  const { rows: [confirmation] } = await db.query(
+    'SELECT id FROM round_confirmations WHERE round_id = $1 ORDER BY created_at DESC LIMIT 1',
+    [roundId]
+  );
+  if (!confirmation) {
+    throw new Error('Round must be confirmed by a judge before it can be finalized');
+  }
+
+  // Recompute results in case scans changed between judge confirmation and chair finalization.
+  await computeResults(roundId);
+
   await db.query(
     `UPDATE rounds SET status = 'round_finalized', confirmed_by = $1, confirmed_at = NOW()
      WHERE id = $2`,
-    [confirmedByName, roundId]
+    [finalizedByName, roundId]
   );
 
-  return results;
+  return { roundId, finalizedByName, alreadyFinalized: false };
 }
 
 /**
@@ -429,6 +458,6 @@ async function recordReconciliation({ roundId, ballotSerialId, decision, accepte
 }
 
 module.exports = {
-  getComparison, computeResults, confirmRound, releaseRound, getChairPreview, getChairDecision,
+  getComparison, computeResults, confirmRound, finalizeRound, releaseRound, getChairPreview, getChairDecision,
   getBallotReconciliation, autoReconcile, recordReconciliation,
 };

@@ -13,8 +13,10 @@ async function generateEventSummaryPdf(electionId) {
   const { rows: [election] } = await db.query('SELECT * FROM elections WHERE id = $1', [electionId]);
   if (!election) throw new Error('Election not found');
 
+  // Only export races that are visible on the public dashboard. Hidden races
+  // (test races, withdrawn slots, internal-only) shouldn't appear in the printed summary.
   const { rows: races } = await db.query(
-    'SELECT * FROM races WHERE election_id = $1 ORDER BY display_order',
+    'SELECT * FROM races WHERE election_id = $1 AND dashboard_visible = true ORDER BY display_order',
     [electionId]
   );
 
@@ -27,6 +29,10 @@ async function generateEventSummaryPdf(electionId) {
   doc.pipe(stream);
 
   const pageWidth = 612 - 100;
+  // Below this y, there isn't enough room to start a new race section without
+  // immediately needing a page break — break before the race header instead so
+  // the race name and its first round stay together.
+  const RACE_BREAK_THRESHOLD = 600;
 
   // Title page
   doc.moveDown(4);
@@ -43,9 +49,22 @@ async function generateEventSummaryPdf(electionId) {
   doc.fontSize(10).fillColor('#666').text(`${races.length} race(s)`, { align: 'center' });
   doc.fillColor('black');
 
-  // Each race gets its own section
-  for (const race of races) {
-    doc.addPage();
+  // Races flow one after another; only start a new page when the current one
+  // doesn't have room for at least the race header + first round. A subtle
+  // divider sits between races that share a page.
+  for (let i = 0; i < races.length; i++) {
+    const race = races[i];
+    if (i === 0) {
+      // First race always starts on page 2 (after the title page).
+      doc.addPage();
+    } else if (doc.y > RACE_BREAK_THRESHOLD) {
+      doc.addPage();
+    } else {
+      // Visual separator between races on the same page.
+      doc.moveDown(0.5);
+      doc.moveTo(50, doc.y).lineTo(50 + pageWidth, doc.y).lineWidth(0.75).strokeColor('#cbd5e1').stroke().strokeColor('black');
+      doc.moveDown(0.8);
+    }
 
     // Race header
     doc.fontSize(18).font('Helvetica-Bold').text(race.name, { align: 'center' });

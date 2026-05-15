@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const db = require('../db');
+const { requireSuperAdminPin } = require('../middleware/auth');
 
 const router = Router();
 
@@ -182,7 +183,7 @@ router.post('/round/:id/open-tallying', async (req, res) => {
 // round's status flips backwards. No CHECK-constraint errors, no data loss.
 
 // POST /api/admin/control-center/round/:id/revert-to-ready — voting_open → ready
-router.post('/round/:id/revert-to-ready', async (req, res) => {
+router.post('/round/:id/revert-to-ready', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
@@ -201,7 +202,7 @@ router.post('/round/:id/revert-to-ready', async (req, res) => {
 });
 
 // POST /api/admin/control-center/round/:id/revert-to-voting-open — voting_closed → voting_open
-router.post('/round/:id/revert-to-voting-open', async (req, res) => {
+router.post('/round/:id/revert-to-voting-open', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
@@ -220,7 +221,7 @@ router.post('/round/:id/revert-to-voting-open', async (req, res) => {
 });
 
 // POST /api/admin/control-center/round/:id/revert-to-voting-closed — tallying → voting_closed
-router.post('/round/:id/revert-to-voting-closed', async (req, res) => {
+router.post('/round/:id/revert-to-voting-closed', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
@@ -266,7 +267,7 @@ router.post('/round/:id/publish', async (req, res) => {
 
 // POST /api/admin/control-center/round/:id/unpublish — Remove from public dashboard
 // Round stays finalized; only the published_at flag is cleared so the TV/mobile public view drops it.
-router.post('/round/:id/unpublish', async (req, res) => {
+router.post('/round/:id/unpublish', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { rows: [round] } = await db.query('SELECT * FROM rounds WHERE id = $1', [roundId]);
@@ -288,7 +289,7 @@ router.post('/round/:id/unpublish', async (req, res) => {
 });
 
 // POST /api/admin/control-center/round/:id/recount — Issue recount
-router.post('/round/:id/recount', async (req, res) => {
+router.post('/round/:id/recount', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { notes } = req.body;
@@ -328,7 +329,7 @@ router.post('/round/:id/recount', async (req, res) => {
 });
 
 // POST /api/admin/control-center/round/:id/void — Void round and advance
-router.post('/round/:id/void', async (req, res) => {
+router.post('/round/:id/void', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { notes } = req.body;
@@ -357,7 +358,7 @@ router.post('/round/:id/void', async (req, res) => {
 });
 
 // POST /api/admin/control-center/race/:id/finalize — Finalize race (no more rounds)
-router.post('/race/:id/finalize', async (req, res) => {
+router.post('/race/:id/finalize', requireSuperAdminPin, async (req, res) => {
   try {
     const raceId = parseInt(req.params.id);
 
@@ -381,7 +382,7 @@ router.post('/race/:id/finalize', async (req, res) => {
 
 // POST /api/admin/control-center/round/:id/reverse-finalize — Reverse a finalized round (Super Admin)
 // Unpublishes and sets round back to tallying so passes can be modified.
-router.post('/round/:id/reverse-finalize', async (req, res) => {
+router.post('/round/:id/reverse-finalize', requireSuperAdminPin, async (req, res) => {
   try {
     const roundId = parseInt(req.params.id);
     const { notes } = req.body;
@@ -421,7 +422,7 @@ router.post('/round/:id/reverse-finalize', async (req, res) => {
 
 // POST /api/admin/control-center/race/:id/reverse-finalize — Reverse a finalized race (Super Admin)
 // Sets race back to in_progress so rounds can be modified.
-router.post('/race/:id/reverse-finalize', async (req, res) => {
+router.post('/race/:id/reverse-finalize', requireSuperAdminPin, async (req, res) => {
   try {
     const raceId = parseInt(req.params.id);
     const { notes } = req.body;
