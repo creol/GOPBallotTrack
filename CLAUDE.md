@@ -567,3 +567,42 @@ After each phase, do this before moving on:
 | 6 | Public TV + mobile dashboard with clickable SNs | Phase 5 |
 | 7 | Results PDFs with unused SNs, image backup/export | Phase 6 |
 | 8 | Auth, Docker prod build, sample data, README | Phase 7 |
+
+---
+
+## Active development plans
+
+### Prompt H: Electronic Voting (Hybrid Meetings)
+
+A multi-stage feature adding electronic voting (remote + in-person via QR
+stickers) to BallotTrack. This work is large enough to have its own plan
+document.
+
+- **Full plan**: `docs/Prompt_H_Electronic_Voting_Plan.md`
+- **Stages**: H1 through H7, must be implemented in order
+- **Rule**: Do not bundle multiple stages into one session. Implement one
+  stage per session, test, then move to the next.
+- **When asked to work on "Stage H<N>"**: read the full plan document first,
+  then implement only that stage's deliverables.
+
+### Anonymity boundary (critical, applies after H1)
+
+The three tables `voter_tokens`, `voter_race_participation`, and `votes`
+must NEVER be joined in any query — directly or transitively via views,
+CTEs, subqueries, or application-level "joins" that fetch data from one
+and look it up in another.
+
+This separation is the entire anonymity guarantee of the electronic voting
+system. Any code that crosses this boundary breaks voter privacy.
+
+- `voter_tokens` records who is credentialed
+- `voter_race_participation` records which races a token participated in
+- `votes` records what was chosen (with serials and confirmation codes)
+
+The only legitimate cross-table operation is the atomic INSERT during
+vote submission, which writes to all three within a single transaction
+but never reads across them.
+
+If you find yourself wanting to write a query that joins these tables,
+stop and ask the user. There is almost always a different way to get
+what you need.
