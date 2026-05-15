@@ -9,6 +9,7 @@ import RaceDetail from './pages/RaceDetail';
 import RoundDetail from './pages/RoundDetail';
 import BallotReviewQueue from './pages/BallotReviewQueue';
 import BallotDesigner from './pages/BallotDesigner';
+import StickerGenerator from './pages/StickerGenerator';
 import Scanner from './pages/Scanner';
 import Confirmation from './pages/Confirmation';
 import ChairDecision from './pages/ChairDecision';
@@ -91,6 +92,9 @@ export default function App() {
         } />
         <Route path="/admin/elections/:id/ballot-design" element={
           <ProtectedRoute auth={auth}><BallotDesigner /></ProtectedRoute>
+        } />
+        <Route path="/admin/elections/:id/stickers" element={
+          <ProtectedRoute auth={auth}><StickerGenerator /></ProtectedRoute>
         } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId" element={
           <ProtectedRoute auth={auth}><RoundDetail /></ProtectedRoute>

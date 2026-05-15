@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
+const { generateUniqueEventCode } = require('../services/eventCode');
 
 const router = Router();
 
@@ -35,10 +36,12 @@ router.post('/', async (req, res) => {
     if (!name || !date) {
       return res.status(400).json({ error: 'name and date are required' });
     }
+    // event_code is the short path segment in the voter URL (electronic voting).
+    const eventCode = await generateUniqueEventCode();
     const { rows: [election] } = await db.query(
-      `INSERT INTO elections (name, date, description)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [name, date, description || null]
+      `INSERT INTO elections (name, date, description, event_code)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [name, date, description || null, eventCode]
     );
     res.status(201).json(election);
   } catch (err) {
