@@ -475,6 +475,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   logo_position: 'top_center',  // 'top_center' | 'inline_left' | 'inline_right' | 'none'
   qr_position: 'bottom_right',  // 'bottom_right' | 'bottom_left' | 'top_right' | 'top_left' | 'hidden'
   show_vote_bar: true,          // toggle the visual vote-bar in result rows
+  show_all_rounds: false,       // false = show only the latest round per race; true = show every completed round
   colors: { ...DEFAULT_COLORS },
 };
 
@@ -594,6 +595,17 @@ function DashboardsSection({ electionId }) {
               />
               <span style={styles.muted}>seconds per category — 0 disables rotation and shows all categories at once.</span>
             </div>
+
+            <label style={{ fontWeight: 600 }}>Rounds shown:</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={!!settings.show_all_rounds}
+                onChange={(e) => patchSettings({ show_all_rounds: e.target.checked })}
+                disabled={savingSettings}
+              />
+              <span style={styles.muted}>Show every completed round for each race. When off, only the most recent round is shown.</span>
+            </label>
 
             <label style={{ fontWeight: 600 }}>Auto-scroll:</label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

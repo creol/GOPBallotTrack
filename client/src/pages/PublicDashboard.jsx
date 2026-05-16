@@ -44,6 +44,7 @@ const DEFAULT_DASHBOARD_SETTINGS = {
   logo_position: 'top_center',
   qr_position: 'bottom_right',
   show_vote_bar: true,
+  show_all_rounds: false,       // false = only the latest round per race; true = every published round
   colors: { ...DEFAULT_COLORS },
 };
 
@@ -377,8 +378,17 @@ function TVMode({ election, connected }) {
         )}
 
         {race.rounds.length > 0 && (() => {
-          const round = race.rounds[race.rounds.length - 1];
-          const isFinalRound = race.status === 'results_finalized';
+          // show_all_rounds: render every published round; otherwise just the
+          // most recent. race.rounds is ordered by round_number, so the last
+          // element is always the latest round.
+          const lastRoundNumber = race.rounds[race.rounds.length - 1].round_number;
+          const roundsToShow = settings.show_all_rounds
+            ? race.rounds
+            : [race.rounds[race.rounds.length - 1]];
+          return roundsToShow.map(round => {
+          // Only the latest round carries the "FINAL RESULTS" label; earlier
+          // rounds in an all-rounds view show "Round Complete".
+          const isFinalRound = race.status === 'results_finalized' && round.round_number === lastRoundNumber;
           const removed = removedBeforeRound(race.rounds, round.round_number);
           const visibleResults = (round.results || []).filter(r => !removed.has(r.candidate_id));
           return (
@@ -414,6 +424,7 @@ function TVMode({ election, connected }) {
               })}
             </div>
           );
+          });
         })()}
       </div>
     );
