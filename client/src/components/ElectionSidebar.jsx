@@ -161,6 +161,9 @@ export default function ElectionSidebar({ electionId }) {
       <Link to={`${basePath}/stickers`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit', ...(isActivePrefix(`${basePath}/stickers`) ? s.navItemActive : {}) }}>
         QR Voter Stickers
       </Link>
+      <Link to={`${basePath}/credentialing`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit', ...(isActivePrefix(`${basePath}/credentialing`) || isActivePrefix(`${basePath}/replacement-token`) ? s.navItemActive : {}) }}>
+        Credentialing
+      </Link>
       <Link to={`${basePath}?section=boxes`} style={{ ...s.navItem, textDecoration: 'none', color: 'inherit' }}>
         Ballot Boxes
       </Link>

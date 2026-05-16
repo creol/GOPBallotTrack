@@ -35,6 +35,7 @@ const stationsRouter = require('./routes/stations');
 const scanLogsRouter = require('./routes/scanLogs');
 const reviewedBallotsRouter = require('./routes/reviewedBallots');
 const stickersRouter = require('./routes/stickers');
+const credentialingRouter = require('./routes/credentialing');
 const { startWatchers } = require('./middleware/scanWatcher');
 
 // Station agent auth bootstrap.
@@ -120,6 +121,10 @@ app.use('/api/admin', requireAuth, ballotSpecRecoveryRouter);
 
 // Electronic voting — QR token sticker generator (any authenticated user)
 app.use('/api/admin', requireAuth, stickersRouter);
+
+// Electronic voting — voter credentialing & token activation (any authenticated
+// user; the replacement-token route adds requireSuperAdmin internally)
+app.use('/api/admin', requireAuth, credentialingRouter);
 
 // Scanning & pass routes (no PIN — tally operators access directly)
 app.use('/api', passesRouter);

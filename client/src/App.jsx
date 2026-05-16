@@ -10,6 +10,9 @@ import RoundDetail from './pages/RoundDetail';
 import BallotReviewQueue from './pages/BallotReviewQueue';
 import BallotDesigner from './pages/BallotDesigner';
 import StickerGenerator from './pages/StickerGenerator';
+import CredentialingAdmin from './pages/CredentialingAdmin';
+import ReplacementToken from './pages/ReplacementToken';
+import VoterActivation from './pages/VoterActivation';
 import Scanner from './pages/Scanner';
 import Confirmation from './pages/Confirmation';
 import ChairDecision from './pages/ChairDecision';
@@ -96,6 +99,12 @@ export default function App() {
         <Route path="/admin/elections/:id/stickers" element={
           <ProtectedRoute auth={auth}><StickerGenerator /></ProtectedRoute>
         } />
+        <Route path="/admin/elections/:id/credentialing" element={
+          <ProtectedRoute auth={auth}><CredentialingAdmin /></ProtectedRoute>
+        } />
+        <Route path="/admin/elections/:id/replacement-token" element={
+          <ProtectedRoute auth={auth} requiredRoles={['super_admin']}><ReplacementToken /></ProtectedRoute>
+        } />
         <Route path="/admin/elections/:id/races/:raceId/rounds/:roundId" element={
           <ProtectedRoute auth={auth}><RoundDetail /></ProtectedRoute>
         } />
@@ -127,6 +136,11 @@ export default function App() {
         } />
         <Route path="/admin/guides/faq" element={
           <ProtectedRoute auth={auth}><ConventionFaqGuide /></ProtectedRoute>
+        } />
+
+        {/* Voter credentialing — admin-authenticated standalone page */}
+        <Route path="/credentialing/activate" element={
+          <ProtectedRoute auth={auth}><VoterActivation /></ProtectedRoute>
         } />
 
         {/* Station setup + Scanner routes — no auth */}

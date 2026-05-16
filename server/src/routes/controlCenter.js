@@ -102,6 +102,18 @@ router.post('/round/:id/open-voting', async (req, res) => {
       return res.status(400).json({ error: `Round must be in 'ready' status (current: ${round.status})` });
     }
 
+    // H3 interlock: an electronic vote cannot open while the credentialing
+    // window is open. Paper rounds are unaffected.
+    const { rows: [raceCtx] } = await db.query(
+      `SELECT ra.voting_mode, e.credentialing_open
+         FROM races ra JOIN elections e ON e.id = ra.election_id
+        WHERE ra.id = $1`,
+      [round.race_id]
+    );
+    if (raceCtx && raceCtx.voting_mode === 'electronic' && raceCtx.credentialing_open) {
+      return res.status(409).json({ error: 'Close credentialing before opening an electronic vote.' });
+    }
+
     // Gate: previous round must be finalized+published or canceled before opening this one
     if (round.round_number > 1) {
       const { rows: [prevRound] } = await db.query(

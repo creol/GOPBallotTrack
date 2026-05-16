@@ -156,4 +156,29 @@ async function generateTokenBatch({ eventId, count, batch }) {
   }
 }
 
-module.exports = { generateToken, hashToken, verifyToken, generateTokenBatch, ALPHABET, TOKEN_LENGTH };
+/**
+ * Generate a single token that does not collide with any existing token for
+ * the event. Used by the H3 replacement-token flow, which must issue and
+ * DISPLAY a token — only possible for a freshly generated one, since pool
+ * tokens are stored hash-only and their plaintext cannot be recovered.
+ *
+ * @param {number} eventId
+ * @returns {Promise<{ token:string, hash:string }>}
+ */
+async function generateUniqueToken(eventId) {
+  for (let i = 0; i < 50; i++) {
+    const token = generateToken();
+    const hash = hashToken(token);
+    const { rows } = await db.query(
+      'SELECT 1 FROM voter_tokens WHERE event_id = $1 AND token_hash = $2',
+      [eventId, hash]
+    );
+    if (rows.length === 0) return { token, hash };
+  }
+  throw new Error('Could not generate a unique token after 50 attempts');
+}
+
+module.exports = {
+  generateToken, hashToken, verifyToken, generateTokenBatch, generateUniqueToken,
+  ALPHABET, TOKEN_LENGTH,
+};
